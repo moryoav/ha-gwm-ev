@@ -111,7 +111,7 @@ Missing vehicle signals remain unavailable without interrupting the other entiti
 
 Remote commands are slower than ordinary Home Assistant operations because the request travels through the GWM cloud and then waits for the vehicle result. The **Remote command status** sensor shows the current progress.
 
-Set **Climate run time** before starting A/C if you want a duration other than the default. Changing the number only saves the setting. It does not start the climate system.
+Set **Climate run time** and the target temperature before starting A/C. Changing either setting only saves it for the next start. It does not start the climate system, and neither setting can be changed after A/C has started.
 
 Remote operations can affect a real vehicle. Test them manually before using them in automations.
 
