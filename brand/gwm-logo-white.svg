@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- Official GWM logo artwork with a white background added for README contrast. -->
-<svg id="gwm-logo" xmlns="http://www.w3.org/2000/svg" version="1.1" viewBox="0 0 183.1 64">
+<svg id="gwm-logo" xmlns="http://www.w3.org/2000/svg" version="1.1" viewBox="0 14 183.1 36">
   <title>GWM</title>
-  <rect width="183.1" height="64" fill="#fff"/>
+  <rect y="14" width="183.1" height="36" fill="#fff"/>
   <defs>
     <style>
       .st0 {
