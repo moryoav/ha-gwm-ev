@@ -20,6 +20,12 @@ This custom integration connects Home Assistant directly to supported regional G
 
 This repository is the integration-only successor to `ha-gwm`. The previous Docker add-on is not required. Europe, Australia and New Zealand, Russia, and mainland China are available in the setup flow.
 
+## Roadmap and Feedback
+
+I track confirmed bugs, protocol research, planned features, and work waiting for regional validation in the public [ha-gwm-ev Roadmap](https://github.com/users/moryoav/projects/3).
+
+Use the [Regional testing discussions](https://github.com/moryoav/ha-gwm-ev/discussions/categories/regional-testing) to share account-region and vehicle-model results. Once a report becomes actionable, I track the work in an issue and add it to the roadmap.
+
 ## Important Upgrade Note
 
 This integration does not import credentials, tokens, or state from the retired add-on.
