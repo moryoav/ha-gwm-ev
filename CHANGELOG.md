@@ -6,6 +6,12 @@ This project follows semantic versioning. HACS uses the latest GitHub release ta
 
 ## [Unreleased]
 
+## [0.16.3] - 2026-08-30
+
+### Changed
+
+- I show the stored vehicle security PIN in the options form as a masked, revealable password value.
+
 ## [0.16.2] - 2026-08-30
 
 ### Fixed

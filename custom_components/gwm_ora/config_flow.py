@@ -185,10 +185,9 @@ def _cloud_options_schema(entry: ConfigEntry, defaults: dict[str, Any] | None = 
         fields[
             vol.Optional(
                 CONF_SECURITY_PIN,
-                # Secrets are write-only in the options UI. A blank value can
-                # preserve the existing PIN only while remote controls remain
-                # enabled; see the submit handling below.
-                default="",
+                # The password selector masks this value while still allowing
+                # an administrator to reveal or replace the configured PIN.
+                default=current.get(CONF_SECURITY_PIN, ""),
             )
         ] = _password_selector(autocomplete="off")
     return vol.Schema(fields)

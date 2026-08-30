@@ -734,7 +734,7 @@ async def test_cloud_reconfigure_can_replace_overseas_account_with_china(
 
 
 @pytest.mark.asyncio
-async def test_cloud_options_make_pin_write_only_and_enforce_opt_in() -> None:
+async def test_cloud_options_show_masked_pin_and_enforce_opt_in() -> None:
     entry = _entry(
         data={CONF_CONNECTION_TYPE: CONNECTION_TYPE_CLOUD, CONF_REGION: "eu"},
         options={CONF_SECURITY_PIN: "existing-pin"},
@@ -749,7 +749,7 @@ async def test_cloud_options_make_pin_write_only_and_enforce_opt_in() -> None:
         CONF_ENABLE_REMOTE_COMMANDS: False,
         CONF_ENABLE_CHARGING_CONTROL: False,
         CONF_LOG_LEVEL: "info",
-    })[CONF_SECURITY_PIN] == ""
+    })[CONF_SECURITY_PIN] == "existing-pin"
 
     preserved = await flow.async_step_init(
         {
