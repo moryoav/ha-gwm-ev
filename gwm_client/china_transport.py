@@ -346,10 +346,11 @@ class ChinaAiohttpTransport:
         self._owns_session = owns_session
         self._max_compressed_bytes = max_compressed_bytes
         self._max_response_bytes = max_response_bytes
-        self._ssl_context = _create_ssl_context()
+        self._ssl_context: ssl.SSLContext | None = None
         self._closed = False
         self._closing = False
         self._close_lock = asyncio.Lock()
+        self._ssl_context_lock = asyncio.Lock()
 
     @classmethod
     def create_owned(
@@ -427,7 +428,8 @@ class ChinaAiohttpTransport:
         if self._closed or self._closing or self._session.closed:
             raise GwmClosedError(operation=operation)
         self._validate_session_policy(operation=operation)
-        _validate_tls_context(self._ssl_context)
+        ssl_context = await self._async_ssl_context(operation=operation)
+        _validate_tls_context(ssl_context)
 
         loop = asyncio.get_running_loop()
         remaining = deadline.remaining(loop.time())
@@ -456,7 +458,7 @@ class ChinaAiohttpTransport:
                 proxy_auth=None,
                 raise_for_status=False,
                 skip_auto_headers=_SKIP_AUTO_HEADERS,
-                ssl=self._ssl_context,
+                ssl=ssl_context,
                 timeout=timeout,
             ) as response:
                 return await self._read_response(response, operation=operation)
@@ -482,6 +484,25 @@ class ChinaAiohttpTransport:
         if failure is not None:
             raise failure
         raise GwmNetworkError(operation=operation)
+
+    async def _async_ssl_context(self, *, operation: str) -> ssl.SSLContext:
+        """Load system trust off the event loop before the first request."""
+
+        if self._ssl_context is not None:
+            return self._ssl_context
+        async with self._ssl_context_lock:
+            if self._ssl_context is not None:
+                return self._ssl_context
+            try:
+                context = await asyncio.to_thread(_create_ssl_context)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                raise GwmTlsError(operation=operation) from None
+            if not isinstance(context, ssl.SSLContext):
+                raise GwmTlsError(operation=operation)
+            self._ssl_context = context
+            return context
 
     async def _read_response(
         self,

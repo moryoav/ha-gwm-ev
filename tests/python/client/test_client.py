@@ -7,6 +7,7 @@ import inspect
 import json
 import math
 import ssl
+import threading
 import time
 from collections.abc import Mapping
 from dataclasses import replace
@@ -228,6 +229,40 @@ async def _invoke(client: GwmClient, operation: str) -> object:
     if operation == "get_vehicle_basics":
         return await client.get_vehicle_basics(identifier)
     raise AssertionError(operation)
+
+
+@pytest.mark.asyncio
+async def test_command_tls_context_is_loaded_off_the_event_loop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = _session(Region.ANZ)
+    event_loop_thread = threading.get_ident()
+    context_threads: list[int] = []
+
+    def create_context(_purpose: ssl.Purpose) -> ssl.SSLContext:
+        context_threads.append(threading.get_ident())
+        return ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+
+    monkeypatch.setattr(client_module.ssl, "create_default_context", create_context)
+    client = GwmClient(
+        GwmClientConfig(Region.ANZ),
+        session,
+        transport=_RecordingTransport(),
+    )
+
+    assert context_threads == []
+
+    async def action(_session: GwmSession, _deadline: _Deadline) -> object:
+        return object()
+
+    await client._execute_authenticated_command(
+        "test_command",
+        timeout=None,
+        action=action,
+    )
+
+    assert len(context_threads) == 1
+    assert context_threads[0] != event_loop_thread
 
 
 @pytest.mark.asyncio

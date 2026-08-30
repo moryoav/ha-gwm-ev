@@ -6,6 +6,12 @@ This project follows semantic versioning. HACS uses the latest GitHub release ta
 
 ## [Unreleased]
 
+## [0.16.1] - 2026-08-30
+
+### Fixed
+
+- I moved overseas and mainland-China system trust loading off the Home Assistant event loop.
+
 ## [0.16.0] - 2026-08-30
 
 ### Added

@@ -157,7 +157,7 @@ class GwmClient:
         if sequence_source is not None and not callable(sequence_source):
             raise GwmConfigurationError()
         self._sequence_source = sequence_source or (lambda: uuid.uuid4().hex + "1234")
-        self._h5_ssl_context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
+        self._h5_ssl_context: ssl.SSLContext | None = None
         self._transport: _AsyncTransport
         if transport is None:
             self._transport = AiohttpTransport.create_owned(
@@ -170,6 +170,7 @@ class GwmClient:
         self._closed = False
         self._closing = False
         self._close_lock = asyncio.Lock()
+        self._h5_ssl_context_lock = asyncio.Lock()
         self._request_lock = asyncio.Lock()
 
     @property
@@ -939,6 +940,7 @@ class GwmClient:
                         raise GwmAuthenticationError(operation=operation)
                     attempt_revision = self._session_revision
                     session = self._validated_session(self._session)
+                    await self._async_prepare_h5_ssl_context(operation=operation)
                     result = await action(session, deadline)
                     if deadline.remaining(loop.time()) <= 0:
                         raise GwmDeadlineExceededError(operation=operation)
@@ -970,6 +972,27 @@ class GwmClient:
             )
         raise failure or GwmNetworkError(operation=operation)
 
+    async def _async_prepare_h5_ssl_context(self, *, operation: str) -> None:
+        """Load system trust off the event loop before command preparation."""
+
+        if self._h5_ssl_context is not None:
+            return
+        async with self._h5_ssl_context_lock:
+            if self._h5_ssl_context is not None:
+                return
+            try:
+                context = await asyncio.to_thread(
+                    ssl.create_default_context,
+                    ssl.Purpose.SERVER_AUTH,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                raise GwmTlsError(operation=operation) from None
+            if not isinstance(context, ssl.SSLContext):
+                raise GwmTlsError(operation=operation)
+            self._h5_ssl_context = context
+
     def _prepare_command_request(
         self,
         *,
@@ -998,16 +1021,19 @@ class GwmClient:
                 headers["Content-Type"] = "application/json; charset=utf-8"
             if vin_header is not None:
                 headers["vin"] = vin_header.value
+            ssl_context = (
+                session.app_ssl_context
+                if gateway_role is GatewayRole.APP_V1
+                else self._h5_ssl_context
+            )
+            if ssl_context is None:
+                raise GwmConfigurationError(operation=operation)
             return _TransportRequest(
                 operation=operation,
                 method=method,
                 url=signed.url,
                 headers=headers,
-                ssl_context=(
-                    session.app_ssl_context
-                    if gateway_role is GatewayRole.APP_V1
-                    else self._h5_ssl_context
-                ),
+                ssl_context=ssl_context,
                 body=None if body is None else body.encode("utf-8"),
             )
         except (TypeError, UnicodeError, ValueError):

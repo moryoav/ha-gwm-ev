@@ -6,6 +6,7 @@ import asyncio
 import gzip
 import json
 import ssl
+import threading
 from collections.abc import AsyncIterator, Mapping
 from typing import Any, cast
 from urllib.parse import quote, unquote, urlsplit
@@ -15,6 +16,7 @@ import pytest
 from multidict import CIMultiDict
 from yarl import URL
 
+import gwm_client.china_transport as china_transport_module
 from gwm_client._dotnet_json import encode_dotnet_json
 from gwm_client._protocol import _Deadline
 from gwm_client.china_crypto import (
@@ -137,6 +139,34 @@ class _FakeSession:
 
 def _deadline() -> _Deadline:
     return _Deadline(asyncio.get_running_loop().time() + 10)
+
+
+@pytest.mark.asyncio
+async def test_tls_context_is_loaded_off_the_event_loop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    event_loop_thread = threading.get_ident()
+    context_threads: list[int] = []
+
+    def create_context() -> ssl.SSLContext:
+        context_threads.append(threading.get_ident())
+        return ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+
+    monkeypatch.setattr(china_transport_module, "_create_ssl_context", create_context)
+    session = _FakeSession()
+    transport = ChinaAiohttpTransport(cast(aiohttp.ClientSession, session))
+
+    assert context_threads == []
+
+    await transport.execute(
+        _g_app_auth_request("request_verification"),
+        deadline=_deadline(),
+        connect_timeout=10,
+        read_timeout=20,
+    )
+
+    assert len(context_threads) == 1
+    assert context_threads[0] != event_loop_thread
 
 
 def _g_app_headers(
