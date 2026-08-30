@@ -6,6 +6,12 @@ This project follows semantic versioning. HACS uses the latest GitHub release ta
 
 ## [Unreleased]
 
+## [0.16.2] - 2026-08-30
+
+### Fixed
+
+- I keep a newly saved climate run time for the next A/C command while the GWM cloud read model catches up.
+
 ## [0.16.1] - 2026-08-30
 
 ### Fixed

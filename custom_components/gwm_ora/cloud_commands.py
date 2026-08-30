@@ -77,6 +77,7 @@ class GwmCommandApi:
         self._clock = clock or (lambda: datetime.now(UTC))
         self._commands: dict[str, GwmCommandJournalEntry] = {}
         self._timeout_ids: set[str] = set()
+        self._climate_defaults: dict[str, tuple[int, int]] = {}
 
     async def async_restore(
         self,
@@ -93,10 +94,16 @@ class GwmCommandApi:
         )
 
     async def async_refresh(self) -> dict[str, object]:
-        return await self._cloud.async_get_vehicle_data()
+        return self._overlay_climate_defaults(await self._cloud.async_get_vehicle_data())
 
     async def async_get_vehicles(self) -> dict[str, object]:
-        return await self._cloud.async_get_vehicle_data()
+        return self._overlay_climate_defaults(await self._cloud.async_get_vehicle_data())
+
+    def climate_operation_time_minutes(self, vehicle_id: str) -> int | None:
+        """Return a successfully saved run time while cloud reads catch up."""
+
+        defaults = self._climate_defaults.get(vehicle_id)
+        return None if defaults is None else defaults[1]
 
     async def async_set_climate(
         self,
@@ -154,8 +161,17 @@ class GwmCommandApi:
             include_status=temperature is not None and normalized_mode is None,
         )
         climate = context.basics.climate
-        stored_temperature = None if climate is None else climate.temperature
-        stored_operation_time = None if climate is None else climate.operation_time
+        saved_defaults = self._climate_defaults.get(identifier.value)
+        stored_temperature = (
+            str(saved_defaults[0])
+            if saved_defaults is not None
+            else None if climate is None else climate.temperature
+        )
+        stored_operation_time = (
+            str(saved_defaults[1])
+            if saved_defaults is not None
+            else None if climate is None else climate.operation_time
+        )
         if run_time_only:
             effective_temperature = valid_temperature(stored_temperature)
             if effective_temperature is None:
@@ -187,6 +203,10 @@ class GwmCommandApi:
                 temperature=effective_temperature,
                 operation_time_minutes=effective_operation_time,
             )
+            self._climate_defaults[identifier.value] = (
+                effective_temperature,
+                effective_operation_time,
+            )
 
         should_send = (
             normalized_mode is not None or temperature is not None and currently_on
@@ -217,6 +237,40 @@ class GwmCommandApi:
         return await self._record_acceptance(
             identifier, command_name, acceptance.command_id
         )
+
+    def _overlay_climate_defaults(
+        self,
+        data: dict[str, object],
+    ) -> dict[str, object]:
+        """Keep successful writes visible while the provider read model is stale."""
+        vehicles = data.get("vehicles")
+        if not isinstance(vehicles, list) or not self._climate_defaults:
+            return data
+
+        updated_vehicles: list[object] = []
+        changed = False
+        for item in vehicles:
+            if not isinstance(item, dict):
+                updated_vehicles.append(item)
+                continue
+            defaults = self._climate_defaults.get(item.get("vin"))
+            if defaults is None:
+                updated_vehicles.append(item)
+                continue
+            vehicle = dict(item)
+            climate_value = vehicle.get("climate")
+            climate = dict(climate_value) if isinstance(climate_value, dict) else {}
+            climate["target_temperature_c"] = defaults[0]
+            climate["operation_time_minutes"] = defaults[1]
+            vehicle["climate"] = climate
+            updated_vehicles.append(vehicle)
+            changed = True
+
+        if not changed:
+            return data
+        updated = dict(data)
+        updated["vehicles"] = updated_vehicles
+        return updated
 
     async def async_lock(self, vin: str, action: str) -> dict[str, object]:
         """Validate, send, and journal one lock or unlock request."""

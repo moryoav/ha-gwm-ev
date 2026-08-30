@@ -66,6 +66,9 @@ class GwmClimateRunTimeNumber(GwmEntity, NumberEntity):
     @property
     def native_value(self) -> float | None:
         """Return the saved climate run time in minutes."""
+        saved_value = self._api.climate_operation_time_minutes(self.vin)
+        if saved_value is not None:
+            return float(saved_value)
         vehicle = self.vehicle or {}
         value: Any = (vehicle.get("climate") or {}).get("operation_time_minutes")
         return float(value) if value is not None else None

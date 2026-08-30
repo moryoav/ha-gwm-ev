@@ -213,6 +213,23 @@ async def test_task17_capability_exposes_only_climate_and_keeps_beantech_hidden(
 
 
 @pytest.mark.asyncio
+async def test_saved_climate_runtime_is_visible_while_cloud_reads_are_stale() -> None:
+    coordinator = GwmDataUpdateCoordinator(
+        HomeAssistant("synthetic-config"),
+        SimpleNamespace(),
+        cloud_client=SimpleNamespace(),  # type: ignore[arg-type]
+    )
+    vehicle = _vehicle("SYNTHETIC-A", 80, climate_commands=True)
+    vehicle["climate"] = {"operation_time_minutes": 15}
+    coordinator.async_set_updated_data({"region": "eu", "vehicles": [vehicle]})
+    api = SimpleNamespace(climate_operation_time_minutes=lambda _vin: 5)
+
+    entity = GwmClimateRunTimeNumber(api, coordinator, "SYNTHETIC-A")
+
+    assert entity.native_value == 5
+
+
+@pytest.mark.asyncio
 async def test_task18_capability_exposes_lock_window_without_task19_buttons() -> None:
     api = SimpleNamespace()
     coordinator = GwmDataUpdateCoordinator(
