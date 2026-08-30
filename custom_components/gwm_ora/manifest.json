@@ -3,13 +3,13 @@
   "name": "GWM",
   "codeowners": ["@moryoav"],
   "config_flow": true,
-  "documentation": "https://github.com/moryoav/ha-gwm",
+  "documentation": "https://github.com/moryoav/ha-gwm-ev",
   "integration_type": "hub",
   "iot_class": "cloud_polling",
-  "issue_tracker": "https://github.com/moryoav/ha-gwm/issues",
+  "issue_tracker": "https://github.com/moryoav/ha-gwm-ev/issues",
   "loggers": ["gwm_client"],
   "requirements": [
-    "gwm-client@https://github.com/moryoav/ha-gwm/archive/5e993848ddc0bd28aa3c0e23e8bf1e3e01013f65.zip"
+    "gwm-client@https://github.com/moryoav/ha-gwm-ev/archive/refs/tags/v0.16.0.zip"
   ],
-  "version": "0.15.0"
+  "version": "0.16.0"
 }

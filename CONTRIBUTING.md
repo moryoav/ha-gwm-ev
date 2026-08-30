@@ -122,8 +122,8 @@ Keep new regional behavior isolated so it does not silently change existing regi
 Clone the repository:
 
 ```bash
-git clone https://github.com/moryoav/ha-gwm.git
-cd ha-gwm
+git clone https://github.com/moryoav/ha-gwm-ev.git
+cd ha-gwm-ev
 ```
 
 The repository layout is:

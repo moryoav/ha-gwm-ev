@@ -14,7 +14,7 @@ The setup flow supports Europe, Australia and New Zealand, Russia, and mainland 
 
 Existing add-on entries are not migrated. Remove the previous entry and add GWM again. No password, token, certificate, or add-on state is imported.
 
-See the repository [README](https://github.com/moryoav/ha-gwm/blob/feature/integration-only/README.md) for branch installation instructions, account-region guidance, safety notes, and troubleshooting.
+See the repository [README](https://github.com/moryoav/ha-gwm-ev/blob/main/README.md) for HACS installation instructions, account-region guidance, safety notes, and troubleshooting.
 
 ## Options
 

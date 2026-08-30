@@ -6,6 +6,8 @@ This project follows semantic versioning. HACS uses the latest GitHub release ta
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-08-30
+
 ### Added
 
 - Added the standalone Home Assistant setup flow for Europe, Australia and New Zealand, Russia, and mainland China.
@@ -21,7 +23,7 @@ This project follows semantic versioning. HACS uses the latest GitHub release ta
 
 ### Removed
 
-- Removed the Docker add-on, .NET solution and tests, Supervisor discovery, local proxy API, and add-on build workflows from the integration-only branch.
+- Removed the Docker add-on, .NET solution and tests, Supervisor discovery, local proxy API, and add-on build workflows.
 
 ## [0.13.0] - 2026-08-28
 

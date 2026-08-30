@@ -25,9 +25,9 @@ classifiers = [
 ]
 
 [project.urls]
-Documentation = "https://github.com/moryoav/ha-gwm"
-Issues = "https://github.com/moryoav/ha-gwm/issues"
-Repository = "https://github.com/moryoav/ha-gwm"
+Documentation = "https://github.com/moryoav/ha-gwm-ev"
+Issues = "https://github.com/moryoav/ha-gwm-ev/issues"
+Repository = "https://github.com/moryoav/ha-gwm-ev"
 
 [tool.setuptools]
 packages = ["gwm_client"]

@@ -7,17 +7,17 @@
 
 This custom integration connects Home Assistant directly to supported regional GWM cloud services. It discovers vehicles on the account, creates native Home Assistant entities, polls vehicle status, and provides explicitly enabled remote controls.
 
-The `feature/integration-only` branch is a live-testing checkpoint. The previous Docker add-on is no longer part of this branch. Europe, Australia and New Zealand, Russia, and mainland China are available in the setup flow.
+This repository is the integration-only successor to `ha-gwm`. The previous Docker add-on is not required. Europe, Australia and New Zealand, Russia, and mainland China are available in the setup flow.
 
 ## Important Upgrade Note
 
-This branch does not import credentials, tokens, or state from the retired add-on.
+This integration does not import credentials, tokens, or state from the retired add-on.
 
 If you are updating an existing installation, you must:
 
 1. Remove the existing **GWM** integration entry from **Settings** > **Devices & services**.
 2. Stop the old GWM add-on.
-3. Install this branch of the integration.
+3. Install this integration from the `ha-gwm-ev` custom HACS repository.
 4. Restart Home Assistant.
 5. Add **GWM** again and complete a fresh sign-in.
 6. Confirm that polling and entities work before enabling remote commands.
@@ -45,21 +45,22 @@ The project has been tested with these vehicles:
 - WEY VV6, mainland-China NavInfo platform.
 - Tank 300 Hi4-T, mainland-China BeanTech platform.
 
-Other compatible GWM vehicles may also work. If you test another model, please [open an issue](https://github.com/moryoav/ha-gwm/issues/new/choose) with the model, account region, and features you verified. Never include credentials, tokens, verification codes, VINs, or exact locations.
+Other compatible GWM vehicles may also work. If you test another model, please [open an issue](https://github.com/moryoav/ha-gwm-ev/issues/new/choose) with the model, account region, and features you verified. Never include credentials, tokens, verification codes, VINs, or exact locations.
 
-## Test Installation
+## Installation
 
-This branch is not the current production release in HACS. Back up Home Assistant before testing it.
+This is currently installed as a custom HACS repository. Back up Home Assistant before replacing the previous add-on based installation.
 
-1. Download the [`feature/integration-only` branch archive](https://github.com/moryoav/ha-gwm/archive/refs/heads/feature/integration-only.zip).
-2. Extract `custom_components/gwm_ora` from the archive.
-3. Replace `/config/custom_components/gwm_ora` with that folder.
-4. Restart Home Assistant.
-5. Open **Settings** > **Devices & services** > **Add integration**.
-6. Search for **GWM**.
-7. Select the account region and complete authentication.
+1. Open HACS.
+2. Open **Custom repositories**.
+3. Add `https://github.com/moryoav/ha-gwm-ev` as an **Integration** repository.
+4. Find **GWM** in HACS and install the latest release.
+5. Restart Home Assistant.
+6. Open **Settings** > **Devices & services** > **Add integration**.
+7. Search for **GWM**.
+8. Select the account region and complete authentication.
 
-Home Assistant installs the test-only `gwm-client` dependency from an exact GitHub commit recorded in the integration manifest. I use an immutable source archive so the test cannot silently change when the branch advances. Before a production release, I will publish the client through the approved package workflow and replace this test dependency with a pinned PyPI version.
+Home Assistant installs the bundled `gwm-client` dependency from the same immutable GitHub release tag recorded in the integration manifest. The dependency cannot silently change when `main` advances.
 
 The integration requires Home Assistant 2026.1.0 or newer.
 
@@ -71,7 +72,7 @@ GWM may send a one-time verification code during first setup or reauthentication
 
 For European accounts, the message may come from `noreply@gwm-eu.com` with the subject `GWM Verification Code`.
 
-<img src="https://raw.githubusercontent.com/moryoav/ha-gwm/main/docs/images/gwm-verification-code-email.jpeg" alt="Example GWM verification code email" width="320">
+<img src="https://raw.githubusercontent.com/moryoav/ha-gwm-ev/main/docs/images/gwm-verification-code-email.jpeg" alt="Example GWM verification code email" width="320">
 
 Australia and New Zealand accounts normally permit one active session. The setup flow requires explicit confirmation before it can replace the official app session. I recommend a dedicated account that has been shared access to the vehicle.
 
@@ -240,7 +241,7 @@ Historical ORA test results and attribution to `ora2mqtt` remain named where the
 
 Some protocol values and bootstrap materials were obtained through interoperability research on official GWM applications. I record their sources, hashes, certificate renewal deadlines, and unresolved redistribution conditions in [Third-Party and Protocol Material Notice](THIRD_PARTY_NOTICES.md).
 
-The live-testing branch is not a production release. Package publication and a production release remain blocked until the recorded permission or authorized-replacement conditions are resolved.
+This remains an early integration release. Publishing the standalone client through a public package index remains blocked until the recorded permission or authorized-replacement conditions are resolved.
 
 ## Disclaimer
 
@@ -256,9 +257,9 @@ Thanks to [AlexandrErohin](https://github.com/AlexandrErohin) for the initial mo
 
 Deep thanks to [wilberforce](https://github.com/wilberforce) for the Australia and New Zealand authentication and signing work, vehicle status mappings, and live validation.
 
-[hacs-badge]: https://img.shields.io/badge/HACS-Default-41BDF5.svg?style=flat-square
-[hacs-url]: https://github.com/hacs/integration
-[release-badge]: https://img.shields.io/github/v/release/moryoav/ha-gwm?style=flat-square
-[release-url]: https://github.com/moryoav/ha-gwm/releases
-[license-badge]: https://img.shields.io/github/license/moryoav/ha-gwm?style=flat-square
-[license-url]: https://github.com/moryoav/ha-gwm/blob/main/LICENSE
+[hacs-badge]: https://img.shields.io/badge/HACS-Custom-41BDF5.svg?style=flat-square
+[hacs-url]: https://github.com/moryoav/ha-gwm-ev
+[release-badge]: https://img.shields.io/github/v/release/moryoav/ha-gwm-ev?style=flat-square
+[release-url]: https://github.com/moryoav/ha-gwm-ev/releases
+[license-badge]: https://img.shields.io/github/license/moryoav/ha-gwm-ev?style=flat-square
+[license-url]: https://github.com/moryoav/ha-gwm-ev/blob/main/LICENSE

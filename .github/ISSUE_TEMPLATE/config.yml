@@ -1,5 +1,5 @@
 blank_issues_enabled: true
 contact_links:
   - name: Add support for a new region
-    url: https://github.com/moryoav/ha-gwm/blob/main/CONTRIBUTING.md#adding-support-for-a-new-gwm-cloud-region
+    url: https://github.com/moryoav/ha-gwm-ev/blob/main/CONTRIBUTING.md#adding-support-for-a-new-gwm-cloud-region
     about: Learn what local protocol evidence, sanitization, implementation, and testing are required for a new GWM cloud region.

@@ -90,17 +90,17 @@ def test_hacs_default_repository_readiness_files_exist() -> None:
         "name": "GWM",
         "homeassistant": "2026.1.0",
     }
-    assert manifest["documentation"] == "https://github.com/moryoav/ha-gwm"
-    assert manifest["issue_tracker"] == "https://github.com/moryoav/ha-gwm/issues"
+    assert manifest["documentation"] == "https://github.com/moryoav/ha-gwm-ev"
+    assert manifest["issue_tracker"] == "https://github.com/moryoav/ha-gwm-ev/issues"
     assert manifest["codeowners"] == ["@moryoav"]
     assert manifest["domain"] == "gwm_ora"
     assert manifest["name"] == "GWM"
-    assert manifest["version"] == "0.15.0"
+    assert manifest["version"] == "0.16.0"
     assert manifest["integration_type"] == "hub"
     assert manifest["loggers"] == ["gwm_client"]
     assert manifest["requirements"] == [
-        "gwm-client@https://github.com/moryoav/ha-gwm/archive/"
-        "5e993848ddc0bd28aa3c0e23e8bf1e3e01013f65.zip"
+        "gwm-client@https://github.com/moryoav/ha-gwm-ev/archive/refs/tags/"
+        "v0.16.0.zip"
     ]
 
     custom_components = [path.name for path in (ROOT / "custom_components").iterdir() if path.is_dir()]
