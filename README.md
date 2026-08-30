@@ -3,7 +3,18 @@
 [![GitHub Release][release-badge]][release-url]
 [![HACS][hacs-badge]][hacs-url]
 [![License][license-badge]][license-url]
-[![Ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/moryoav)
+
+---
+
+## Support me on Ko-fi
+
+If this project is useful to you, you can support its continued development:
+
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/Y5B124NZ2L)
+
+---
+
+<img alt="GWM" src="brand/gwm-logo-white.svg">
 
 This custom integration connects Home Assistant directly to supported regional GWM cloud services. It discovers vehicles on the account, creates native Home Assistant entities, polls vehicle status, and provides explicitly enabled remote controls.
 
