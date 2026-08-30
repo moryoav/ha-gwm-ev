@@ -4,14 +4,14 @@ This document is the durable plan, behavior contract, decision log, and test led
 
 ## Status
 
-- Working branch: `feature/integration-only`
+- Working branch: `main` in `moryoav/ha-gwm-ev`, promoted from `feature/integration-only`
 - Branch point: `1184737` (`Update README GWM logo to SVG`)
-- Current checkpoint: Task 25 complete; the integration-only branch is ready for manual installation and controlled live testing in all four regions
-- Next checkpoint: manually install this branch, then run live authentication and read-only polling with command options disabled
+- Current checkpoint: Task 26 complete; the integration-only release is running on the selected Home Assistant host with live EU authentication, direct polling, exact entity-ID continuity, and restart recovery verified
+- Next checkpoint: perform separately approved live command tests without broadening the platform capability matrix
 - Synchronized `main`: `7b599cb` (`v0.13.0`) through a two-parent merge without rebasing or selective cherry-picks
-- Task 25 exposes mainland China through the native setup flow and connects the isolated Python runtime to the same NavInfo and BeanTech capability boundaries carried by released `main`. No credentials or state are migrated, no live request or vehicle operation is included, and unresolved protocol-material permission and replacement conditions remain production release holds
+- Task 25 exposes mainland China through the native setup flow and connects the isolated Python runtime to the same NavInfo and BeanTech capability boundaries carried by released `main`. Task 26 publishes the successor repository, completes one fresh EU sign-in, proves live read-only polling and restart recovery, and retires the installed add-on path without sending a vehicle command
 
-Work proceeds one explicitly approved task at a time. At the end of every task, update this document, run the checks appropriate to that checkpoint, create one focused commit, push it to `feature/integration-only`, report the result, and stop. Do not begin the next task without a new user green light.
+Work proceeds one explicitly approved task at a time. At the end of every task, update this document, run the checks appropriate to that checkpoint, create one focused commit, push it to the active migration repository, report the result, and stop. Do not begin the next task without a new user green light.
 
 ## Working Agreement
 
@@ -20,7 +20,7 @@ Work proceeds one explicitly approved task at a time. At the end of every task, 
 - Never commit account credentials, verification codes, tokens, certificates issued to a user, private keys, VINs, locations, or unsanitized cloud responses.
 - Live read-only tests require explicit approval for the corresponding task.
 - Live climate, lock, unlock, window, and charging-plan operations require an additional explicit confirmation immediately before testing them.
-- Push each completed task's focused commit to `feature/integration-only`. Do not publish packages, open a pull request, merge, or release without separate approval.
+- Push each completed task's focused commit to the active migration repository. Do not publish packages, open a pull request, merge, or release without separate approval.
 - Keep Git operations sequential and bounded. Before checkpoint Git work, verify that no Codex-owned background Git diff workers are accumulating; keep large local reverse-engineering artifacts in repository-local excludes so status/diff scans cannot spawn an unbounded process queue.
 - If `main` moves materially during this long-lived effort, review and record the drift before synchronizing it. Because this published feature branch is long-lived, prefer an explicit merge checkpoint over rebasing or selective cherry-picking of a dependent release series.
 
@@ -248,9 +248,9 @@ After Task 14, native config flows, account-bound state, and a direct coordinato
 
 After Task 21, commands and charging control pass the complete fixture, lifecycle, restart, cancellation, and fail-closed matrix for EU, ANZ, Russia, NavInfo China, and BeanTech China. Task 25 exposes the released `main` capability set without broadening any platform route. No live vehicle operation was performed during these migration checkpoints.
 
-### Gate D - Cutover readiness (passed for manual branch testing on 2026-08-30)
+### Gate D - Cutover readiness (passed for live EU read-only operation on 2026-08-30)
 
-Packaging, explicit fresh-entry cutover behavior, documentation, complete offline tests, and isolated dependency installation pass before manual installation. Existing add-on entries are not converted. Task 25 adds the accepted mainland-China parity baseline, so all four regions can enter controlled live testing through the standalone integration.
+Packaging, explicit fresh-entry cutover behavior, documentation, complete offline tests, and isolated dependency installation passed before manual installation. Existing add-on entries were not converted. Task 26 proved a fresh EU setup, direct read-only polling, exact entity-ID continuity, restart recovery, and clean add-on retirement on the selected Home Assistant host. ANZ, Russia, and China still require their own controlled live checks.
 
 ## Roadmap
 
@@ -279,6 +279,7 @@ Packaging, explicit fresh-entry cutover behavior, documentation, complete offlin
 - [x] Task 23 — Resolve the existing-installation path by requiring removal, a new integration entry, and fresh authentication. Do not import add-on credentials or state.
 - [x] Task 24 — Remove add-on/proxy code and complete final validation and documentation.
 - [x] Task 25 - Activate mainland China in the standalone flow and preserve released NavInfo and BeanTech capability parity.
+- [x] Task 26 - Publish the successor repository and complete a live EU read-only cutover with exact entity-ID continuity.
 
 The changed checkpoints stay intentionally narrow:
 
@@ -298,7 +299,8 @@ The changed checkpoints stay intentionally narrow:
 - Task 23 intentionally performs no credential or state migration. A previous add-on entry fails with clear removal and re-add guidance, and the normal user flow starts with region selection and fresh authentication.
 - Task 24 removes the Docker, .NET, Supervisor, and local proxy surfaces, activates the immutable `gwm-client` source archive for branch testing, and completes brand-neutral internal Python naming. The public `gwm_ora` domain, action namespace, storage compatibility keys, and protocol-derived names remain stable where changing them would break persisted development state or wire fidelity.
 - Task 25 removes the obsolete China selector gate, transfers a validated complete China state into the owned runtime without a second login, resumes complete China state after restart without requesting SMS, and applies the released per-platform capability matrix to normalized snapshots and Home Assistant entities.
-- Tasks 17 through 22, Task 24, and Task 25 preserve the original command, charging, hardening, packaging, and cutover progression. I keep the platform capability explicit: BeanTech supports lock/unlock, close windows, remote start/stop, horn, flash, and close sunroof. It does not support the climate entity, climate run-time number, tailgate operations, other sunroof positions, combined horn/lights, or charging schedules.
+- Task 26 promotes the integration-only work into the public `ha-gwm-ev` repository, performs one fresh EU and Israel account sign-in, preserves every registered entity ID and metadata field, proves read-only polling across restart, and removes the obsolete disabled entries. I sent no vehicle command.
+- Tasks 17 through 22 and Tasks 24 through 26 preserve the original command, charging, hardening, packaging, and cutover progression. I keep the platform capability explicit: BeanTech supports lock/unlock, close windows, remote start/stop, horn, flash, and close sunroof. It does not support the climate entity, climate run-time number, tailgate operations, other sunroof positions, combined horn/lights, or charging schedules.
 
 ## Decision Log
 
@@ -370,6 +372,8 @@ The changed checkpoints stay intentionally narrow:
 | D-064 | 2026-08-30 | I pin branch testing to the immutable Task 22 `gwm-client` source archive. | Home Assistant can install the independent client from a fixed HTTPS archive without requiring Git on the host. Production still requires a separately approved package publication and version pin. |
 | D-065 | 2026-08-30 | I remove the add-on, .NET solution and tests, Supervisor workflows, and local integration proxy in Task 24. | The direct client and Home Assistant lifecycle now own the required read and write contracts, and retaining the second runtime would make the integration-only branch ambiguous and harder to test. |
 | D-066 | 2026-08-30 | I treat released `main` as the accepted mainland-China validation baseline and expose matching capabilities in Task 25. | The user requires the standalone integration to preserve the app and integration combination instead of applying an additional Python-only activation gate. NavInfo and BeanTech stay isolated and expose only their released capability sets. |
+| D-067 | 2026-08-30 | I publish `ha-gwm-ev` as the integration-only successor and require fresh setup instead of importing add-on secrets. | The live EU cutover preserved all entity IDs and metadata through Home Assistant's registry while keeping credentials, verification codes, tokens, and stored client state out of the repository and migration tooling. |
+| D-068 | 2026-08-30 | I load overseas and mainland-China system trust outside the Home Assistant event loop. | Live setup exposed a blocking certificate-store call in the client constructor. Release `v0.16.1` defers that work to a bounded worker before first use, and the patched restart produced no blocking-call warning. |
 
 ## Post-Branch Main Drift Review
 
@@ -1516,18 +1520,33 @@ Delivered:
 - Focused tests cover China setup, risk control, complete-state restart, no-PIN option activation, mixed NavInfo and BeanTech capabilities, local climate defaults, command delegation, charging isolation, and transport ownership.
 - The complete Python suite passes 1,098 tests. The Home Assistant-side suite passes 131 tests and the client-only suite passes 967 tests. Repository-wide Ruff, strict client mypy, client archive build, Twine, and the narrow archive verifier pass.
 
+### Task 26 - Live EU read-only cutover
+
+Status: complete on 2026-08-30; the public integration-only release is installed and polling the selected EU account directly. I did not send a climate, lock, window, charging, or other vehicle command.
+
+Delivered:
+
+- I created the public `moryoav/ha-gwm-ev` successor repository with the integration-only history on `main`, released `v0.16.0`, and installed it as a custom HACS integration.
+- I retained a local rollback snapshot, disabled and stopped the legacy path, completed one fresh EU and Israel sign-in with one new verification email, and confirmed restart recovery without another verification request.
+- I restored the previous 60-second polling interval, remote-command opt-in, security PIN, warning log level, and disabled charging-control option. Enabling the option did not send a vehicle command.
+- I transferred all 65 registered entities to the new direct entry with no missing or extra entity IDs. Unique IDs, platforms, disabled flags, entity categories, device classes, and original names all match the legacy registry. The final registry has 40 enabled entities and 25 integration-disabled entities.
+- I verified all 40 enabled entities in the Home Assistant state machine after setup, option reload, restart, and legacy-entry deletion. None were missing, unknown, or unavailable at the final checkpoint.
+- I found one Home Assistant blocking-call warning caused by eager system trust loading during authentication. I deferred overseas and mainland-China trust loading to bounded worker threads, added regression tests, released and installed `v0.16.1`, and verified that the patched restart produced no GWM blocking warning or setup failure.
+- I removed both obsolete disabled add-on based entries after entity ownership transferred. One enabled direct GWM entry, one GWM device, and the exact 65-entity contract remain. The retired add-on is stopped and its start-on-boot option is disabled.
+- The final complete Python suite passes 1,100 tests. Repository-wide Ruff and strict mypy across all 25 client source files pass.
+
 ### Next checkpoint (requires explicit approval)
 
-Install `feature/integration-only` on the selected Home Assistant test system and complete live authentication plus read-only polling with remote commands and charging control disabled. Any live climate, lock, window, extended China, or charging operation still requires a separate immediate approval.
+Run separately approved live command checks one family at a time. Any climate, lock, window, extended China, or charging operation still requires a separate immediate approval. ANZ, Russia, NavInfo China, and BeanTech China also retain their own live authentication and read-validation gaps.
 
 ## Open Risks and Questions
 
 - Cross-architecture confirmation of the scoped GWM SSL context; Linux x86-64/OpenSSL 3.5.6 is proven offline, while supported ARM architectures remain untested.
-- The bundled EU general bootstrap certificate expires on 2027-01-04. Its tested renewal deadline is 2026-10-06, so an authorized replacement and updated provenance must land before that deadline or EU cutover must remain blocked.
+- The bundled EU general bootstrap certificate expires on 2027-01-04. Its tested renewal deadline is 2026-10-06, so an authorized replacement and updated provenance must land before that deadline or EU authentication must fail closed. The live cutover does not waive this renewal requirement.
 - The bundled Russia general bootstrap certificate expires on 2030-04-21. Its tested renewal deadline is 2030-01-21, so an authorized replacement and updated provenance must land before that deadline or Russia support must fail closed.
 - Modern `cryptography` rejects invalid PrintableString characters in the legacy OEM CA subjects; the POC validates their envelopes and lets OpenSSL consume the original signed bytes instead.
-- EU authentication is implemented and exhaustively fixture-tested offline, but its undocumented application-level token-expiry and wrong-verification-code values remain unverified. Until sanitized evidence establishes those codes, only HTTP 401/403 retires token state and unknown application errors propagate without fallback side effects.
-- Exact live parity of undocumented authentication and response behavior in ANZ and Russia remains unverified; EU read transport is proven live, while Task 5 EU auth, Task 6 ANZ auth/read, and Task 10 Russia auth/read semantics were deliberately not exercised live.
+- Fresh EU authentication, one-time verification, direct vehicle discovery, status polling, options reload, and restart recovery are live-proven on one Israel account. Undocumented application-level token-expiry and wrong-verification-code values remain unverified. Until sanitized evidence establishes those codes, only HTTP 401/403 retires token state and unknown application errors propagate without fallback side effects.
+- Exact live parity of undocumented authentication and response behavior in ANZ and Russia remains unverified. EU authentication and read behavior are proven live on one account, while Task 6 ANZ and Task 10 Russia semantics remain fixture-proven only.
 - The overseas Python transport still deliberately rejects compressed responses. The separate China adapter proves independently bounded gzip and both NavInfo and BeanTech status routes over HTTP/1.1 against synthetic services. `aiohttp` cannot prefer HTTP/2, so manual China testing should confirm that each service accepts the app-permitted HTTP/1.1 fallback. This observation no longer hides China from the setup flow.
 - China authentication now crosses three services in the standalone client, but its exact live error-code behavior remains unverified. Unknown G-App, BeanTech, or AutoAI application codes therefore do not retire authentication, trigger SMS delivery/login, or discard a recoverable G-App-only partial; risk-control `1013` remains an explicit stop directing the user to the official app.
 - BeanTech and AutoAI initialization now use the narrowly bounded three-attempt policy selected in D-035. It is fixture-proven only; live validation must confirm gateway behavior, while SMS delivery/login, refresh, reads, schema/TLS/risk failures, and commands retain no automatic retry.
@@ -1538,7 +1557,7 @@ Install `feature/integration-only` on the selected Home Assistant test system an
 - ANZ side-by-side session effects remain untested. Task 6 prevents every password login without explicit one-shot consent and prevents automatic `607501` reclaim loops; Task 12 now presents that consent as a default-unchecked warning and the project still recommends a dedicated shared vehicle account.
 - ANZ `110641`, current token-expiry/rotation behavior, verification delivery/expiry, AU-versus-NZ differences, and unknown `checkSMSCode` failures lack sanitized current-service evidence; unknown errors stop without attempting the final login.
 - Russia application-level token-expiry and wrong/expired verification-code values lack sanitized evidence. Exact `110641` is therefore limited to the password-login challenge, submitted-code application failures remain unknown, and only HTTP 401/403 can retire or reject authentication state.
-- The exact bootstrap inventory, renewal process, and archive boundary are now controlled, but permission or an authorized replacement is still required for the shared identities before package publication and final cutover.
-- The Task 22 provenance audit records unresolved permission and source-history gaps for app-derived protocol material and the RSA recovery implementation. These remain release holds; the audit is not legal clearance.
+- The exact bootstrap inventory, renewal process, and archive boundary are controlled, but permission or an authorized replacement is still required before publishing the client as an independently distributed package. The public source-tag release and live cutover do not resolve that question.
+- The Task 22 provenance audit records unresolved permission and source-history gaps for app-derived protocol material and the RSA recovery implementation. The audit is not legal clearance.
 - Blocking certificate/key workers finish protected temporary-file cleanup before propagating cancellation, so a cancelled authentication may return after its nominal deadline even though no network stage may continue past that deadline.
 - I still need live confirmation that each regional and platform provider returns every command identifier needed by the Task 14 journal before I can claim release or cutover confidence. Tasks 17 through 21 prove their command, charging, and lifecycle contracts offline only.
