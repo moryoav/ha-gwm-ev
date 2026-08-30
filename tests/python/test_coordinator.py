@@ -80,6 +80,50 @@ async def test_cloud_coordinator_uses_configured_account_interval() -> None:
 
 
 @pytest.mark.asyncio
+async def test_cloud_refresh_keeps_latest_remote_command_status() -> None:
+    class CloudClient:
+        async def async_get_vehicle_data(self) -> dict:
+            return {
+                "region": "eu",
+                "vehicles": [
+                    {
+                        "vin": "SYNTHETIC-VIN",
+                        "command_status": "No remote command has run yet",
+                    }
+                ],
+            }
+
+    api = AsyncMock()
+    coordinator = GwmDataUpdateCoordinator(
+        HomeAssistant("synthetic-config"),
+        api,
+        cloud_client=CloudClient(),  # type: ignore[arg-type]
+    )
+    coordinator.data = await coordinator._async_update_data()
+    coordinator.async_track_command(
+        {
+            "id": "completed-command",
+            "vin": "SYNTHETIC-VIN",
+            "state": "completed",
+            "status": "A/C: completed - Success [0]",
+        }
+    )
+
+    refreshed = await coordinator._async_update_data()
+
+    assert refreshed["vehicles"][0]["command_status"] == (
+        "A/C: completed - Success [0]"
+    )
+
+    api.async_refresh.return_value = await CloudClient().async_get_vehicle_data()
+    await coordinator._async_refresh_after_completed_command()
+
+    assert coordinator.data["vehicles"][0]["command_status"] == (
+        "A/C: completed - Success [0]"
+    )
+
+
+@pytest.mark.asyncio
 async def test_cloud_coordinator_runs_owned_charging_cleanup_after_each_refresh() -> None:
     calls: list[dict[str, object]] = []
 

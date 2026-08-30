@@ -48,6 +48,7 @@ class GwmDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.api = api
         self.cloud_client = cloud_client
         self._command_tasks: dict[str, asyncio.Task[None]] = {}
+        self._command_statuses: dict[str, str] = {}
         self._charging_plan_active: dict[str, bool] = {}
 
     async def _async_update_data(self) -> dict[str, Any]:
@@ -62,7 +63,7 @@ class GwmDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     _LOGGER.warning(
                         "Could not inspect owned charging plans; the next poll will retry"
                     )
-            return data
+            return self._overlay_command_statuses(data)
         except GwmAuthenticationError as err:
             with suppress(Exception):
                 await self.cloud_client.async_authentication_rejected()
@@ -164,19 +165,39 @@ class GwmDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def _async_refresh_after_completed_command(self) -> None:
         """Refresh cached vehicle data immediately after a successful command."""
         with suppress(GwmCommandError, GwmClientError):
-            self.async_set_updated_data(await self.api.async_refresh())
+            self.async_set_updated_data(
+                self._overlay_command_statuses(await self.api.async_refresh())
+            )
 
     def _apply_command_status(self, command: dict[str, Any]) -> None:
         """Overlay a command status onto cached coordinator vehicle data."""
         vin = command.get("vin")
         status = command.get("status")
-        if not vin or not status or not self.data:
+        if (
+            not isinstance(vin, str)
+            or not vin
+            or not isinstance(status, str)
+            or not status
+        ):
             return
+
+        self._command_statuses[vin] = status
+        if not self.data:
+            return
+
+        self.async_set_updated_data(self._overlay_command_statuses(self.data))
+
+    def _overlay_command_statuses(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Keep the latest local command result across normal cloud refreshes."""
+
+        if not self._command_statuses:
+            return data
 
         vehicles = []
         changed = False
-        for vehicle in self.vehicles:
-            if vehicle.get("vin") != vin:
+        for vehicle in data.get("vehicles", []):
+            status = self._command_statuses.get(vehicle.get("vin"))
+            if status is None or vehicle.get("command_status") == status:
                 vehicles.append(vehicle)
                 continue
 
@@ -186,8 +207,8 @@ class GwmDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             changed = True
 
         if not changed:
-            return
+            return data
 
-        data = dict(self.data)
-        data["vehicles"] = vehicles
-        self.async_set_updated_data(data)
+        updated_data = dict(data)
+        updated_data["vehicles"] = vehicles
+        return updated_data

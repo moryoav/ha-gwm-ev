@@ -6,6 +6,12 @@ This project follows semantic versioning. HACS uses the latest GitHub release ta
 
 ## [Unreleased]
 
+## [0.16.4] - 2026-08-30
+
+### Fixed
+
+- I keep the latest remote-command result visible across normal vehicle refreshes instead of immediately resetting it to "No remote command has run yet".
+
 ## [0.16.3] - 2026-08-30
 
 ### Changed
