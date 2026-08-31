@@ -471,6 +471,58 @@ async def test_existing_access_auth_rejection_refreshes_without_access_header_an
 
 
 @pytest.mark.asyncio
+async def test_expired_access_api_code_refreshes_and_rotates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_identity(monkeypatch)
+    state = _state(
+        access_token="SYNTHETIC-OLD-ACCESS",
+        refresh_token="SYNTHETIC-OLD-REFRESH",
+    )
+    transport = _FakeTransport(
+        _response({"code": "550004", "data": {}}),
+        _success_data("refresh"),
+        _success_data("get_user_info"),
+    )
+
+    result = await _authenticate(transport, state=state)
+
+    assert type(result) is RussiaAuthenticated
+    assert result.state.access_token == "SYNTHETIC-ROTATED-ACCESS"
+    assert result.state.refresh_token == "SYNTHETIC-ROTATED-REFRESH"
+    assert [request.operation for request in transport.requests] == [
+        "get_user_info",
+        "refresh_token",
+        "get_user_info",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_runtime_russia_refresh_installs_rotated_session() -> None:
+    state = _state(
+        access_token="SYNTHETIC-OLD-ACCESS",
+        refresh_token="SYNTHETIC-OLD-REFRESH",
+    )
+    context = _legacy_context()
+    transport = _FakeTransport(
+        _success_data("refresh"),
+        _success_data("get_user_info"),
+    )
+    client = _client(transport, session=_session(state, context=context))
+
+    result = await client.refresh_russia_session(_credentials(), state)
+
+    assert result.state.access_token == "SYNTHETIC-ROTATED-ACCESS"
+    assert result.state.refresh_token == "SYNTHETIC-ROTATED-REFRESH"
+    assert result.session.app_ssl_context is context
+    assert client._session == result.session
+    assert [request.operation for request in transport.requests] == [
+        "refresh_token",
+        "get_user_info",
+    ]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("status", [401, 403])
 async def test_access_and_refresh_auth_rejections_fall_through_to_password_login(
     monkeypatch: pytest.MonkeyPatch,

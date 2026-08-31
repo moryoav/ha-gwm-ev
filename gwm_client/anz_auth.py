@@ -37,6 +37,8 @@ from .errors import (
     GwmSchemaError,
     GwmSignatureError,
     GwmTlsError,
+    is_overseas_refresh_rejected,
+    is_overseas_session_expired,
 )
 from .models import GwmSession
 from .regions import GatewayRole, Region, RegionProtocol, TlsMode, get_region_protocol
@@ -57,16 +59,6 @@ _LEGACY_VERIFICATION_REQUIRED_CODES = frozenset({"309702", "110641"})
 _CURRENT_VERIFICATION_REQUIRED_CODES = frozenset({"309702", "308103", "110641"})
 _CURRENT_CREDENTIAL_REJECTED_CODES = frozenset({"308001"})
 _CURRENT_VERIFICATION_REJECTED_CODES = frozenset({"308011", "308012"})
-_CURRENT_SESSION_EXPIRED_CODES = frozenset(
-    {
-        "-101",
-        "550004",
-        "551004",
-        "551006",
-        "607124",
-    }
-)
-_CURRENT_REFRESH_REJECTED_CODES = _CURRENT_SESSION_EXPIRED_CODES | {"551011"}
 # Historical, contributor-authored ANZ R&D evidence records 308011 as a wrong or
 # expired verification code. No other application code is inferred as rejection.
 _LEGACY_VERIFICATION_REJECTED_CODES = frozenset({"308011"})
@@ -464,13 +456,17 @@ async def authenticate_anz(
             access_rejected = True
             progress.existing_session_rejected = True
         except GwmApiError as error:
-            if not _is_session_conflict(error):
+            if is_overseas_session_expired(error):
+                access_rejected = True
+                progress.existing_session_rejected = True
+            elif not _is_session_conflict(error):
                 raise
-            progress.existing_session_rejected = True
-            candidate = _session_reclaim_state(candidate)
-            if not allow_session_reclaim:
-                return AnzSessionReclaimRequired(state=candidate)
-            reclaim_attempt = True
+            else:
+                progress.existing_session_rejected = True
+                candidate = _session_reclaim_state(candidate)
+                if not allow_session_reclaim:
+                    return AnzSessionReclaimRequired(state=candidate)
+                reclaim_attempt = True
         else:
             candidate = replace(
                 candidate,
@@ -504,13 +500,21 @@ async def authenticate_anz(
                 gw_id=None,
             )
         except GwmApiError as error:
-            if not _is_session_conflict(error):
+            if is_overseas_refresh_rejected(error):
+                candidate = replace(
+                    candidate,
+                    access_token=None,
+                    refresh_token=None,
+                    gw_id=None,
+                )
+            elif not _is_session_conflict(error):
                 raise
-            progress.existing_session_rejected = True
-            candidate = _session_reclaim_state(candidate)
-            if not allow_session_reclaim:
-                return AnzSessionReclaimRequired(state=candidate)
-            reclaim_attempt = True
+            else:
+                progress.existing_session_rejected = True
+                candidate = _session_reclaim_state(candidate)
+                if not allow_session_reclaim:
+                    return AnzSessionReclaimRequired(state=candidate)
+                reclaim_attempt = True
         else:
             access_token, refresh_token = _parse_token_pair(refreshed, operation="refresh_token")
             gw_id = _updated_gw_id(
@@ -540,13 +544,22 @@ async def authenticate_anz(
                     gw_id=None,
                 )
             except GwmApiError as error:
-                if not _is_session_conflict(error):
+                if is_overseas_session_expired(error):
+                    progress.existing_session_rejected = True
+                    candidate = replace(
+                        candidate,
+                        access_token=None,
+                        refresh_token=None,
+                        gw_id=None,
+                    )
+                elif not _is_session_conflict(error):
                     raise
-                progress.existing_session_rejected = True
-                candidate = _session_reclaim_state(candidate)
-                if not allow_session_reclaim:
-                    return AnzSessionReclaimRequired(state=candidate)
-                reclaim_attempt = True
+                else:
+                    progress.existing_session_rejected = True
+                    candidate = _session_reclaim_state(candidate)
+                    if not allow_session_reclaim:
+                        return AnzSessionReclaimRequired(state=candidate)
+                    reclaim_attempt = True
             else:
                 candidate = replace(
                     candidate,
@@ -759,7 +772,7 @@ async def refresh_current_anz_session(
             gw_id=state.gw_id,
         )
     except GwmApiError as error:
-        if type(error) is GwmApiError and error.api_code in _CURRENT_REFRESH_REJECTED_CODES:
+        if is_overseas_refresh_rejected(error):
             raise GwmAuthenticationError(
                 operation="refresh_token",
                 api_code=error.api_code,
@@ -778,6 +791,96 @@ async def refresh_current_anz_session(
             current=state.gw_id,
             operation="refresh_token",
             authentication_method=AnzAuthenticationMethod.CURRENT,
+        ),
+        verification_requested_at=None,
+    )
+    return _authenticated_result(updated, ssl_context)
+
+
+async def refresh_legacy_anz_session(
+    *,
+    config: GwmClientConfig,
+    transport: _AsyncTransport,
+    credentials: AnzCredentials,
+    state: AnzAuthState,
+    ssl_context: ssl.SSLContext,
+    deadline: _Deadline,
+) -> AnzAuthenticated:
+    """Rotate one legacy ANZ session and validate the replacement token."""
+
+    if (
+        type(config) is not GwmClientConfig
+        or config.region is not Region.ANZ
+        or type(credentials) is not AnzCredentials
+        or credentials.authentication_method is not AnzAuthenticationMethod.LEGACY
+        or config.anz_authentication_method != AnzAuthenticationMethod.LEGACY.value
+        or type(state) is not AnzAuthState
+        or not state.matches(credentials)
+        or state.session_reclaim_required
+        or state.access_token is None
+        or state.refresh_token is None
+        or not isinstance(ssl_context, ssl.SSLContext)
+        or type(deadline) is not _Deadline
+    ):
+        raise GwmAuthenticationError(operation="refresh_token")
+    _ensure_deadline(deadline, operation="refresh_token")
+    try:
+        refreshed = await _request_data(
+            config=config,
+            transport=transport,
+            endpoint=_REFRESH,
+            credentials=credentials,
+            body=_refresh_body(credentials, state),
+            access_token=state.access_token,
+            ssl_context=ssl_context,
+            deadline=deadline,
+            gw_id=state.gw_id,
+        )
+    except GwmApiError as error:
+        if is_overseas_refresh_rejected(error) or _is_session_conflict(error):
+            raise GwmAuthenticationError(
+                operation="refresh_token",
+                api_code=error.api_code,
+            ) from None
+        raise
+    access_token, refresh_token = _parse_token_pair(
+        refreshed,
+        operation="refresh_token",
+    )
+    gw_id = _updated_gw_id(
+        refreshed,
+        current=state.gw_id,
+        operation="refresh_token",
+        authentication_method=AnzAuthenticationMethod.LEGACY,
+    )
+    try:
+        profile = await _request_data(
+            config=config,
+            transport=transport,
+            endpoint=_USER_INFO,
+            credentials=credentials,
+            body=None,
+            access_token=access_token,
+            ssl_context=ssl_context,
+            deadline=deadline,
+            gw_id=gw_id,
+        )
+    except GwmApiError as error:
+        if is_overseas_session_expired(error) or _is_session_conflict(error):
+            raise GwmAuthenticationError(
+                operation="get_user_info",
+                api_code=error.api_code,
+            ) from None
+        raise
+    updated = replace(
+        state,
+        access_token=access_token,
+        refresh_token=refresh_token,
+        gw_id=_updated_gw_id(
+            profile,
+            current=gw_id,
+            operation="get_user_info",
+            authentication_method=AnzAuthenticationMethod.LEGACY,
         ),
         verification_requested_at=None,
     )
@@ -1262,10 +1365,13 @@ def _refresh_body(credentials: AnzCredentials, state: AnzAuthState) -> dict[str,
         "accessToken": state.access_token,
         "refreshToken": state.refresh_token,
     }
-    # The current app's native RefreshTokenDto has exactly these two fields.
-    # The historical legacy request retains its deviceId body field unchanged.
-    if credentials.authentication_method is AnzAuthenticationMethod.LEGACY:
-        body["deviceId"] = credentials.device_id[:16]
+    # The working add-on contract includes the stable device identity. The
+    # current app uses its full 32-character identity while legacy uses 16.
+    body["deviceId"] = (
+        credentials.device_id
+        if credentials.authentication_method is AnzAuthenticationMethod.CURRENT
+        else credentials.device_id[:16]
+    )
     return body
 
 
@@ -1425,7 +1531,7 @@ def _is_session_conflict(error: GwmApiError) -> bool:
 def is_current_anz_session_expired(error: object) -> bool:
     """Return whether the current ANZ app treats this exact response as token expiry."""
 
-    return type(error) is GwmApiError and error.api_code in _CURRENT_SESSION_EXPIRED_CODES
+    return type(error) is GwmApiError and is_overseas_session_expired(error)
 
 
 def _session_reclaim_state(state: AnzAuthState) -> AnzAuthState:
@@ -1571,4 +1677,5 @@ __all__ = [
     "AnzVerificationRequired",
     "is_current_anz_session_expired",
     "refresh_current_anz_session",
+    "refresh_legacy_anz_session",
 ]

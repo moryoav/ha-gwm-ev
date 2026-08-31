@@ -65,6 +65,8 @@ from .errors import (
     GwmSignatureError,
     GwmTlsError,
     GwmTransportError,
+    is_overseas_refresh_rejected,
+    is_overseas_session_expired,
 )
 from .eu_auth import (
     EuAuthenticated,
@@ -246,6 +248,8 @@ __all__ = [
     "load_certificate",
     "is_eu_issued_identity_usable",
     "is_current_anz_session_expired",
+    "is_overseas_refresh_rejected",
+    "is_overseas_session_expired",
     "is_valid_operation_time",
     "map_vehicle_snapshot",
     "normalize_operation_time",

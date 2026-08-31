@@ -6,6 +6,14 @@ This project follows semantic versioning. HACS uses the latest GitHub release ta
 
 ## [Unreleased]
 
+## [0.16.14] - 2026-08-31
+
+### Fixed
+
+- I added automatic access-token renewal for EU, legacy ANZ, and Russia, and kept the existing current ANZ renewal path. A rejected access token now triggers one serialized refresh, saves both rotated tokens before retrying the interrupted request, and asks for reauthentication only when GWM rejects the refresh.
+- I now recognize GWM's `550004` expired-session response during startup and normal polling. This fixes EU entries that previously stayed in setup retry after their 24-hour access token expired.
+- I restored the stable `deviceId` in the current ANZ refresh request to match the working add-on contract. This addresses the `550002` refresh error reported with the current GWM ANZ authentication method.
+
 ## [0.16.13] - 2026-08-31
 
 ### Fixed

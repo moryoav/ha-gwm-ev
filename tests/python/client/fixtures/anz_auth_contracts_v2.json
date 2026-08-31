@@ -79,7 +79,7 @@
       "access_token_header": true,
       "nonce_length": 16,
       "content_type": "application/json; charset=utf-8",
-      "body": "{\"accessToken\":\"SYNTHETIC-OLD-ACCESS\",\"refreshToken\":\"SYNTHETIC-OLD-REFRESH\"}"
+      "body": "{\"accessToken\":\"SYNTHETIC-OLD-ACCESS\",\"refreshToken\":\"SYNTHETIC-OLD-REFRESH\",\"deviceId\":\"0123456789abcdef0123456789abcdef\"}"
     }
   }
 }

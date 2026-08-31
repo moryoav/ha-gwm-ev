@@ -35,6 +35,8 @@ from .errors import (
     GwmRoutePolicyError,
     GwmSchemaError,
     GwmTlsError,
+    is_overseas_refresh_rejected,
+    is_overseas_session_expired,
 )
 from .eu_identity import (
     EuBootstrapMaterial,
@@ -389,7 +391,9 @@ async def authenticate_eu(
                 ssl_context=default_context,
                 deadline=deadline,
             )
-        except GwmAuthenticationError:
+        except (GwmAuthenticationError, GwmApiError) as error:
+            if not is_overseas_session_expired(error):
+                raise
             access_rejected = True
             progress.existing_access_rejected = True
         else:
@@ -418,7 +422,9 @@ async def authenticate_eu(
                 ssl_context=default_context,
                 deadline=deadline,
             )
-        except GwmAuthenticationError:
+        except (GwmAuthenticationError, GwmApiError) as error:
+            if not is_overseas_refresh_rejected(error):
+                raise
             candidate = replace(
                 candidate,
                 access_token=None,
@@ -437,7 +443,9 @@ async def authenticate_eu(
                     ssl_context=default_context,
                     deadline=deadline,
                 )
-            except GwmAuthenticationError:
+            except (GwmAuthenticationError, GwmApiError) as error:
+                if not is_overseas_session_expired(error):
+                    raise
                 candidate = replace(
                     candidate,
                     access_token=None,
@@ -570,6 +578,86 @@ async def authenticate_eu(
         deadline=deadline,
         progress=progress,
     )
+
+
+async def refresh_eu_session(
+    *,
+    config: GwmClientConfig,
+    transport: _AsyncTransport,
+    credentials: EuCredentials,
+    state: EuAuthState,
+    ssl_context: ssl.SSLContext,
+    deadline: _Deadline,
+) -> EuAuthenticated:
+    """Rotate one EU session while retaining its issued app identity."""
+
+    if (
+        type(config) is not GwmClientConfig
+        or config.region is not Region.EU
+        or type(credentials) is not EuCredentials
+        or type(state) is not EuAuthState
+        or not state.matches(credentials)
+        or state.access_token is None
+        or state.refresh_token is None
+        or not isinstance(ssl_context, ssl.SSLContext)
+        or type(deadline) is not _Deadline
+    ):
+        raise GwmAuthenticationError(operation="refresh_token")
+    _ensure_deadline(deadline, operation="refresh_token")
+    try:
+        default_context = await _blocking_call(_create_default_ssl_context)
+    except (OSError, ssl.SSLError, ValueError):
+        raise GwmConfigurationError(operation="refresh_token") from None
+    try:
+        refreshed = await _request_data(
+            config=config,
+            transport=transport,
+            endpoint=_REFRESH,
+            credentials=credentials,
+            body=_refresh_body(credentials, state),
+            access_token=None,
+            ssl_context=default_context,
+            deadline=deadline,
+        )
+    except (GwmAuthenticationError, GwmApiError) as error:
+        if is_overseas_refresh_rejected(error):
+            raise GwmAuthenticationError(
+                operation="refresh_token",
+                api_code=error.api_code,
+            ) from None
+        raise
+    access_token, refresh_token = _parse_token_pair(
+        refreshed,
+        operation="refresh_token",
+    )
+    try:
+        profile = await _request_data(
+            config=config,
+            transport=transport,
+            endpoint=_USER_INFO,
+            credentials=credentials,
+            body=None,
+            access_token=access_token,
+            ssl_context=default_context,
+            deadline=deadline,
+        )
+    except (GwmAuthenticationError, GwmApiError) as error:
+        if is_overseas_session_expired(error):
+            raise GwmAuthenticationError(
+                operation="get_user_info",
+                api_code=error.api_code,
+            ) from None
+        raise
+    updated = _apply_user_info(
+        replace(
+            state,
+            access_token=access_token,
+            refresh_token=refresh_token,
+            verification_requested_at=None,
+        ),
+        profile,
+    )
+    return _authenticated_result(updated, ssl_context)
 
 
 async def _finish_authentication(
@@ -1189,4 +1277,5 @@ __all__ = [
     "EuAuthState",
     "EuCredentials",
     "EuVerificationRequired",
+    "refresh_eu_session",
 ]

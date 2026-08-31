@@ -29,6 +29,7 @@ from .anz_auth import (
 )
 from .anz_auth import authenticate_anz as _run_anz_authentication
 from .anz_auth import refresh_current_anz_session as _run_current_anz_session_refresh
+from .anz_auth import refresh_legacy_anz_session as _run_legacy_anz_session_refresh
 from .charging import (
     ChargingPlanCommand,
     ChargingPlanInfo,
@@ -70,6 +71,7 @@ from .eu_auth import (
     _EuAuthProgress,
 )
 from .eu_auth import authenticate_eu as _run_eu_authentication
+from .eu_auth import refresh_eu_session as _run_eu_session_refresh
 from .eu_identity import EuBootstrapMaterial
 from .models import (
     CloudVehicle,
@@ -90,6 +92,7 @@ from .russia_auth import (
     _RussiaAuthProgress,
 )
 from .russia_auth import authenticate_russia as _run_russia_authentication
+from .russia_auth import refresh_russia_session as _run_russia_session_refresh
 from .russia_identity import RussiaBootstrapMaterial
 from .signing import SignedRequest, SigningProfile, sign_request
 from .transport import AiohttpTransport
@@ -436,7 +439,6 @@ class GwmClient:
     ) -> AnzAuthenticated:
         """Rotate one current-app ANZ session and install it atomically."""
 
-        operation = "refresh_token"
         if (
             self._protocol.region is not Region.ANZ
             or type(credentials) is not AnzCredentials
@@ -445,7 +447,101 @@ class GwmClient:
             or type(state) is not AnzAuthState
             or not state.matches(credentials)
         ):
-            raise GwmConfigurationError(operation=operation)
+            raise GwmConfigurationError(operation="refresh_token")
+        result = await self._refresh_overseas_session(
+            credentials,
+            state,
+            timeout=timeout,
+        )
+        if type(result) is not AnzAuthenticated:
+            raise GwmConfigurationError(operation="refresh_token")
+        return result
+
+    async def refresh_legacy_anz_session(
+        self,
+        credentials: AnzCredentials,
+        state: AnzAuthState,
+        *,
+        timeout: float | None = None,
+    ) -> AnzAuthenticated:
+        """Rotate one legacy ANZ session and install it atomically."""
+
+        if (
+            self._protocol.region is not Region.ANZ
+            or type(credentials) is not AnzCredentials
+            or credentials.authentication_method is not AnzAuthenticationMethod.LEGACY
+            or self._config.anz_authentication_method != AnzAuthenticationMethod.LEGACY.value
+            or type(state) is not AnzAuthState
+            or not state.matches(credentials)
+        ):
+            raise GwmConfigurationError(operation="refresh_token")
+        result = await self._refresh_overseas_session(
+            credentials,
+            state,
+            timeout=timeout,
+        )
+        if type(result) is not AnzAuthenticated:
+            raise GwmConfigurationError(operation="refresh_token")
+        return result
+
+    async def refresh_eu_session(
+        self,
+        credentials: EuCredentials,
+        state: EuAuthState,
+        *,
+        timeout: float | None = None,
+    ) -> EuAuthenticated:
+        """Rotate one EU session and install it atomically."""
+
+        if (
+            self._protocol.region is not Region.EU
+            or type(credentials) is not EuCredentials
+            or type(state) is not EuAuthState
+            or not state.matches(credentials)
+        ):
+            raise GwmConfigurationError(operation="refresh_token")
+        result = await self._refresh_overseas_session(
+            credentials,
+            state,
+            timeout=timeout,
+        )
+        if type(result) is not EuAuthenticated:
+            raise GwmConfigurationError(operation="refresh_token")
+        return result
+
+    async def refresh_russia_session(
+        self,
+        credentials: RussiaCredentials,
+        state: RussiaAuthState,
+        *,
+        timeout: float | None = None,
+    ) -> RussiaAuthenticated:
+        """Rotate one Russia session and install it atomically."""
+
+        if (
+            self._protocol.region is not Region.RUSSIA
+            or type(credentials) is not RussiaCredentials
+            or type(state) is not RussiaAuthState
+            or not state.matches(credentials)
+        ):
+            raise GwmConfigurationError(operation="refresh_token")
+        result = await self._refresh_overseas_session(
+            credentials,
+            state,
+            timeout=timeout,
+        )
+        if type(result) is not RussiaAuthenticated:
+            raise GwmConfigurationError(operation="refresh_token")
+        return result
+
+    async def _refresh_overseas_session(
+        self,
+        credentials: EuCredentials | AnzCredentials | RussiaCredentials,
+        state: EuAuthState | AnzAuthState | RussiaAuthState,
+        *,
+        timeout: float | None,
+    ) -> EuAuthenticated | AnzAuthenticated | RussiaAuthenticated:
+        operation = "refresh_token"
         if self._closed or self._closing:
             raise GwmClosedError(operation=operation)
         total_timeout = self._validated_timeout(timeout, operation=operation)
@@ -465,18 +561,48 @@ class GwmClient:
                         or current.country != state.country
                         or current.device_id != state.device_id
                         or current.access_token != state.access_token
-                        or current.gw_id != state.gw_id
+                        or (
+                            type(state) is AnzAuthState
+                            and current.gw_id != state.gw_id
+                        )
                     ):
                         raise GwmAuthenticationError(operation=operation)
                     attempt_revision = self._session_revision
-                    result = await _run_current_anz_session_refresh(
-                        config=self._config,
-                        transport=self._transport,
-                        credentials=credentials,
-                        state=state,
-                        ssl_context=current.app_ssl_context,
-                        deadline=deadline,
-                    )
+                    result: EuAuthenticated | AnzAuthenticated | RussiaAuthenticated
+                    if type(credentials) is EuCredentials and type(state) is EuAuthState:
+                        result = await _run_eu_session_refresh(
+                            config=self._config,
+                            transport=self._transport,
+                            credentials=credentials,
+                            state=state,
+                            ssl_context=current.app_ssl_context,
+                            deadline=deadline,
+                        )
+                    elif type(credentials) is AnzCredentials and type(state) is AnzAuthState:
+                        refresh = (
+                            _run_current_anz_session_refresh
+                            if credentials.authentication_method is AnzAuthenticationMethod.CURRENT
+                            else _run_legacy_anz_session_refresh
+                        )
+                        result = await refresh(
+                            config=self._config,
+                            transport=self._transport,
+                            credentials=credentials,
+                            state=state,
+                            ssl_context=current.app_ssl_context,
+                            deadline=deadline,
+                        )
+                    elif type(credentials) is RussiaCredentials and type(state) is RussiaAuthState:
+                        result = await _run_russia_session_refresh(
+                            config=self._config,
+                            transport=self._transport,
+                            credentials=credentials,
+                            state=state,
+                            ssl_context=current.app_ssl_context,
+                            deadline=deadline,
+                        )
+                    else:
+                        raise GwmConfigurationError(operation=operation)
                     self._replace_session_if_revision(
                         expected_revision=attempt_revision,
                         session=self._validated_session(result.session),

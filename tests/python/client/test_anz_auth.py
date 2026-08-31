@@ -855,8 +855,11 @@ async def test_current_session_refresh_uses_native_v1_contract_and_rotates() -> 
     request = transport.requests[0]
     assert request.operation == "refresh_token"
     assert urlsplit(request.url).path == "/app-api/api/v1.0/userAuth/refreshToken"
-    assert request.body == (b'{"accessToken":"SYNTHETIC-OLD-ACCESS","refreshToken":"SYNTHETIC-OLD-REFRESH"}')
-    assert b"deviceId" not in (request.body or b"")
+    assert request.body == (
+        b'{"accessToken":"SYNTHETIC-OLD-ACCESS","refreshToken":"SYNTHETIC-OLD-REFRESH",'
+        b'"deviceId":"0123456789abcdef0123456789abcdef"}'
+    )
+    assert b'"deviceId":"0123456789abcdef0123456789abcdef"' in (request.body or b"")
     assert request.headers["accessToken"] == ACCESS
     assert request.headers["gwId"] == "SYNTHETIC-GW-ID"
     assert len(request.headers["bt-auth-nonce"]) == 16
@@ -1326,6 +1329,62 @@ async def test_rejected_access_refreshes_with_old_access_header_and_rotates_atom
     assert ACCESS.encode() in (refresh_request.body or b"")
     assert REFRESH.encode() in (refresh_request.body or b"")
     assert transport.requests[2].headers["accessToken"] == NEW_ACCESS
+
+
+@pytest.mark.asyncio
+async def test_expired_access_api_code_refreshes_legacy_session() -> None:
+    state = _state()
+    transport = _QueueTransport(
+        [
+            _response(code="550004"),
+            _response({"accessToken": NEW_ACCESS, "refreshToken": NEW_REFRESH}),
+            _response({"email": SENSITIVE}),
+        ]
+    )
+
+    result = await _client(transport).authenticate_anz(_credentials(), state=state)
+
+    assert type(result) is AnzAuthenticated
+    assert result.state.access_token == NEW_ACCESS
+    assert result.state.refresh_token == NEW_REFRESH
+    assert [request.operation for request in transport.requests] == [
+        "get_user_info",
+        "refresh_token",
+        "get_user_info",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_runtime_legacy_anz_refresh_installs_rotated_session() -> None:
+    state = _state()
+    context = _default_context()
+    transport = _QueueTransport(
+        [
+            _response({"accessToken": NEW_ACCESS, "refreshToken": NEW_REFRESH}),
+            _response({"email": SENSITIVE}),
+        ]
+    )
+    client = _client(
+        transport,
+        session=GwmSession(
+            "AU",
+            state.device_id,
+            ACCESS,
+            context,
+            gw_id=state.gw_id,
+        ),
+    )
+
+    result = await client.refresh_legacy_anz_session(_credentials(), state)
+
+    assert result.state.access_token == NEW_ACCESS
+    assert result.state.refresh_token == NEW_REFRESH
+    assert result.session.app_ssl_context is context
+    assert client._session == result.session
+    assert [request.operation for request in transport.requests] == [
+        "refresh_token",
+        "get_user_info",
+    ]
 
 
 @pytest.mark.asyncio

@@ -9,7 +9,7 @@
   "issue_tracker": "https://github.com/moryoav/ha-gwm-ev/issues",
   "loggers": ["gwm_client"],
   "requirements": [
-    "gwm-client@https://github.com/moryoav/ha-gwm-ev/archive/refs/tags/v0.16.13.zip"
+    "gwm-client@https://github.com/moryoav/ha-gwm-ev/archive/refs/tags/v0.16.14.zip"
   ],
-  "version": "0.16.13"
+  "version": "0.16.14"
 }

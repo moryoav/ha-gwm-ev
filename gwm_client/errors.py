@@ -39,6 +39,18 @@ _SAFE_OPERATION_ALIASES: Final = frozenset(
 )
 _MAX_API_CODE_LENGTH: Final = 12
 _MAX_RETRY_AFTER_SECONDS: Final = 24 * 60 * 60
+_OVERSEAS_SESSION_EXPIRED_API_CODES: Final = frozenset(
+    {
+        "-101",
+        "550004",
+        "551004",
+        "551006",
+        "607124",
+    }
+)
+_OVERSEAS_REFRESH_REJECTED_API_CODES: Final = (
+    _OVERSEAS_SESSION_EXPIRED_API_CODES | {"551011"}
+)
 
 
 def _safe_operation(value: object) -> str:
@@ -237,6 +249,24 @@ class GwmOptionalEndpointError(GwmApiError):
     _message = "Optional GWM endpoint is unavailable"
 
 
+def is_overseas_session_expired(error: object) -> bool:
+    """Return whether an overseas request rejected the installed access token."""
+
+    return type(error) is GwmAuthenticationError or (
+        type(error) is GwmApiError
+        and error.api_code in _OVERSEAS_SESSION_EXPIRED_API_CODES
+    )
+
+
+def is_overseas_refresh_rejected(error: object) -> bool:
+    """Return whether an overseas refresh token was conclusively rejected."""
+
+    return type(error) is GwmAuthenticationError or (
+        type(error) is GwmApiError
+        and error.api_code in _OVERSEAS_REFRESH_REJECTED_API_CODES
+    )
+
+
 __all__ = [
     "GwmApiError",
     "GwmAuthenticationError",
@@ -256,4 +286,6 @@ __all__ = [
     "GwmSignatureError",
     "GwmTlsError",
     "GwmTransportError",
+    "is_overseas_refresh_rejected",
+    "is_overseas_session_expired",
 ]

@@ -840,6 +840,61 @@ async def test_rejected_access_refreshes_without_token_header_and_rotates_atomic
 
 
 @pytest.mark.asyncio
+async def test_expired_access_api_code_refreshes_and_rotates_atomically() -> None:
+    identity = _identity()
+    state = _state(identity=identity)
+    transport = _QueueTransport(
+        [
+            _response(code="550004"),
+            _response({"accessToken": NEW_ACCESS, "refreshToken": NEW_REFRESH}),
+            _response({"gwId": GW_ID, "beanId": BEAN_ID}),
+        ]
+    )
+
+    result = await _client(transport).authenticate_eu(
+        _credentials(),
+        state=state,
+        ca_bundle=CA_BUNDLE,
+    )
+
+    assert type(result) is EuAuthenticated
+    assert result.state.access_token == NEW_ACCESS
+    assert result.state.refresh_token == NEW_REFRESH
+    assert [request.operation for request in transport.requests] == [
+        "get_user_info",
+        "refresh_token",
+        "get_user_info",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_runtime_eu_refresh_installs_rotated_session() -> None:
+    state = _state(identity=_identity())
+    context = _issued_context()
+    transport = _QueueTransport(
+        [
+            _response({"accessToken": NEW_ACCESS, "refreshToken": NEW_REFRESH}),
+            _response({"gwId": GW_ID, "beanId": BEAN_ID}),
+        ]
+    )
+    client = _client(
+        transport,
+        session=GwmSession("IL", state.device_id, ACCESS, context),
+    )
+
+    result = await client.refresh_eu_session(_credentials(), state)
+
+    assert result.state.access_token == NEW_ACCESS
+    assert result.state.refresh_token == NEW_REFRESH
+    assert result.session.app_ssl_context is context
+    assert client._session == result.session
+    assert [request.operation for request in transport.requests] == [
+        "refresh_token",
+        "get_user_info",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_refreshed_token_rejection_falls_through_to_fresh_verification() -> None:
     state = _state(identity=_identity())
     transport = _QueueTransport(
