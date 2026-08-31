@@ -4,10 +4,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from homeassistant.components.device_tracker.config_entry import TrackerEntity
 from homeassistant.components.device_tracker.const import SourceType
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+
+try:
+    from homeassistant.components.device_tracker import TrackerEntity
+except ImportError:  # pragma: no cover - compatibility with older supported HA releases
+    from homeassistant.components.device_tracker.config_entry import TrackerEntity
 
 from . import GwmConfigEntry
 from .entity import GwmEntity, setup_vehicle_entities

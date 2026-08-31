@@ -71,6 +71,16 @@ def test_integration_only_tree_has_no_retired_addon_or_dotnet_workflows() -> Non
     assert not (ROOT / ".github/workflows/dotnet.yml").exists()
 
 
+def test_device_tracker_uses_public_home_assistant_api() -> None:
+    source = (ROOT / "custom_components/gwm_ora/device_tracker.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert "from homeassistant.components.device_tracker import TrackerEntity" in source
+    assert "except ImportError:" in source
+    assert "from homeassistant.components.device_tracker.config_entry import TrackerEntity" in source
+
+
 def test_integration_presentation_assets_exist() -> None:
     brand_dir = ROOT / "custom_components/gwm_ora/brand"
 
@@ -95,12 +105,12 @@ def test_hacs_default_repository_readiness_files_exist() -> None:
     assert manifest["codeowners"] == ["@moryoav"]
     assert manifest["domain"] == "gwm_ora"
     assert manifest["name"] == "GWM"
-    assert manifest["version"] == "0.16.14"
+    assert manifest["version"] == "0.16.15"
     assert manifest["integration_type"] == "hub"
     assert manifest["loggers"] == ["gwm_client"]
     assert manifest["requirements"] == [
         "gwm-client@https://github.com/moryoav/ha-gwm-ev/archive/refs/tags/"
-        "v0.16.14.zip"
+        "v0.16.15.zip"
     ]
 
     custom_components = [path.name for path in (ROOT / "custom_components").iterdir() if path.is_dir()]

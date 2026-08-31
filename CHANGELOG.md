@@ -6,6 +6,12 @@ This project follows semantic versioning. HACS uses the latest GitHub release ta
 
 ## [Unreleased]
 
+## [0.16.15] - 2026-08-31
+
+### Fixed
+
+- I now prefer Home Assistant's supported public `TrackerEntity` API, with a compatibility fallback for older supported Home Assistant releases. This shared platform fix applies to every region and removes the warning about the deprecated alias being removed in Home Assistant Core 2027.6.
+
 ## [0.16.14] - 2026-08-31
 
 ### Fixed
