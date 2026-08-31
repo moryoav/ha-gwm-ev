@@ -35,6 +35,7 @@ from .errors import (
     GwmResponseTooLargeError,
     GwmRoutePolicyError,
     GwmSchemaError,
+    GwmSignatureError,
     GwmTlsError,
 )
 from .models import GwmSession
@@ -58,6 +59,7 @@ _CURRENT_VERIFICATION_REJECTED_CODES = frozenset({"308011", "308012"})
 # expired verification code. No other application code is inferred as rejection.
 _LEGACY_VERIFICATION_REJECTED_CODES = frozenset({"308011"})
 _SESSION_CONFLICT_CODE = "607501"
+_SIGNATURE_REJECTED_CODE = "607099"
 _ANZ_COUNTRIES = frozenset({"AU", "NZ"})
 _CALLING_CODES = MappingProxyType({"AU": "+61", "NZ": "+64"})
 _CURRENT_APP_HEADERS = MappingProxyType(
@@ -873,9 +875,13 @@ def _sign_current_app_request(
     url: str,
     body: str | None,
 ) -> SignedRequest:
-    """Sign one request with the current GWM ANZ app's wire policy."""
+    """Sign one request with the current GWM ANZ gateway's wire policy."""
 
     timestamp = str(time.time_ns() // 1_000_000)
+    # A controlled live gateway probe on 2026-08-31 returned 607099
+    # ("sign is inconformity") for the full absolute URL and reached account
+    # validation with the path-only target. Keep this direct-gateway behavior
+    # separate from the app's front-host URL normalization.
     return sign_request(
         profile,
         method,
@@ -885,7 +891,7 @@ def _sign_current_app_request(
         nonce=_new_current_app_nonce(),
         uri_component_safe="-._~!*'()",
         whitespace_policy="preserve",
-        request_target_policy="absolute-url",
+        request_target_policy="path",
         query_policy="dart-current",
     )
 
@@ -1049,6 +1055,8 @@ def _decode_auth_envelope(
     if valid_json:
         assert isinstance(envelope, Mapping)
         if code != "000000":
+            if code == _SIGNATURE_REJECTED_CODE:
+                raise GwmSignatureError(operation=operation, api_code=code)
             raise GwmApiError(operation=operation, api_code=safe_code)
     if not valid_json:
         raise GwmSchemaError(operation=operation)

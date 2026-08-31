@@ -23,6 +23,7 @@ from gwm_client.errors import (
     GwmResponseTooLargeError,
     GwmRoutePolicyError,
     GwmSchemaError,
+    GwmSignatureError,
     GwmTlsError,
     GwmTransportError,
 )
@@ -88,6 +89,7 @@ def test_hierarchy_supports_coarse_grained_error_handling() -> None:
     assert issubclass(GwmSchemaError, GwmProtocolError)
     assert issubclass(GwmApiError, GwmProtocolError)
     assert issubclass(GwmAuthenticationError, GwmApiError)
+    assert issubclass(GwmSignatureError, GwmApiError)
     assert issubclass(GwmRateLimitError, GwmApiError)
     assert issubclass(GwmOptionalEndpointError, GwmApiError)
 
@@ -203,6 +205,7 @@ def test_rate_limit_retry_delay_is_bounded(
     [
         GwmApiError,
         GwmAuthenticationError,
+        GwmSignatureError,
         GwmOptionalEndpointError,
         GwmRateLimitError,
     ],

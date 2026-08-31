@@ -61,6 +61,7 @@ from .errors import (
     GwmResponseTooLargeError,
     GwmRoutePolicyError,
     GwmSchemaError,
+    GwmSignatureError,
     GwmTlsError,
     GwmTransportError,
 )
@@ -197,6 +198,7 @@ __all__ = [
     "GwmResponseTooLargeError",
     "GwmRoutePolicyError",
     "GwmSchemaError",
+    "GwmSignatureError",
     "GwmSession",
     "GwmTlsError",
     "GwmTransportError",

@@ -6,6 +6,13 @@ This project follows semantic versioning. HACS uses the latest GitHub release ta
 
 ## [Unreleased]
 
+## [0.16.9] - 2026-08-31
+
+### Fixed
+
+- I changed current GWM ANZ request signing to use the gateway-accepted URL path. A controlled live probe confirmed that the full URL returns `607099` (`sign is inconformity`), while the same synthetic login signed with the path reaches account validation.
+- I classify the exact ANZ authentication response `607099` as a sanitized signature error, making any remaining signing failure clear without logging credentials, request data, signatures, or cloud response text.
+
 ## [0.16.8] - 2026-08-31
 
 ### Fixed

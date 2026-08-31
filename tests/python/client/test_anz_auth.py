@@ -39,6 +39,7 @@ from gwm_client.errors import (
     GwmRateLimitError,
     GwmRoutePolicyError,
     GwmSchemaError,
+    GwmSignatureError,
 )
 from gwm_client.models import GwmSession
 from gwm_client.signing import SignedRequest, SigningProfile
@@ -445,6 +446,35 @@ def test_current_app_nonce_matches_sha256_epoch_millisecond_shape(
     assert anz_auth._new_current_app_nonce() == hashlib.sha256(timestamp.encode()).hexdigest()[:32]
 
 
+def test_current_app_signer_uses_live_gateway_path_target(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+    real_sign = anz_auth.sign_request
+
+    def capture_sign(
+        profile: SigningProfile,
+        method: str,
+        url: str,
+        body: str | None,
+        **kwargs: object,
+    ) -> SignedRequest:
+        captured.update(kwargs)
+        return real_sign(profile, method, url, body, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(anz_auth, "sign_request", capture_sign)
+    anz_auth._sign_current_app_request(
+        anz_auth.get_region_protocol(anz_auth.Region.ANZ).gateway(anz_auth.GatewayRole.AUTH_V2).signing_profile,
+        "POST",
+        "https://aus-h5-gateway.gwmcloud.com/app-api/api/v2.0/userAuth/loginWithPassword",
+        '{"account":"owner@example.invalid"}',
+    )
+
+    assert captured["request_target_policy"] == "path"
+    assert captured["query_policy"] == "dart-current"
+    assert captured["uri_component_safe"] == "-._~!*'()"
+
+
 @pytest.mark.parametrize(
     "endpoint",
     [anz_auth._LOGIN, anz_auth._REFRESH, anz_auth._USER_INFO],
@@ -539,6 +569,19 @@ def test_auth_envelope_is_strict_secret_safe_and_http_first() -> None:
         )
     assert http_failure.value.status == 500
     assert SENSITIVE not in repr(http_failure.value)
+
+
+def test_auth_signature_rejection_has_a_safe_specific_category() -> None:
+    with pytest.raises(GwmSignatureError) as rejected:
+        anz_auth._decode_auth_envelope(
+            _response(code="607099", description=SENSITIVE),
+            operation="login",
+            require_data=True,
+        )
+
+    assert rejected.value.category == "signature_error"
+    assert rejected.value.api_code == "607099"
+    assert SENSITIVE not in repr(rejected.value)
 
 
 @pytest.mark.asyncio

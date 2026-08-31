@@ -203,6 +203,13 @@ class GwmAuthenticationError(GwmApiError):
     _message = "GWM authentication was rejected"
 
 
+class GwmSignatureError(GwmApiError):
+    """GWM rejected the request signature before processing the operation."""
+
+    _category = "signature_error"
+    _message = "GWM request signature was rejected"
+
+
 class GwmRateLimitError(GwmApiError):
     """GWM throttled the request, with an optional bounded retry delay."""
 
@@ -245,6 +252,7 @@ __all__ = [
     "GwmResponseTooLargeError",
     "GwmRoutePolicyError",
     "GwmSchemaError",
+    "GwmSignatureError",
     "GwmTlsError",
     "GwmTransportError",
 ]

@@ -271,11 +271,11 @@ def test_current_anz_dart_uri_component_signing_keeps_legacy_punctuation_safe() 
         nonce="0123456789abcdef0123456789abcdef",
         uri_component_safe="-._~!*'()",
         whitespace_policy="preserve",
-        request_target_policy="absolute-url",
+        request_target_policy="path",
         query_policy="dart-current",
     )
 
-    assert signed.headers["bt-auth-sign"] == ("5e291e86fb88f1deaee8aec072edc4f26a154da9e2756dc0c044076971cabe0c")
+    assert signed.headers["bt-auth-sign"] == ("759bc7c3397315516904b337426ea278ca3c6c74571c0d99721a1254c6b3da21")
 
 
 def test_current_anz_signing_preserves_non_ascii_space_in_json_values() -> None:
@@ -289,11 +289,11 @@ def test_current_anz_signing_preserves_non_ascii_space_in_json_values() -> None:
         nonce="0123456789abcdef0123456789abcdef",
         uri_component_safe="-._~!*'()",
         whitespace_policy="preserve",
-        request_target_policy="absolute-url",
+        request_target_policy="path",
         query_policy="dart-current",
     )
 
-    assert signed.headers["bt-auth-sign"] == ("c8f6a388573e38ad5ac5ffaf68c89b013c387f74445c9ac5445aaf6e9e0d2ece")
+    assert signed.headers["bt-auth-sign"] == ("8b07263e8cac3eb7f24f836235274e94c607d3a2c8cca0670797915932b10a34")
 
 
 def test_current_anz_signing_keeps_empty_query_and_signs_decoded_pairs() -> None:
@@ -306,12 +306,12 @@ def test_current_anz_signing_keeps_empty_query_and_signs_decoded_pairs() -> None
         nonce="0123456789abcdef0123456789abcdef",
         uri_component_safe="-._~!*'()",
         whitespace_policy="preserve",
-        request_target_policy="absolute-url",
+        request_target_policy="path",
         query_policy="dart-current",
     )
 
     assert signed.url == url
-    assert signed.headers["bt-auth-sign"] == ("274f1afffc6dea98655a08ede8468fc30072112279dd7766b4d5e99453acfd51")
+    assert signed.headers["bt-auth-sign"] == ("0880f3035cff2b73c5037b48c13b53ba39ce42048bf942ef529ac961523a6ebd")
 
 
 def test_method_case_is_preserved_for_csharp_parity() -> None:
