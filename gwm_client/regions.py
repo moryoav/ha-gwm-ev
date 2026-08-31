@@ -247,6 +247,12 @@ _PROTOCOLS: Final[Mapping[Region, RegionProtocol]] = MappingProxyType(
                     ANZ_BT_AUTH,
                     TlsMode.DEFAULT,
                 ),
+                GatewayRole.AUTH_V2: _gateway(
+                    GatewayRole.AUTH_V2,
+                    "https://aus-h5-gateway.gwmcloud.com/app-api/api/v2.0/",
+                    ANZ_BT_AUTH,
+                    TlsMode.DEFAULT,
+                ),
                 GatewayRole.APP_V1: _gateway(
                     GatewayRole.APP_V1,
                     "https://aus-h5-gateway.gwmcloud.com/app-api/api/v1.0/",

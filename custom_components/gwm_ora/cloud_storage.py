@@ -27,7 +27,9 @@ from .cloud_auth import (
     cloud_unique_id,
 )
 from .const import (
+    ANZ_AUTHENTICATION_METHOD_LEGACY,
     CONF_ACCOUNT,
+    CONF_AUTHENTICATION_METHOD,
     CONF_COUNTRY,
     CONF_PASSWORD,
     CONF_REGION,
@@ -535,18 +537,24 @@ async def async_remove_cloud_state(
 def cloud_authentication_context_binding(
     credentials: GwmCloudCredentials,
 ) -> str:
-    """Bind durable state to region, country, account, and password."""
+    """Bind durable state to credentials and the selected ANZ authentication method."""
 
     if type(credentials) is not GwmCloudCredentials:
         raise ValueError("credentials_invalid")
     digest = hashlib.sha256()
     digest.update(_LEGACY_DIRECT_CONTEXT_DOMAIN)
-    for value in (
+    values = [
         credentials.region,
         credentials.country,
         credentials.account,
         credentials.password or "",
+    ]
+    if (
+        credentials.region == REGION_ANZ
+        and credentials.authentication_method != ANZ_AUTHENTICATION_METHOD_LEGACY
     ):
+        values.append(credentials.authentication_method or "")
+    for value in values:
         encoded = value.encode("utf-8", errors="strict")
         digest.update(len(encoded).to_bytes(8, "big"))
         digest.update(encoded)
@@ -563,6 +571,11 @@ def _credentials_from_entry(entry_data: dict[str, object]) -> GwmCloudCredential
         password=(
             str(entry_data[CONF_PASSWORD])
             if isinstance(entry_data.get(CONF_PASSWORD), str)
+            else None
+        ),
+        authentication_method=(
+            str(entry_data[CONF_AUTHENTICATION_METHOD])
+            if isinstance(entry_data.get(CONF_AUTHENTICATION_METHOD), str)
             else None
         ),
         device_id=_PLACEHOLDER_DEVICE_ID,
@@ -587,6 +600,7 @@ def credentials_for_auth_state(
         account=base.account,
         password=base.password,
         device_id=auth_state.device_id,
+        authentication_method=base.authentication_method,
     )
 
 
@@ -645,6 +659,7 @@ def _auth_state_matches_credentials(
             account=credentials.account,
             password=credentials.password,
             device_id=state.device_id,
+            authentication_method=credentials.authentication_method,
         )
         _validate_regional_state(
             credentials.region,

@@ -27,6 +27,10 @@ from custom_components.gwm_ora.cloud_storage import (
     cloud_authentication_context_binding,
     cloud_state_store,
 )
+from custom_components.gwm_ora.const import (
+    ANZ_AUTHENTICATION_METHOD_CURRENT,
+    ANZ_AUTHENTICATION_METHOD_LEGACY,
+)
 from gwm_client import (
     AnzAuthState,
     ChinaAuthState,
@@ -43,6 +47,7 @@ def _credentials(
     region: str = "eu",
     *,
     password: str | None = "private-password",
+    authentication_method: str | None = None,
 ) -> GwmCloudCredentials:
     countries = {"eu": "DE", "aus": "AU", "rus": "RU", "cn": "CN"}
     return GwmCloudCredentials(
@@ -51,6 +56,7 @@ def _credentials(
         "private-account",
         None if region == "cn" else password,
         _DEVICE_ID,
+        authentication_method,
     )
 
 
@@ -193,6 +199,42 @@ async def test_account_context_change_atomically_retires_state_and_commands(
     assert "private-account" not in stored_text
     assert "replacement-password" not in stored_text
     assert "replacement-account" not in stored_text
+
+
+@pytest.mark.asyncio
+async def test_anz_authentication_method_change_retires_legacy_session(
+    tmp_path: Path,
+) -> None:
+    legacy = _credentials(
+        "aus",
+        authentication_method=ANZ_AUTHENTICATION_METHOD_LEGACY,
+    )
+    implicit_legacy = _credentials("aus")
+    current = _credentials(
+        "aus",
+        authentication_method=ANZ_AUTHENTICATION_METHOD_CURRENT,
+    )
+    assert cloud_authentication_context_binding(legacy) == (
+        cloud_authentication_context_binding(implicit_legacy)
+    )
+    assert cloud_authentication_context_binding(current) != (
+        cloud_authentication_context_binding(legacy)
+    )
+    assert cloud_unique_id(current) == cloud_unique_id(legacy)
+
+    hass = HomeAssistant(str(tmp_path))
+    store = cloud_state_store(hass, cloud_unique_id(legacy))
+    await store.async_save_auth_state(legacy, _state(legacy))
+
+    assert await store.async_load_auth_state(cloud_entry_data(current)) is None
+
+    current_state = _state(current)
+    await store.async_save_auth_state(current, current_state)
+    restarted_hass = HomeAssistant(str(tmp_path))
+    restarted_store = cloud_state_store(restarted_hass, cloud_unique_id(current))
+    assert await restarted_store.async_load_auth_state(
+        cloud_entry_data(current)
+    ) == current_state
 
 
 @pytest.mark.asyncio

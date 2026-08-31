@@ -12,6 +12,7 @@ import ssl
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
+from enum import StrEnum
 from types import MappingProxyType
 from urllib.parse import urlsplit
 
@@ -48,14 +49,23 @@ _MAX_TOKEN_LENGTH = 16 * 1024
 _MAX_VERIFICATION_CODE_LENGTH = 64
 _MAX_JSON_DEPTH = 64
 _VERIFICATION_INTERVAL = timedelta(minutes=10)
-_VERIFICATION_REQUIRED_CODES = frozenset({"309702", "110641"})
+_LEGACY_VERIFICATION_REQUIRED_CODES = frozenset({"309702", "110641"})
+_CURRENT_VERIFICATION_REQUIRED_CODES = frozenset({"308103", "110641"})
 # Historical, contributor-authored ANZ R&D evidence records 308011 as a wrong or
 # expired verification code. No other application code is inferred as rejection.
-_VERIFICATION_REJECTED_CODES = frozenset({"308011"})
+_LEGACY_VERIFICATION_REJECTED_CODES = frozenset({"308011"})
 _SESSION_CONFLICT_CODE = "607501"
 _ANZ_COUNTRIES = frozenset({"AU", "NZ"})
+_CALLING_CODES = MappingProxyType({"AU": "+61", "NZ": "+64"})
 # This persisted hash-domain value is a compatibility contract, not a vehicle-scope name.
 _LEGACY_ACCOUNT_BINDING_DOMAIN = b"gwm-ora-anz-account-v1\0"
+
+
+class AnzAuthenticationMethod(StrEnum):
+    """Supported official-app authentication protocol generations for ANZ."""
+
+    LEGACY = "legacy_v1"
+    CURRENT = "current_v2"
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,12 +76,26 @@ class AnzCredentials:
     password: str = field(repr=False)
     country: str
     device_id: str = field(repr=False)
+    authentication_method: AnzAuthenticationMethod | str = AnzAuthenticationMethod.LEGACY
 
     def __post_init__(self) -> None:
-        if not all(isinstance(value, str) for value in (self.account, self.password, self.country, self.device_id)):
+        if not all(
+            isinstance(value, str)
+            for value in (
+                self.account,
+                self.password,
+                self.country,
+                self.device_id,
+                self.authentication_method,
+            )
+        ):
             raise ValueError("credentials_invalid")
         account = self.account.strip()
         country = self.country.strip().upper()
+        try:
+            authentication_method = AnzAuthenticationMethod(self.authentication_method)
+        except ValueError:
+            raise ValueError("credentials_invalid") from None
         try:
             account_bytes = account.encode("utf-8", errors="strict")
             password_bytes = self.password.encode("utf-8", errors="strict")
@@ -88,6 +112,7 @@ class AnzCredentials:
         object.__setattr__(self, "account", account)
         object.__setattr__(self, "country", country)
         object.__setattr__(self, "device_id", _normalize_stable_device_id(self.device_id))
+        object.__setattr__(self, "authentication_method", authentication_method)
 
     @property
     def account_binding(self) -> str:
@@ -208,23 +233,104 @@ class _AnzAuthProgress:
 @dataclass(frozen=True, slots=True)
 class _AuthEndpoint:
     operation: str
+    role: GatewayRole
     path: str
     method: str
     access_token: bool
     require_data: bool
 
 
-_LOGIN = _AuthEndpoint("login", "userAuth/loginAccount", "POST", False, True)
-_REQUEST_VERIFICATION = _AuthEndpoint(
-    "request_verification", "userAuth/getSMSCode", "POST", False, False
+_LEGACY_LOGIN = _AuthEndpoint(
+    "login", GatewayRole.H5_V1, "userAuth/loginAccount", "POST", False, True
 )
-_VERIFY_CODE = _AuthEndpoint("verify_code", "userAuth/checkSMSCode", "POST", False, False)
-_REFRESH = _AuthEndpoint("refresh_token", "userAuth/refreshToken", "POST", True, True)
-_USER_INFO = _AuthEndpoint("get_user_info", "user/getUserBaseInfo", "GET", True, False)
+_LEGACY_REQUEST_VERIFICATION = _AuthEndpoint(
+    "request_verification",
+    GatewayRole.H5_V1,
+    "userAuth/getSMSCode",
+    "POST",
+    False,
+    False,
+)
+_LEGACY_VERIFY_CODE = _AuthEndpoint(
+    "verify_code",
+    GatewayRole.H5_V1,
+    "userAuth/checkSMSCode",
+    "POST",
+    False,
+    False,
+)
+_CURRENT_LOGIN = _AuthEndpoint(
+    "login",
+    GatewayRole.AUTH_V2,
+    "userAuth/loginWithPassword",
+    "POST",
+    False,
+    True,
+)
+_CURRENT_REQUEST_VERIFICATION = _AuthEndpoint(
+    "request_verification",
+    GatewayRole.AUTH_V2,
+    "userAuth/getVerifyCode",
+    "POST",
+    False,
+    False,
+)
+_CURRENT_VERIFY_CODE = _AuthEndpoint(
+    "verify_code",
+    GatewayRole.AUTH_V2,
+    "userAuth/checkVerifyCode",
+    "POST",
+    False,
+    False,
+)
+_REFRESH = _AuthEndpoint(
+    "refresh_token",
+    GatewayRole.H5_V1,
+    "userAuth/refreshToken",
+    "POST",
+    True,
+    True,
+)
+_USER_INFO = _AuthEndpoint(
+    "get_user_info",
+    GatewayRole.H5_V1,
+    "user/getUserBaseInfo",
+    "GET",
+    True,
+    False,
+)
+
+# Retain the historical private aliases used by the v1 contract tests.
+_LOGIN = _LEGACY_LOGIN
+_REQUEST_VERIFICATION = _LEGACY_REQUEST_VERIFICATION
+_VERIFY_CODE = _LEGACY_VERIFY_CODE
+
 _AUTH_ENDPOINTS = MappingProxyType(
     {
-        endpoint.operation: endpoint
-        for endpoint in (_LOGIN, _REQUEST_VERIFICATION, _VERIFY_CODE, _REFRESH, _USER_INFO)
+        AnzAuthenticationMethod.LEGACY: MappingProxyType(
+            {
+                endpoint.operation: endpoint
+                for endpoint in (
+                    _LEGACY_LOGIN,
+                    _LEGACY_REQUEST_VERIFICATION,
+                    _LEGACY_VERIFY_CODE,
+                    _REFRESH,
+                    _USER_INFO,
+                )
+            }
+        ),
+        AnzAuthenticationMethod.CURRENT: MappingProxyType(
+            {
+                endpoint.operation: endpoint
+                for endpoint in (
+                    _CURRENT_LOGIN,
+                    _CURRENT_REQUEST_VERIFICATION,
+                    _CURRENT_VERIFY_CODE,
+                    _REFRESH,
+                    _USER_INFO,
+                )
+            }
+        ),
     }
 )
 
@@ -257,6 +363,10 @@ async def authenticate_anz(
         if state is not None and state.matches(credentials)
         else AnzAuthState.for_credentials(credentials)
     )
+    endpoints = _auth_endpoints(credentials)
+    login_endpoint = endpoints["login"]
+    request_verification_endpoint = endpoints["request_verification"]
+    verify_code_endpoint = endpoints["verify_code"]
     code = _normalize_verification_code(verification_code)
     _ensure_deadline(deadline, operation="login")
     reclaim_attempt = candidate.session_reclaim_required
@@ -369,7 +479,7 @@ async def authenticate_anz(
             await _request_data(
                 config=config,
                 transport=transport,
-                endpoint=_VERIFY_CODE,
+                endpoint=verify_code_endpoint,
                 credentials=credentials,
                 body=_verification_check_body(credentials, code),
                 access_token=None,
@@ -379,7 +489,7 @@ async def authenticate_anz(
         except GwmRateLimitError:
             raise
         except GwmApiError as error:
-            if not _is_verification_rejection(error):
+            if not _is_verification_rejection(error, credentials):
                 raise
             return AnzVerificationRequired(
                 state=replace(candidate, verification_requested_at=None),
@@ -390,7 +500,7 @@ async def authenticate_anz(
             login = await _request_data(
                 config=config,
                 transport=transport,
-                endpoint=_LOGIN,
+                endpoint=login_endpoint,
                 credentials=credentials,
                 body=_login_body(credentials, verification_code=code),
                 access_token=None,
@@ -398,7 +508,7 @@ async def authenticate_anz(
                 deadline=deadline,
             )
         except GwmApiError as error:
-            if not _is_verification_rejection(error):
+            if not _is_verification_rejection(error, credentials):
                 raise
             return AnzVerificationRequired(
                 state=replace(candidate, verification_requested_at=None),
@@ -410,7 +520,7 @@ async def authenticate_anz(
             login = await _request_data(
                 config=config,
                 transport=transport,
-                endpoint=_LOGIN,
+                endpoint=login_endpoint,
                 credentials=credentials,
                 body=_login_body(credentials, verification_code=None),
                 access_token=None,
@@ -418,7 +528,7 @@ async def authenticate_anz(
                 deadline=deadline,
             )
         except GwmApiError as error:
-            if not _is_verification_challenge(error):
+            if not _is_verification_challenge(error, credentials):
                 raise
             now = _utc_now()
             requested_at = candidate.verification_requested_at
@@ -431,7 +541,7 @@ async def authenticate_anz(
             await _request_data(
                 config=config,
                 transport=transport,
-                endpoint=_REQUEST_VERIFICATION,
+                endpoint=request_verification_endpoint,
                 credentials=credentials,
                 body=_verification_request_body(credentials),
                 access_token=None,
@@ -546,10 +656,10 @@ def _prepare_request(
     access_token: str | None,
     ssl_context: ssl.SSLContext,
 ) -> _TransportRequest:
-    if _AUTH_ENDPOINTS.get(endpoint.operation) is not endpoint:
+    if _auth_endpoints(credentials).get(endpoint.operation) is not endpoint:
         raise GwmRoutePolicyError(operation=endpoint.operation)
     protocol = get_region_protocol(Region.ANZ)
-    gateway = protocol.gateway(GatewayRole.H5_V1)
+    gateway = protocol.gateway(endpoint.role)
     body_text: str | None
     if endpoint.method == "GET":
         if body is not None:
@@ -583,7 +693,7 @@ def _prepare_request(
         if endpoint.method == "POST":
             headers["Content-Type"] = "application/json; charset=utf-8"
         headers.update(signed.headers)
-        _validate_gateway_tls(endpoint, ssl_context)
+        _validate_gateway_tls(endpoint, credentials, ssl_context)
         return _TransportRequest(
             operation=endpoint.operation,
             method=endpoint.method,
@@ -607,7 +717,7 @@ def _validate_signed_auth_request(
     if type(signed) is not SignedRequest:
         raise ValueError("route_invalid")
     protocol = get_region_protocol(Region.ANZ)
-    gateway = protocol.gateway(GatewayRole.H5_V1)
+    gateway = protocol.gateway(endpoint.role)
     parsed = urlsplit(signed.url)
     expected = urlsplit(gateway.base_url)
     try:
@@ -655,7 +765,11 @@ def _validate_signing_headers(signed: SignedRequest, profile: SigningProfile) ->
         raise ValueError("route_invalid")
 
 
-def _validate_gateway_tls(endpoint: _AuthEndpoint, context: object) -> None:
+def _validate_gateway_tls(
+    endpoint: _AuthEndpoint,
+    credentials: AnzCredentials,
+    context: object,
+) -> None:
     if (
         not isinstance(context, ssl.SSLContext)
         or not context.check_hostname
@@ -666,10 +780,10 @@ def _validate_gateway_tls(endpoint: _AuthEndpoint, context: object) -> None:
             and (context.maximum_version < ssl.TLSVersion.TLSv1_2 or context.maximum_version < context.minimum_version)
         )
         or context.security_level <= 0
-        or get_region_protocol(Region.ANZ).gateway(GatewayRole.H5_V1).tls_mode is not TlsMode.DEFAULT
+        or get_region_protocol(Region.ANZ).gateway(endpoint.role).tls_mode is not TlsMode.DEFAULT
     ):
         raise ValueError("tls_context_invalid")
-    if _AUTH_ENDPOINTS.get(endpoint.operation) is not endpoint:
+    if _auth_endpoints(credentials).get(endpoint.operation) is not endpoint:
         raise ValueError("route_invalid")
 
 
@@ -732,6 +846,23 @@ def _login_body(
     *,
     verification_code: str | None,
 ) -> dict[str, object]:
+    if credentials.authentication_method is AnzAuthenticationMethod.CURRENT:
+        current_body: dict[str, object] = {
+            "account": credentials.account,
+            "accountType": "2",
+            "countryCode": _CALLING_CODES[credentials.country],
+            "agreement": [1, 2],
+            "password": credentials.password,
+            "deviceId": credentials.device_id[:16],
+            "appType": "0",
+            "pushToken": "",
+            "country": credentials.country,
+        }
+        if verification_code is not None:
+            current_body["verifyCode"] = verification_code
+            current_body["validCodeMode"] = "1"
+        return current_body
+
     body: dict[str, object] = {
         "account": credentials.account,
         "password": credentials.password,
@@ -751,6 +882,18 @@ def _login_body(
 
 
 def _verification_request_body(credentials: AnzCredentials) -> dict[str, object]:
+    if credentials.authentication_method is AnzAuthenticationMethod.CURRENT:
+        return {
+            "type": "17",
+            "account": credentials.account,
+            "accountType": "2",
+            "countryCode": _CALLING_CODES[credentials.country],
+            "validCodeMode": 1,
+            "operateCode": "",
+            "captchaType": "",
+            "captchaId": "",
+            "token": "",
+        }
     return {
         "type": "17",
         "email": credentials.account,
@@ -760,6 +903,15 @@ def _verification_request_body(credentials: AnzCredentials) -> dict[str, object]
 
 
 def _verification_check_body(credentials: AnzCredentials, code: str) -> dict[str, object]:
+    if credentials.authentication_method is AnzAuthenticationMethod.CURRENT:
+        return {
+            "account": credentials.account,
+            "verifyCode": code,
+            "type": "17",
+            "accountType": "2",
+            "countryCode": _CALLING_CODES[credentials.country],
+            "validCodeMode": 1,
+        }
     return {
         "email": credentials.account,
         "smsCode": code,
@@ -820,14 +972,42 @@ def _normalize_verification_code(value: str | None) -> str | None:
     return normalized
 
 
-def _is_verification_challenge(error: GwmApiError) -> bool:
-    return type(error) is GwmApiError and error.api_code in _VERIFICATION_REQUIRED_CODES
+def _auth_endpoints(credentials: AnzCredentials) -> Mapping[str, _AuthEndpoint]:
+    if type(credentials) is not AnzCredentials:
+        raise GwmRoutePolicyError(operation="login")
+    method = credentials.authentication_method
+    if not isinstance(method, AnzAuthenticationMethod):
+        raise GwmRoutePolicyError(operation="login")
+    return _AUTH_ENDPOINTS[method]
 
 
-def _is_verification_rejection(error: GwmApiError) -> bool:
+def _verification_required_codes(credentials: AnzCredentials) -> frozenset[str]:
+    return (
+        _CURRENT_VERIFICATION_REQUIRED_CODES
+        if credentials.authentication_method is AnzAuthenticationMethod.CURRENT
+        else _LEGACY_VERIFICATION_REQUIRED_CODES
+    )
+
+
+def _is_verification_challenge(
+    error: GwmApiError,
+    credentials: AnzCredentials,
+) -> bool:
+    return type(error) is GwmApiError and error.api_code in _verification_required_codes(credentials)
+
+
+def _is_verification_rejection(
+    error: GwmApiError,
+    credentials: AnzCredentials,
+) -> bool:
+    rejected_codes = (
+        frozenset()
+        if credentials.authentication_method is AnzAuthenticationMethod.CURRENT
+        else _LEGACY_VERIFICATION_REJECTED_CODES
+    )
     return type(error) is GwmApiError and (
-        error.api_code in _VERIFICATION_REJECTED_CODES
-        or error.api_code in _VERIFICATION_REQUIRED_CODES
+        error.api_code in rejected_codes
+        or error.api_code in _verification_required_codes(credentials)
     )
 
 
@@ -969,6 +1149,7 @@ def _sanitized_error(error: GwmClientError, *, operation: str) -> GwmClientError
 
 __all__ = [
     "AnzAuthenticated",
+    "AnzAuthenticationMethod",
     "AnzAuthenticationResult",
     "AnzAuthState",
     "AnzCredentials",

@@ -93,6 +93,8 @@ For European accounts, the message may come from `noreply@gwm-eu.com` with the s
 
 Australia and New Zealand accounts normally permit one active session. The setup flow requires explicit confirmation before it can replace the official app session. I recommend a dedicated account that has been shared access to the vehicle.
 
+Australia and New Zealand setup offers two authentication methods. **Current GWM ANZ app login** is the recommended beta method for new setups and newer account types. **Legacy add-on-compatible login** preserves the method used by the retired add-on for accounts that previously worked with it. The integration stores the selected method and never tries both automatically because unsuccessful password attempts can temporarily lock GWM account login.
+
 Mainland-China accounts use the registered phone number and an SMS verification flow. They do not use an account password or vehicle security PIN in this integration. If GWM requests a risk-control challenge, complete it in the official app before trying again.
 
 The integration privately stores the generated device identity and account-bound authentication state so it can resume after a Home Assistant restart. Passwords and the optional vehicle security PIN are redacted from diagnostics.

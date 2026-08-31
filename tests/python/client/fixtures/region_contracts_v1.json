@@ -85,13 +85,18 @@
           "signing_profile": "anz-bt-auth",
           "tls_mode": "default"
         },
+        "auth_v2": {
+          "base_url": "https://aus-h5-gateway.gwmcloud.com/app-api/api/v2.0/",
+          "signing_profile": "anz-bt-auth",
+          "tls_mode": "default"
+        },
         "app_v1": {
           "base_url": "https://aus-h5-gateway.gwmcloud.com/app-api/api/v1.0/",
           "signing_profile": "anz-bt-auth",
           "tls_mode": "default"
         }
       },
-      "unsupported_gateways": ["auth_v2", "certificate_v1"],
+      "unsupported_gateways": ["certificate_v1"],
       "synthetic_request": {
         "country": "AU",
         "device_id": "feedface-dead-beef-cafe-0123456789ab",

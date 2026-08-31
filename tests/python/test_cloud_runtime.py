@@ -24,6 +24,7 @@ from custom_components.gwm_ora.cloud_runtime import (
     consume_cloud_bootstrap,
     stage_cloud_bootstrap,
 )
+from custom_components.gwm_ora.const import ANZ_AUTHENTICATION_METHOD_CURRENT
 from gwm_client import (
     AnzAuthenticated,
     AnzAuthState,
@@ -61,6 +62,7 @@ def _bootstrap() -> tuple[GwmCloudCredentials, GwmCloudBootstrap]:
         "account@example.invalid",
         "password",
         _DEVICE_ID,
+        ANZ_AUTHENTICATION_METHOD_CURRENT,
     )
     regional = credentials.client_credentials()
     state = replace(

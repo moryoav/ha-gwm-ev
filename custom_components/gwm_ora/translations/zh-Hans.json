@@ -16,11 +16,13 @@
         "description": "输入官方应用使用的账号信息。身份验证将直接连接所选 GWM 云。生成的设备身份和账号绑定认证状态会被私密保存以便重启恢复，并且不会出现在诊断信息中。",
         "data": {
           "country": "注册国家或地区",
+          "authentication_method": "ANZ 身份验证方式",
           "account": "电子邮件、用户名或注册手机号",
           "password": "密码"
         },
         "data_description": {
           "country": "账号注册国家或地区的两字母代码。",
+          "authentication_method": "澳大利亚和新西兰账号请使用当前应用登录；仅当此账号曾经可以使用已停用的加载项时，才选择旧版登录。",
           "account": "请使用与官方 GWM 应用相同的账号标识。",
           "password": "存储在 Home Assistant 配置条目中，用于账号绑定的重启恢复和重新认证；诊断信息中会将其隐藏。"
         }
@@ -55,8 +57,12 @@
         "description": "只有在 GWM 接受新设置后才会应用。更改账号上下文会安全清除旧账号绑定的认证状态和命令日志。",
         "data": {
           "country": "注册国家或地区",
+          "authentication_method": "ANZ 身份验证方式",
           "account": "电子邮件、用户名或注册手机号",
           "password": "密码"
+        },
+        "data_description": {
+          "authentication_method": "更改此方式会清除之前与账号绑定的会话，并要求重新登录。"
         }
       },
       "reauth_confirm": {

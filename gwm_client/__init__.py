@@ -2,6 +2,7 @@
 
 from .anz_auth import (
     AnzAuthenticated,
+    AnzAuthenticationMethod,
     AnzAuthenticationResult,
     AnzAuthState,
     AnzCredentials,
@@ -138,6 +139,7 @@ __all__ = [
     "ANZ_BT_AUTH",
     "BEANTECH_CHINA_VEHICLE_CONTROL_ACTIONS",
     "AnzAuthenticated",
+    "AnzAuthenticationMethod",
     "AnzAuthenticationResult",
     "AnzAuthState",
     "AnzCredentials",

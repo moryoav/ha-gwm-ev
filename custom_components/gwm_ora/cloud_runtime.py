@@ -58,6 +58,7 @@ from .cloud_auth import (
 )
 from .const import (
     CONF_ACCOUNT,
+    CONF_AUTHENTICATION_METHOD,
     CONF_COUNTRY,
     CONF_PASSWORD,
     CONF_REGION,
@@ -380,6 +381,11 @@ class GwmCloudClient:
                 else None
             ),
             device_id=bootstrap.state.device_id,
+            authentication_method=(
+                str(data[CONF_AUTHENTICATION_METHOD])
+                if isinstance(data.get(CONF_AUTHENTICATION_METHOD), str)
+                else None
+            ),
         )
         if (
             bootstrap.region != credentials.region

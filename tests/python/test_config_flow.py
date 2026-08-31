@@ -19,8 +19,11 @@ from custom_components.gwm_ora import config_flow
 from custom_components.gwm_ora.cloud_auth import cloud_unique_id
 from custom_components.gwm_ora.cloud_runtime import consume_cloud_bootstrap
 from custom_components.gwm_ora.const import (
+    ANZ_AUTHENTICATION_METHOD_CURRENT,
+    ANZ_AUTHENTICATION_METHOD_LEGACY,
     CONF_ACCOUNT,
     CONF_ALLOW_SESSION_RECLAIM,
+    CONF_AUTHENTICATION_METHOD,
     CONF_CONNECTION_TYPE,
     CONF_COUNTRY,
     CONF_ENABLE_CHARGING_CONTROL,
@@ -36,6 +39,7 @@ from custom_components.gwm_ora.const import (
 )
 from gwm_client import (
     AnzAuthenticated,
+    AnzAuthenticationMethod,
     AnzAuthState,
     AnzCredentials,
     AnzSessionReclaimRequired,
@@ -210,6 +214,11 @@ def _entry(
             str(data[CONF_ACCOUNT]),
             None if data[CONF_REGION] == "cn" else str(data[CONF_PASSWORD]),
             _DEVICE_ID,
+            (
+                str(data[CONF_AUTHENTICATION_METHOD])
+                if isinstance(data.get(CONF_AUTHENTICATION_METHOD), str)
+                else None
+            ),
         )
         unique_id = cloud_unique_id(credentials)
     return ConfigEntry(
@@ -356,6 +365,76 @@ async def test_anz_reclaim_requires_explicit_unchecked_consent(
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert authenticator.calls == [False, True]
     assert consume_cloud_bootstrap(flow.hass, flow.context["unique_id"]) is not None
+
+
+@pytest.mark.asyncio
+async def test_new_anz_setup_defaults_to_current_app_authentication(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Authenticator:
+        async def async_authenticate(
+            self,
+            credentials: config_flow.GwmCloudCredentials,
+            **kwargs: Any,
+        ) -> object:
+            del kwargs
+            regional = credentials.client_credentials()
+            assert isinstance(regional, AnzCredentials)
+            assert (
+                regional.authentication_method
+                is AnzAuthenticationMethod.CURRENT
+            )
+            return _authenticated(credentials)
+
+    flow = _prepare_user_flow(monkeypatch, Authenticator())
+    form = await flow.async_step_user({CONF_REGION: "aus"})
+    validated = form["data_schema"](
+        {
+            CONF_COUNTRY: "AU",
+            CONF_ACCOUNT: "account@example.invalid",
+            CONF_PASSWORD: "password",
+        }
+    )
+    assert (
+        validated[CONF_AUTHENTICATION_METHOD]
+        == ANZ_AUTHENTICATION_METHOD_CURRENT
+    )
+
+    result = await flow.async_step_account(validated)
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"][CONF_AUTHENTICATION_METHOD] == (
+        ANZ_AUTHENTICATION_METHOD_CURRENT
+    )
+
+
+@pytest.mark.asyncio
+async def test_existing_anz_entry_without_method_remains_legacy_on_reconfigure() -> None:
+    entry = _entry(
+        data={
+            CONF_CONNECTION_TYPE: CONNECTION_TYPE_CLOUD,
+            CONF_REGION: "aus",
+            CONF_COUNTRY: "AU",
+            CONF_ACCOUNT: "account@example.invalid",
+            CONF_PASSWORD: "password",
+        }
+    )
+    flow = config_flow.GwmConfigFlow()
+    flow.hass = _Hass(entry)  # type: ignore[assignment]
+    flow.context = {"source": "reconfigure", "entry_id": entry.entry_id}
+
+    form = await flow.async_step_reconfigure({CONF_REGION: "aus"})
+    validated = form["data_schema"](
+        {
+            CONF_COUNTRY: "AU",
+            CONF_ACCOUNT: "account@example.invalid",
+            CONF_PASSWORD: "password",
+        }
+    )
+
+    assert validated[CONF_AUTHENTICATION_METHOD] == (
+        ANZ_AUTHENTICATION_METHOD_LEGACY
+    )
 
 
 @pytest.mark.asyncio
@@ -643,6 +722,52 @@ async def test_cloud_reauth_updates_password_only_after_authentication(
     assert consume_cloud_bootstrap(flow.hass, entry.unique_id) is not None
     stores = flow.hass.data["_test_cloud_state_stores"]
     assert len(stores[entry.unique_id].saved) == 1
+
+
+@pytest.mark.asyncio
+async def test_existing_anz_entry_without_method_reauthenticates_with_legacy_protocol(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entry = _entry(
+        data={
+            CONF_CONNECTION_TYPE: CONNECTION_TYPE_CLOUD,
+            CONF_REGION: "aus",
+            CONF_COUNTRY: "AU",
+            CONF_ACCOUNT: "account@example.invalid",
+            CONF_PASSWORD: "old-password",
+        }
+    )
+
+    class Authenticator:
+        async def async_authenticate(
+            self,
+            credentials: config_flow.GwmCloudCredentials,
+            **kwargs: Any,
+        ) -> object:
+            del kwargs
+            regional = credentials.client_credentials()
+            assert isinstance(regional, AnzCredentials)
+            assert regional.authentication_method is AnzAuthenticationMethod.LEGACY
+            return _authenticated(credentials)
+
+    flow = config_flow.GwmConfigFlow()
+    flow.hass = _Hass(entry)  # type: ignore[assignment]
+    flow.context = {"source": "reauth", "entry_id": entry.entry_id}
+    flow._cloud_authenticator = Authenticator()  # type: ignore[assignment]
+
+    def update_and_abort(
+        updated_entry: ConfigEntry,
+        **kwargs: Any,
+    ) -> ConfigFlowResult:
+        del kwargs
+        assert updated_entry is entry
+        return flow.async_abort(reason="reauth_successful")
+
+    monkeypatch.setattr(flow, "async_update_reload_and_abort", update_and_abort)
+    await flow.async_step_reauth(dict(entry.data))
+    result = await flow.async_step_reauth_confirm({CONF_PASSWORD: "new-password"})
+
+    assert result["reason"] == "reauth_successful"
 
 
 @pytest.mark.asyncio

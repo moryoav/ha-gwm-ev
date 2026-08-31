@@ -16,11 +16,13 @@
         "description": "Enter the account details used by the official app. Authentication is performed directly against the selected GWM cloud. The generated device identity and account-bound authentication state are stored privately for restart recovery and excluded from diagnostics.",
         "data": {
           "country": "Registration country",
+          "authentication_method": "ANZ authentication method",
           "account": "Email, username, or registered phone",
           "password": "Password"
         },
         "data_description": {
           "country": "Two-letter country where the account is registered.",
+          "authentication_method": "For Australia and New Zealand, use the current app login unless this account previously worked with the retired add-on.",
           "account": "Use the same account identifier as the official GWM app.",
           "password": "Stored in the Home Assistant config entry for account-bound restart recovery and reauthentication; it is redacted from diagnostics."
         }
@@ -55,8 +57,12 @@
         "description": "The replacement settings are applied only after GWM accepts them. Changing account context securely discards all old account-bound authentication and command-journal state.",
         "data": {
           "country": "Registration country",
+          "authentication_method": "ANZ authentication method",
           "account": "Email, username, or registered phone",
           "password": "Password"
+        },
+        "data_description": {
+          "authentication_method": "Changing this method discards the previous account-bound session and requires a fresh login."
         }
       },
       "reauth_confirm": {

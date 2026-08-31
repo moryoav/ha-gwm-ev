@@ -17,7 +17,10 @@ from custom_components.gwm_ora.cloud_auth import (
     cloud_unique_id,
 )
 from custom_components.gwm_ora.const import (
+    ANZ_AUTHENTICATION_METHOD_CURRENT,
+    ANZ_AUTHENTICATION_METHOD_LEGACY,
     CONF_ACCOUNT,
+    CONF_AUTHENTICATION_METHOD,
     CONF_CONNECTION_TYPE,
     CONF_COUNTRY,
     CONF_PASSWORD,
@@ -25,6 +28,8 @@ from custom_components.gwm_ora.const import (
     CONNECTION_TYPE_CLOUD,
 )
 from gwm_client import (
+    AnzAuthenticationMethod,
+    AnzCredentials,
     ChinaAuthState,
     ChinaClientConfig,
     EuBootstrapMaterial,
@@ -95,6 +100,51 @@ def test_entry_contract_has_pseudonymous_unique_id_and_no_transient_state() -> N
         }
     )
     assert cloud_entry_title("eu") == "GWM Europe"
+
+
+def test_anz_authentication_method_is_explicit_and_legacy_compatible() -> None:
+    legacy = GwmCloudCredentials(
+        "aus",
+        "AU",
+        "account@example.invalid",
+        "password",
+        _DEVICE_ID,
+    )
+    current = GwmCloudCredentials(
+        "aus",
+        "NZ",
+        "account@example.invalid",
+        "password",
+        _DEVICE_ID,
+        ANZ_AUTHENTICATION_METHOD_CURRENT,
+    )
+
+    assert legacy.authentication_method == ANZ_AUTHENTICATION_METHOD_LEGACY
+    assert isinstance(legacy.client_credentials(), AnzCredentials)
+    assert (
+        legacy.client_credentials().authentication_method
+        is AnzAuthenticationMethod.LEGACY
+    )
+    assert (
+        current.client_credentials().authentication_method
+        is AnzAuthenticationMethod.CURRENT
+    )
+    assert cloud_entry_data(current)[CONF_AUTHENTICATION_METHOD] == (
+        ANZ_AUTHENTICATION_METHOD_CURRENT
+    )
+    assert cloud_unique_id(current) == cloud_unique_id(legacy)
+
+
+def test_non_anz_credentials_reject_an_authentication_method() -> None:
+    with pytest.raises(ValueError, match="^credentials_invalid$"):
+        GwmCloudCredentials(
+            "eu",
+            "DE",
+            "account@example.invalid",
+            "password",
+            _DEVICE_ID,
+            ANZ_AUTHENTICATION_METHOD_CURRENT,
+        )
 
 
 def test_bundled_bootstrap_loader_is_region_scoped_and_offline() -> None:

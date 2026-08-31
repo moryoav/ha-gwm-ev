@@ -52,8 +52,11 @@ from .cloud_storage import (
     credentials_for_auth_state,
 )
 from .const import (
+    ANZ_AUTHENTICATION_METHOD_CURRENT,
+    ANZ_AUTHENTICATION_METHOD_LEGACY,
     CONF_ACCOUNT,
     CONF_ALLOW_SESSION_RECLAIM,
+    CONF_AUTHENTICATION_METHOD,
     CONF_CONNECTION_TYPE,
     CONF_COUNTRY,
     CONF_ENABLE_CHARGING_CONTROL,
@@ -86,6 +89,16 @@ _REGION_OPTIONS = [
     {"value": REGION_ANZ, "label": "Australia / New Zealand"},
     {"value": REGION_RUSSIA, "label": "Russia"},
     {"value": REGION_CHINA, "label": "Mainland China"},
+]
+_ANZ_AUTHENTICATION_OPTIONS = [
+    {
+        "value": ANZ_AUTHENTICATION_METHOD_CURRENT,
+        "label": "Current GWM ANZ app login (beta, recommended)",
+    },
+    {
+        "value": ANZ_AUTHENTICATION_METHOD_LEGACY,
+        "label": "Legacy add-on-compatible login",
+    },
 ]
 _DEFAULT_COUNTRIES = {
     REGION_EU: "DE",
@@ -142,6 +155,20 @@ def _account_schema(
     elif region == REGION_ANZ:
         fields[vol.Required(CONF_COUNTRY, default=defaults.get(CONF_COUNTRY, "AU"))] = (
             selector.CountrySelector(selector.CountrySelectorConfig(countries=["AU", "NZ"]))
+        )
+        fields[
+            vol.Required(
+                CONF_AUTHENTICATION_METHOD,
+                default=defaults.get(
+                    CONF_AUTHENTICATION_METHOD,
+                    ANZ_AUTHENTICATION_METHOD_CURRENT,
+                ),
+            )
+        ] = selector.SelectSelector(
+            selector.SelectSelectorConfig(
+                options=_ANZ_AUTHENTICATION_OPTIONS,
+                mode=selector.SelectSelectorMode.DROPDOWN,
+            )
         )
 
     fields[vol.Required(CONF_ACCOUNT, default=defaults.get(CONF_ACCOUNT, ""))] = str
@@ -393,6 +420,16 @@ class GwmConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     account=str(entry.data.get(CONF_ACCOUNT, "")),
                     password=password,
                     device_id=generate_device_id(),
+                    authentication_method=(
+                        str(
+                            entry.data.get(
+                                CONF_AUTHENTICATION_METHOD,
+                                ANZ_AUTHENTICATION_METHOD_LEGACY,
+                            )
+                        )
+                        if region == REGION_ANZ
+                        else None
+                    ),
                 )
                 self._auth_state = None
                 self._anz_session_reclaim_confirmed = False
@@ -461,6 +498,11 @@ class GwmConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if self._cloud_region == entry.data.get(CONF_REGION)
             else {CONF_COUNTRY: _DEFAULT_COUNTRIES[self._cloud_region]}
         )
+        if (
+            self._cloud_region == REGION_ANZ
+            and CONF_AUTHENTICATION_METHOD not in defaults
+        ):
+            defaults[CONF_AUTHENTICATION_METHOD] = ANZ_AUTHENTICATION_METHOD_LEGACY
         errors: dict[str, str] = {}
         if user_input is not None:
             try:
@@ -498,6 +540,14 @@ class GwmConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             account=user_input[CONF_ACCOUNT],
             password=None if region == REGION_CHINA else user_input.get(CONF_PASSWORD),
             device_id=generate_device_id(),
+            authentication_method=(
+                user_input.get(
+                    CONF_AUTHENTICATION_METHOD,
+                    ANZ_AUTHENTICATION_METHOD_CURRENT,
+                )
+                if region == REGION_ANZ
+                else None
+            ),
         )
 
     async def _async_authenticate(

@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from gwm_client import (
+    AnzAuthenticationMethod,
     AnzAuthState,
     AnzCredentials,
     ChinaAuthState,
@@ -37,7 +38,9 @@ from gwm_client.eu_auth import EuAuthenticationResult
 from gwm_client.russia_auth import RussiaAuthenticationResult
 
 from .const import (
+    ANZ_AUTHENTICATION_METHOD_LEGACY,
     CONF_ACCOUNT,
+    CONF_AUTHENTICATION_METHOD,
     CONF_CONNECTION_TYPE,
     CONF_COUNTRY,
     CONF_PASSWORD,
@@ -75,6 +78,7 @@ class GwmCloudCredentials:
     account: str = field(repr=False)
     password: str | None = field(default=None, repr=False)
     device_id: str = field(default="", repr=False)
+    authentication_method: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.region, str):
@@ -83,6 +87,19 @@ class GwmCloudCredentials:
         if region not in SUPPORTED_CLOUD_REGIONS:
             raise ValueError("credentials_invalid")
         object.__setattr__(self, "region", region)
+
+        if region == REGION_ANZ:
+            try:
+                authentication_method = AnzAuthenticationMethod(
+                    self.authentication_method or ANZ_AUTHENTICATION_METHOD_LEGACY
+                )
+            except ValueError:
+                raise ValueError("credentials_invalid") from None
+            object.__setattr__(self, "authentication_method", authentication_method.value)
+        elif self.authentication_method not in (None, ""):
+            raise ValueError("credentials_invalid")
+        else:
+            object.__setattr__(self, "authentication_method", None)
 
         credentials = self.client_credentials()
         if isinstance(credentials, ChinaCredentials):
@@ -111,6 +128,9 @@ class GwmCloudCredentials:
                 password=_required_password(self.password),
                 country=self.country,
                 device_id=self.device_id,
+                authentication_method=(
+                    self.authentication_method or ANZ_AUTHENTICATION_METHOD_LEGACY
+                ),
             )
         if self.region == REGION_RUSSIA:
             return RussiaCredentials(
@@ -253,6 +273,8 @@ def cloud_entry_data(credentials: GwmCloudCredentials) -> dict[str, object]:
     }
     if credentials.password is not None:
         data[CONF_PASSWORD] = credentials.password
+    if credentials.region == REGION_ANZ:
+        data[CONF_AUTHENTICATION_METHOD] = credentials.authentication_method
     return data
 
 

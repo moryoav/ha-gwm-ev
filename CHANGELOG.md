@@ -6,6 +6,16 @@ This project follows semantic versioning. HACS uses the latest GitHub release ta
 
 ## [Unreleased]
 
+## [0.16.7] - 2026-08-31
+
+### Added
+
+- I added a beta authentication method that follows the current signed GWM ANZ app's v2 password and verification flow.
+
+### Changed
+
+- New Australia and New Zealand setups default to the current app method. Existing entries remain on the legacy add-on-compatible method, and the integration never retries a password automatically across both methods.
+
 ## [0.16.6] - 2026-08-31
 
 ### Changed
