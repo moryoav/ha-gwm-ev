@@ -6,6 +6,13 @@ This project follows semantic versioning. HACS uses the latest GitHub release ta
 
 ## [Unreleased]
 
+## [0.16.13] - 2026-08-31
+
+### Fixed
+
+- I added automatic session renewal for the current GWM ANZ app login method. When GWM reports an expired access token, the integration now uses the official app's native refresh route, atomically rotates and privately persists both returned tokens, and retries the interrupted poll or command once.
+- I serialize ANZ renewal so concurrent requests cannot rotate the same refresh token more than once. If the account has no usable refresh token, GWM rejects renewal, or a renewed session is immediately rejected again, Home Assistant now requests reauthentication instead of retrying the expired session indefinitely.
+
 ## [0.16.12] - 2026-08-31
 
 ### Fixed

@@ -28,6 +28,7 @@ from .anz_auth import (
     _sign_current_app_request,
 )
 from .anz_auth import authenticate_anz as _run_anz_authentication
+from .anz_auth import refresh_current_anz_session as _run_current_anz_session_refresh
 from .charging import (
     ChargingPlanCommand,
     ChargingPlanInfo,
@@ -425,6 +426,85 @@ class GwmClient:
         if failure is not None:
             raise failure
         raise GwmNetworkError(operation=operation)
+
+    async def refresh_current_anz_session(
+        self,
+        credentials: AnzCredentials,
+        state: AnzAuthState,
+        *,
+        timeout: float | None = None,
+    ) -> AnzAuthenticated:
+        """Rotate one current-app ANZ session and install it atomically."""
+
+        operation = "refresh_token"
+        if (
+            self._protocol.region is not Region.ANZ
+            or type(credentials) is not AnzCredentials
+            or credentials.authentication_method is not AnzAuthenticationMethod.CURRENT
+            or self._config.anz_authentication_method != AnzAuthenticationMethod.CURRENT.value
+            or type(state) is not AnzAuthState
+            or not state.matches(credentials)
+        ):
+            raise GwmConfigurationError(operation=operation)
+        if self._closed or self._closing:
+            raise GwmClosedError(operation=operation)
+        total_timeout = self._validated_timeout(timeout, operation=operation)
+        loop = asyncio.get_running_loop()
+        deadline = _Deadline(loop.time() + total_timeout)
+        attempt_revision: int | None = None
+        failure: GwmClientError | None = None
+
+        try:
+            async with asyncio.timeout_at(deadline.expires_at):
+                async with self._request_lock:
+                    if self._closed or self._closing:
+                        raise GwmClosedError(operation=operation)
+                    current = self._session
+                    if (
+                        current is None
+                        or current.country != state.country
+                        or current.device_id != state.device_id
+                        or current.access_token != state.access_token
+                        or current.gw_id != state.gw_id
+                    ):
+                        raise GwmAuthenticationError(operation=operation)
+                    attempt_revision = self._session_revision
+                    result = await _run_current_anz_session_refresh(
+                        config=self._config,
+                        transport=self._transport,
+                        credentials=credentials,
+                        state=state,
+                        ssl_context=current.app_ssl_context,
+                        deadline=deadline,
+                    )
+                    self._replace_session_if_revision(
+                        expected_revision=attempt_revision,
+                        session=self._validated_session(result.session),
+                    )
+                    return result
+        except asyncio.CancelledError:
+            raise
+        except GwmClientError as error:
+            if attempt_revision is not None and type(error) is GwmAuthenticationError:
+                self._replace_session_if_revision(
+                    expected_revision=attempt_revision,
+                    session=None,
+                )
+            failure = (
+                GwmDeadlineExceededError(operation=operation)
+                if deadline.remaining(loop.time()) <= 0
+                else _sanitized_client_error(error, operation=error.operation)
+            )
+        except TimeoutError:
+            failure = GwmDeadlineExceededError(operation=operation)
+        except Exception:
+            failure = (
+                GwmDeadlineExceededError(operation=operation)
+                if deadline.remaining(loop.time()) <= 0
+                else GwmNetworkError(operation=operation)
+            )
+
+        raise failure or GwmNetworkError(operation=operation)
 
     async def authenticate_russia(
         self,

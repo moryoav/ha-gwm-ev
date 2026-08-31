@@ -115,7 +115,10 @@ def test_unknown_or_unsafe_operation_aliases_are_not_retained(
     assert SECRET not in _surface(error)
 
 
-@pytest.mark.parametrize("api_code", ["000000", "607501", "123456789012"])
+@pytest.mark.parametrize(
+    "api_code",
+    ["-101", "000000", "607501", "123456789012"],
+)
 def test_short_numeric_api_codes_may_be_retained(api_code: str) -> None:
     error = GwmApiError(operation="last_status", api_code=api_code)
 

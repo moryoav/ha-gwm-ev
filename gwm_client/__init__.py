@@ -8,6 +8,7 @@ from .anz_auth import (
     AnzCredentials,
     AnzSessionReclaimRequired,
     AnzVerificationRequired,
+    is_current_anz_session_expired,
 )
 from .charging import ChargingPlanCommand, ChargingPlanInfo, ChargingPlanItem
 from .china_client import (
@@ -244,6 +245,7 @@ __all__ = [
     "generate_client_certificate_request",
     "load_certificate",
     "is_eu_issued_identity_usable",
+    "is_current_anz_session_expired",
     "is_valid_operation_time",
     "map_vehicle_snapshot",
     "normalize_operation_time",

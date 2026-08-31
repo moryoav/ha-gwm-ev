@@ -57,6 +57,16 @@ _LEGACY_VERIFICATION_REQUIRED_CODES = frozenset({"309702", "110641"})
 _CURRENT_VERIFICATION_REQUIRED_CODES = frozenset({"309702", "308103", "110641"})
 _CURRENT_CREDENTIAL_REJECTED_CODES = frozenset({"308001"})
 _CURRENT_VERIFICATION_REJECTED_CODES = frozenset({"308011", "308012"})
+_CURRENT_SESSION_EXPIRED_CODES = frozenset(
+    {
+        "-101",
+        "550004",
+        "551004",
+        "551006",
+        "607124",
+    }
+)
+_CURRENT_REFRESH_REJECTED_CODES = _CURRENT_SESSION_EXPIRED_CODES | {"551011"}
 # Historical, contributor-authored ANZ R&D evidence records 308011 as a wrong or
 # expired verification code. No other application code is inferred as rejection.
 _LEGACY_VERIFICATION_REJECTED_CODES = frozenset({"308011"})
@@ -270,6 +280,7 @@ class _AuthEndpoint:
     method: str
     access_token: bool
     require_data: bool
+    current_native_transport: bool = False
 
 
 _LEGACY_LOGIN = _AuthEndpoint("login", GatewayRole.H5_V1, "userAuth/loginAccount", "POST", False, True)
@@ -321,6 +332,18 @@ _REFRESH = _AuthEndpoint(
     True,
     True,
 )
+# GWM ANZ 1.0.6 handles current-session expiry in its native TokenModel,
+# outside the Flutter v2 login layer. Its TokenApi keeps the established v1
+# refresh route and native request interceptor.
+_CURRENT_REFRESH = _AuthEndpoint(
+    "refresh_token",
+    GatewayRole.H5_V1,
+    "userAuth/refreshToken",
+    "POST",
+    True,
+    True,
+    True,
+)
 _USER_INFO = _AuthEndpoint(
     "get_user_info",
     GatewayRole.H5_V1,
@@ -356,6 +379,7 @@ _AUTH_ENDPOINTS = MappingProxyType(
                     _CURRENT_LOGIN,
                     _CURRENT_REQUEST_VERIFICATION,
                     _CURRENT_VERIFY_CODE,
+                    _CURRENT_REFRESH,
                 )
             }
         ),
@@ -693,6 +717,73 @@ async def authenticate_anz(
     return _authenticated_result(candidate, default_context)
 
 
+async def refresh_current_anz_session(
+    *,
+    config: GwmClientConfig,
+    transport: _AsyncTransport,
+    credentials: AnzCredentials,
+    state: AnzAuthState,
+    ssl_context: ssl.SSLContext,
+    deadline: _Deadline,
+) -> AnzAuthenticated:
+    """Rotate one expired current-app ANZ session through the native app route."""
+
+    if (
+        type(config) is not GwmClientConfig
+        or config.region is not Region.ANZ
+        or type(credentials) is not AnzCredentials
+        or credentials.authentication_method is not AnzAuthenticationMethod.CURRENT
+        or config.anz_authentication_method != AnzAuthenticationMethod.CURRENT.value
+        or type(state) is not AnzAuthState
+        or not state.matches(credentials)
+        or state.session_reclaim_required
+        or state.access_token is None
+        or state.refresh_token is None
+        or state.gw_id is None
+        or not isinstance(ssl_context, ssl.SSLContext)
+        or type(deadline) is not _Deadline
+    ):
+        raise GwmAuthenticationError(operation="refresh_token")
+    _ensure_deadline(deadline, operation="refresh_token")
+    endpoint = _auth_endpoints(credentials)["refresh_token"]
+    try:
+        refreshed = await _request_data(
+            config=config,
+            transport=transport,
+            endpoint=endpoint,
+            credentials=credentials,
+            body=_refresh_body(credentials, state),
+            access_token=state.access_token,
+            ssl_context=ssl_context,
+            deadline=deadline,
+            gw_id=state.gw_id,
+        )
+    except GwmApiError as error:
+        if type(error) is GwmApiError and error.api_code in _CURRENT_REFRESH_REJECTED_CODES:
+            raise GwmAuthenticationError(
+                operation="refresh_token",
+                api_code=error.api_code,
+            ) from None
+        raise
+    access_token, refresh_token = _parse_token_pair(
+        refreshed,
+        operation="refresh_token",
+    )
+    updated = replace(
+        state,
+        access_token=access_token,
+        refresh_token=refresh_token,
+        gw_id=_updated_gw_id(
+            refreshed,
+            current=state.gw_id,
+            operation="refresh_token",
+            authentication_method=AnzAuthenticationMethod.CURRENT,
+        ),
+        verification_requested_at=None,
+    )
+    return _authenticated_result(updated, ssl_context)
+
+
 def _authenticated_result(state: AnzAuthState, context: ssl.SSLContext) -> AnzAuthenticated:
     if (
         state.access_token is None
@@ -799,7 +890,14 @@ def _prepare_request(
 
     unsigned_url = gateway.base_url + endpoint.path
     try:
-        if credentials.authentication_method is AnzAuthenticationMethod.CURRENT:
+        if credentials.authentication_method is AnzAuthenticationMethod.CURRENT and endpoint.current_native_transport:
+            signed = sign_request(
+                gateway.signing_profile,
+                endpoint.method,
+                unsigned_url,
+                body_text,
+            )
+        elif credentials.authentication_method is AnzAuthenticationMethod.CURRENT:
             signed = _sign_current_app_request(
                 gateway.signing_profile,
                 endpoint.method,
@@ -836,9 +934,10 @@ def _prepare_request(
                 headers["accessToken"] = access_token
         if endpoint.method == "POST":
             headers["Content-Type"] = (
-                "application/json"
-                if credentials.authentication_method is AnzAuthenticationMethod.CURRENT
-                else "application/json; charset=utf-8"
+                "application/json; charset=utf-8"
+                if credentials.authentication_method is AnzAuthenticationMethod.LEGACY
+                or endpoint.current_native_transport
+                else "application/json"
             )
         headers.update(signed.headers)
         _validate_gateway_tls(endpoint, credentials, ssl_context)
@@ -965,7 +1064,12 @@ def _validate_signed_auth_request(
     _validate_signing_headers(
         signed,
         gateway.signing_profile,
-        nonce_length=(32 if credentials.authentication_method is AnzAuthenticationMethod.CURRENT else 16),
+        nonce_length=(
+            32
+            if credentials.authentication_method is AnzAuthenticationMethod.CURRENT
+            and not endpoint.current_native_transport
+            else 16
+        ),
     )
 
 
@@ -1154,15 +1258,15 @@ def _verification_check_body(credentials: AnzCredentials, code: str) -> dict[str
 def _refresh_body(credentials: AnzCredentials, state: AnzAuthState) -> dict[str, object]:
     if state.access_token is None or state.refresh_token is None:
         raise GwmConfigurationError(operation="refresh_token")
-    return {
+    body: dict[str, object] = {
         "accessToken": state.access_token,
         "refreshToken": state.refresh_token,
-        "deviceId": (
-            credentials.device_id
-            if credentials.authentication_method is AnzAuthenticationMethod.CURRENT
-            else credentials.device_id[:16]
-        ),
     }
+    # The current app's native RefreshTokenDto has exactly these two fields.
+    # The historical legacy request retains its deviceId body field unchanged.
+    if credentials.authentication_method is AnzAuthenticationMethod.LEGACY:
+        body["deviceId"] = credentials.device_id[:16]
+    return body
 
 
 def _current_account_type(account: str) -> str:
@@ -1318,6 +1422,12 @@ def _is_session_conflict(error: GwmApiError) -> bool:
     return type(error) is GwmApiError and error.api_code == _SESSION_CONFLICT_CODE
 
 
+def is_current_anz_session_expired(error: object) -> bool:
+    """Return whether the current ANZ app treats this exact response as token expiry."""
+
+    return type(error) is GwmApiError and error.api_code in _CURRENT_SESSION_EXPIRED_CODES
+
+
 def _session_reclaim_state(state: AnzAuthState) -> AnzAuthState:
     return replace(
         state,
@@ -1459,4 +1569,6 @@ __all__ = [
     "AnzCredentials",
     "AnzSessionReclaimRequired",
     "AnzVerificationRequired",
+    "is_current_anz_session_expired",
+    "refresh_current_anz_session",
 ]

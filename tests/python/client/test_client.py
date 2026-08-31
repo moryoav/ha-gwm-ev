@@ -401,6 +401,7 @@ def test_only_closed_operation_surfaces_and_typed_public_methods_exist() -> None
         "get_last_status",
         "get_remote_command_results",
         "get_vehicle_basics",
+        "refresh_current_anz_session",
         "send_close_windows_command",
         "send_climate_command",
         "send_lock_command",

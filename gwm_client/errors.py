@@ -51,7 +51,8 @@ def _safe_api_code(value: object) -> str | None:
     normalized = value.strip()
     if not normalized or len(normalized) > _MAX_API_CODE_LENGTH or not normalized.isascii():
         return None
-    return normalized if normalized.isdecimal() else None
+    digits = normalized[1:] if normalized.startswith("-") else normalized
+    return normalized if digits.isdecimal() and digits else None
 
 
 def _safe_http_status(value: object) -> int | None:

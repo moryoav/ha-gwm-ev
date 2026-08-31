@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import asyncio
 import re
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
+from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Protocol, cast
@@ -18,7 +19,9 @@ from homeassistant.core import HomeAssistant
 
 from gwm_client import (
     AnzAuthenticated,
+    AnzAuthenticationMethod,
     AnzAuthState,
+    AnzCredentials,
     ChargingPlanCommand,
     ChargingPlanInfo,
     ChinaAuthenticated,
@@ -35,9 +38,12 @@ from gwm_client import (
     DoorLockCommand,
     EuAuthenticated,
     EuAuthState,
+    GwmApiError,
+    GwmAuthenticationError,
     GwmClient,
     GwmClientConfig,
     GwmConfigurationError,
+    GwmNetworkError,
     GwmOptionalEndpointError,
     GwmProtocolError,
     GwmRoutePolicyError,
@@ -48,6 +54,7 @@ from gwm_client import (
     RussiaAuthenticated,
     RussiaAuthState,
     VehicleIdentifier,
+    is_current_anz_session_expired,
     map_vehicle_snapshot,
 )
 
@@ -86,6 +93,12 @@ class _OverseasReadClient(Protocol):
         self,
         identifier: VehicleIdentifier,
     ) -> CloudVehicleBasics: ...
+
+    async def refresh_current_anz_session(
+        self,
+        credentials: AnzCredentials,
+        state: AnzAuthState,
+    ) -> AnzAuthenticated: ...
 
     async def get_charging_plan(
         self,
@@ -177,6 +190,12 @@ class _ChinaReadClient(Protocol):
 
 
 class _AuthStateStore(Protocol):
+    async def async_save_auth_state(
+        self,
+        credentials: GwmCloudCredentials,
+        auth_state: EuAuthState | AnzAuthState | RussiaAuthState | ChinaAuthState,
+    ) -> None: ...
+
     async def async_clear_auth_state(
         self,
         entry_data: dict[str, object],
@@ -321,6 +340,7 @@ class GwmCloudClient:
         *,
         clock: Callable[[], datetime] | None = None,
         bootstrap: GwmCloudBootstrap | None = None,
+        credentials: GwmCloudCredentials | None = None,
         state_store: _AuthStateStore | None = None,
         entry_data: dict[str, object] | None = None,
         climate_commands_enabled: bool = False,
@@ -333,8 +353,18 @@ class GwmCloudClient:
         self._client = client
         self._clock = clock or (lambda: datetime.now(UTC))
         self._bootstrap = bootstrap
+        self._credentials = credentials
         self._state_store = state_store
         self._entry_data = dict(entry_data or {})
+        self._session_renewal_lock = asyncio.Lock()
+        self._pending_auth_state: AnzAuthState | None = None
+        if credentials is not None and (
+            type(credentials) is not GwmCloudCredentials
+            or bootstrap is None
+            or bootstrap.region != credentials.region
+            or bootstrap.account_binding != credentials.account_binding
+        ):
+            raise GwmConfigurationError(operation="login")
         if (
             type(climate_commands_enabled) is not bool
             or type(lock_window_commands_enabled) is not bool
@@ -391,6 +421,7 @@ class GwmCloudClient:
                 credentials.region,
                 client,
                 bootstrap=bootstrap,
+                credentials=credentials,
                 state_store=state_store,
                 entry_data=data,
                 climate_commands_enabled=climate_commands_enabled,
@@ -417,6 +448,7 @@ class GwmCloudClient:
             credentials.region,
             client,
             bootstrap=bootstrap,
+            credentials=credentials,
             state_store=state_store,
             entry_data=data,
             climate_commands_enabled=climate_commands_enabled,
@@ -432,6 +464,11 @@ class GwmCloudClient:
 
     async def async_get_vehicle_data(self) -> dict[str, object]:
         """Perform one atomic account discovery/status/basics refresh."""
+
+        return await self._async_with_session_renewal(self._async_get_vehicle_data_once)
+
+    async def _async_get_vehicle_data_once(self) -> dict[str, object]:
+        """Perform one account refresh without a session-renewal retry."""
 
         vehicles = await self._client.acquire_vehicles()
         records: list[tuple[CloudVehicle, CloudVehicleStatus, CloudVehicleBasics]] = []
@@ -505,6 +542,21 @@ class GwmCloudClient:
     ) -> GwmClimateContext:
         """Fetch current prerequisites without allowing an undiscovered VIN route."""
 
+        return await self._async_with_session_renewal(
+            lambda: self._async_get_climate_context_once(
+                identifier,
+                include_status=include_status,
+            )
+        )
+
+    async def _async_get_climate_context_once(
+        self,
+        identifier: VehicleIdentifier,
+        *,
+        include_status: bool,
+    ) -> GwmClimateContext:
+        """Fetch climate prerequisites without a session-renewal retry."""
+
         if type(identifier) is not VehicleIdentifier or type(include_status) is not bool:
             raise GwmRoutePolicyError(operation="send_climate_command")
         vehicle = self._vehicles.get(identifier.value)
@@ -541,10 +593,12 @@ class GwmCloudClient:
                 operation_time=str(operation_time_minutes * 60),
             )
             return
-        await cast(_OverseasReadClient, self._client).update_climate_defaults(
-            identifier,
-            temperature=temperature,
-            operation_time_minutes=operation_time_minutes,
+        await self._async_with_session_renewal(
+            lambda: cast(_OverseasReadClient, self._client).update_climate_defaults(
+                identifier,
+                temperature=temperature,
+                operation_time_minutes=operation_time_minutes,
+            )
         )
 
     async def async_get_charging_plan(
@@ -553,12 +607,12 @@ class GwmCloudClient:
     ) -> ChargingPlanInfo:
         """Read the current charging plan through the authenticated client."""
 
-        return await self._client.get_charging_plan(identifier)
+        return await self._async_with_session_renewal(lambda: self._client.get_charging_plan(identifier))
 
     async def async_set_charging_plan(self, command: ChargingPlanCommand) -> None:
         """Set or clear the charging plan through the authenticated client."""
 
-        await self._client.set_charging_plan(command)
+        await self._async_with_session_renewal(lambda: self._client.set_charging_plan(command))
 
     async def async_send_climate_command(
         self,
@@ -567,12 +621,16 @@ class GwmCloudClient:
         security_password_hash: str | None = None,
     ) -> RemoteCommandAcceptance:
         if self.region == REGION_CHINA:
-            return await cast(_ChinaReadClient, self._client).send_climate_command(command)
+            return await self._async_with_session_renewal(
+                lambda: cast(_ChinaReadClient, self._client).send_climate_command(command)
+            )
         if not isinstance(security_password_hash, str):
             raise GwmConfigurationError(operation="send_climate_command")
-        return await cast(_OverseasReadClient, self._client).send_climate_command(
-            command,
-            security_password_hash=security_password_hash,
+        return await self._async_with_session_renewal(
+            lambda: cast(_OverseasReadClient, self._client).send_climate_command(
+                command,
+                security_password_hash=security_password_hash,
+            )
         )
 
     async def async_send_lock_command(
@@ -582,12 +640,16 @@ class GwmCloudClient:
         security_password_hash: str | None = None,
     ) -> RemoteCommandAcceptance:
         if self.region == REGION_CHINA:
-            return await cast(_ChinaReadClient, self._client).send_lock_command(command)
+            return await self._async_with_session_renewal(
+                lambda: cast(_ChinaReadClient, self._client).send_lock_command(command)
+            )
         if not isinstance(security_password_hash, str):
             raise GwmConfigurationError(operation="send_lock_command")
-        return await cast(_OverseasReadClient, self._client).send_lock_command(
-            command,
-            security_password_hash=security_password_hash,
+        return await self._async_with_session_renewal(
+            lambda: cast(_OverseasReadClient, self._client).send_lock_command(
+                command,
+                security_password_hash=security_password_hash,
+            )
         )
 
     async def async_send_close_windows_command(
@@ -597,12 +659,16 @@ class GwmCloudClient:
         security_password_hash: str | None = None,
     ) -> RemoteCommandAcceptance:
         if self.region == REGION_CHINA:
-            return await cast(_ChinaReadClient, self._client).send_close_windows_command(command)
+            return await self._async_with_session_renewal(
+                lambda: cast(_ChinaReadClient, self._client).send_close_windows_command(command)
+            )
         if not isinstance(security_password_hash, str):
             raise GwmConfigurationError(operation="send_close_windows_command")
-        return await cast(_OverseasReadClient, self._client).send_close_windows_command(
-            command,
-            security_password_hash=security_password_hash,
+        return await self._async_with_session_renewal(
+            lambda: cast(_OverseasReadClient, self._client).send_close_windows_command(
+                command,
+                security_password_hash=security_password_hash,
+            )
         )
 
     async def async_send_vehicle_control_command(
@@ -613,14 +679,123 @@ class GwmCloudClient:
 
         if self.region != REGION_CHINA:
             raise GwmRoutePolicyError(operation="send_vehicle_control_command")
-        return await cast(_ChinaReadClient, self._client).send_vehicle_control_command(command)
+        return await self._async_with_session_renewal(
+            lambda: cast(_ChinaReadClient, self._client).send_vehicle_control_command(command)
+        )
 
     async def async_get_remote_command_results(
         self,
         identifier: VehicleIdentifier,
         command_id: str,
     ) -> tuple[RemoteCommandResultItem, ...]:
-        return await self._client.get_remote_command_results(identifier, command_id)
+        return await self._async_with_session_renewal(
+            lambda: self._client.get_remote_command_results(identifier, command_id)
+        )
+
+    async def _async_with_session_renewal[T](
+        self,
+        action: Callable[[], Awaitable[T]],
+    ) -> T:
+        """Retry one current-app ANZ operation after one serialized token rotation."""
+
+        async with self._session_renewal_lock:
+            await self._async_flush_pending_auth_state()
+            observed_state = self._current_anz_auth_state()
+        observed_access_token = observed_state.access_token if observed_state is not None else None
+        try:
+            return await action()
+        except GwmApiError as error:
+            if observed_state is None or not is_current_anz_session_expired(error):
+                raise
+            trigger = error
+
+        try:
+            async with self._session_renewal_lock:
+                await self._async_flush_pending_auth_state()
+                current_state = self._current_anz_auth_state()
+                if current_state is None:
+                    raise GwmAuthenticationError(
+                        operation=trigger.operation,
+                        api_code=trigger.api_code,
+                    )
+                if current_state.access_token == observed_access_token:
+                    await self._async_renew_current_anz_session(
+                        current_state,
+                        trigger=trigger,
+                    )
+            try:
+                return await action()
+            except GwmApiError as retry_error:
+                if not is_current_anz_session_expired(retry_error):
+                    raise
+                raise GwmAuthenticationError(
+                    operation=retry_error.operation,
+                    api_code=retry_error.api_code,
+                ) from None
+        except GwmAuthenticationError:
+            with suppress(Exception):
+                await self.async_authentication_rejected()
+            raise
+
+    async def _async_renew_current_anz_session(
+        self,
+        state: AnzAuthState,
+        *,
+        trigger: GwmApiError,
+    ) -> None:
+        credentials = self._credentials
+        if state.refresh_token is None or credentials is None or credentials.region != REGION_ANZ:
+            raise GwmAuthenticationError(
+                operation=trigger.operation,
+                api_code=trigger.api_code,
+            )
+        regional_credentials = credentials.client_credentials()
+        if type(regional_credentials) is not AnzCredentials:
+            raise GwmAuthenticationError(
+                operation=trigger.operation,
+                api_code=trigger.api_code,
+            )
+        result = await cast(
+            _OverseasReadClient,
+            self._client,
+        ).refresh_current_anz_session(
+            regional_credentials,
+            state,
+        )
+        bootstrap = GwmCloudBootstrap.from_authentication(credentials, result)
+        self._bootstrap = bootstrap
+        self._pending_auth_state = result.state
+        await self._async_flush_pending_auth_state()
+
+    async def _async_flush_pending_auth_state(self) -> None:
+        state = self._pending_auth_state
+        if state is None:
+            return
+        credentials = self._credentials
+        if credentials is None:
+            raise GwmNetworkError(operation="refresh_token")
+        if self._state_store is None:
+            self._pending_auth_state = None
+            return
+        try:
+            await self._state_store.async_save_auth_state(credentials, state)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            raise GwmNetworkError(operation="refresh_token") from None
+        if self._pending_auth_state is state:
+            self._pending_auth_state = None
+
+    def _current_anz_auth_state(self) -> AnzAuthState | None:
+        bootstrap = self._bootstrap
+        if (
+            self.region != REGION_ANZ
+            or bootstrap is None
+            or type(bootstrap.state) is not AnzAuthState
+            or bootstrap.state.authentication_method is not AnzAuthenticationMethod.CURRENT
+        ):
+            return None
+        return bootstrap.state
 
     async def aclose(self) -> None:
         """Close the owned regional transport."""
@@ -631,6 +806,7 @@ class GwmCloudClient:
         """Retire a rejected durable revision without logging its contents."""
 
         self._bootstrap = None
+        self._pending_auth_state = None
         if self._state_store is not None:
             await self._state_store.async_clear_auth_state(self._entry_data)
 

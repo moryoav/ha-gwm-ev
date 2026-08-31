@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import ssl
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -28,6 +29,7 @@ from custom_components.gwm_ora.const import ANZ_AUTHENTICATION_METHOD_CURRENT
 from gwm_client import (
     AnzAuthenticated,
     AnzAuthState,
+    AnzCredentials,
     ChargingPlanCommand,
     ChargingPlanInfo,
     ChinaAuthenticated,
@@ -42,6 +44,8 @@ from gwm_client import (
     CloudVehicleBasics,
     CloudVehicleStatus,
     DoorLockCommand,
+    GwmApiError,
+    GwmAuthenticationError,
     GwmClient,
     GwmConfigurationError,
     GwmNetworkError,
@@ -69,6 +73,7 @@ def _bootstrap() -> tuple[GwmCloudCredentials, GwmCloudBootstrap]:
     state = replace(
         AnzAuthState.for_credentials(regional),
         access_token="synthetic-access-token",
+        refresh_token="synthetic-refresh-token",
         gw_id="synthetic-gw-id",
     )
     session = GwmSession(
@@ -255,11 +260,157 @@ async def test_refresh_is_atomic_when_any_vehicle_read_fails() -> None:
 
 
 @pytest.mark.asyncio
+async def test_expired_current_anz_session_rotates_once_persists_and_retries() -> None:
+    credentials, bootstrap = _bootstrap()
+
+    class RenewingReadClient(_ReadClient):
+        def __init__(self) -> None:
+            super().__init__()
+            self.expired = True
+            self.refresh_calls = 0
+
+        async def acquire_vehicles(self) -> tuple[CloudVehicle, ...]:
+            if self.expired:
+                await asyncio.sleep(0)
+                raise GwmApiError(
+                    operation="acquire_vehicles",
+                    api_code="550004",
+                )
+            return await super().acquire_vehicles()
+
+        async def refresh_current_anz_session(
+            self,
+            regional_credentials: AnzCredentials,
+            state: AnzAuthState,
+        ) -> AnzAuthenticated:
+            assert regional_credentials == credentials.client_credentials()
+            self.refresh_calls += 1
+            await asyncio.sleep(0.01)
+            self.expired = False
+            updated_state = replace(
+                state,
+                access_token="synthetic-rotated-access-token",
+                refresh_token="synthetic-rotated-refresh-token",
+            )
+            return AnzAuthenticated(
+                updated_state,
+                GwmSession(
+                    "AU",
+                    _DEVICE_ID,
+                    "synthetic-rotated-access-token",
+                    ssl.create_default_context(),
+                    gw_id="synthetic-gw-id",
+                ),
+            )
+
+    class StateStore:
+        def __init__(self) -> None:
+            self.saved: list[AnzAuthState] = []
+            self.cleared = False
+
+        async def async_save_auth_state(
+            self,
+            saved_credentials: GwmCloudCredentials,
+            state: AnzAuthState,
+        ) -> None:
+            assert saved_credentials is credentials
+            self.saved.append(state)
+
+        async def async_clear_auth_state(self, data: dict[str, object]) -> None:
+            del data
+            self.cleared = True
+
+    client = RenewingReadClient()
+    state_store = StateStore()
+    runtime = GwmCloudClient(
+        "aus",
+        client,
+        clock=lambda: _REFRESHED_AT,
+        bootstrap=bootstrap,
+        credentials=credentials,
+        state_store=state_store,
+        entry_data=cloud_entry_data(credentials),
+    )
+
+    first, second = await asyncio.gather(
+        runtime.async_get_vehicle_data(),
+        runtime.async_get_vehicle_data(),
+    )
+
+    assert first["vehicles"] == second["vehicles"]
+    assert client.refresh_calls == 1
+    assert len(state_store.saved) == 1
+    assert state_store.saved[0].access_token == "synthetic-rotated-access-token"
+    assert state_store.saved[0].refresh_token == "synthetic-rotated-refresh-token"
+    assert not state_store.cleared
+    assert runtime.reusable_bootstrap is not None
+    assert runtime.reusable_bootstrap.state == state_store.saved[0]
+
+
+@pytest.mark.asyncio
+async def test_expired_current_session_without_refresh_token_requests_reauth() -> None:
+    credentials, bootstrap = _bootstrap()
+    state = replace(bootstrap.state, refresh_token=None)
+    bootstrap = GwmCloudBootstrap(
+        region=bootstrap.region,
+        account_binding=bootstrap.account_binding,
+        state=state,
+        session=bootstrap.session,
+    )
+
+    class ExpiredReadClient(_ReadClient):
+        async def acquire_vehicles(self) -> tuple[CloudVehicle, ...]:
+            raise GwmApiError(
+                operation="acquire_vehicles",
+                api_code="550004",
+            )
+
+    class StateStore:
+        cleared = False
+
+        async def async_save_auth_state(
+            self,
+            saved_credentials: GwmCloudCredentials,
+            saved_state: AnzAuthState,
+        ) -> None:
+            del saved_credentials, saved_state
+            raise AssertionError("expired state must not be saved")
+
+        async def async_clear_auth_state(self, data: dict[str, object]) -> None:
+            del data
+            self.cleared = True
+
+    state_store = StateStore()
+    runtime = GwmCloudClient(
+        "aus",
+        ExpiredReadClient(),
+        bootstrap=bootstrap,
+        credentials=credentials,
+        state_store=state_store,
+        entry_data=cloud_entry_data(credentials),
+    )
+
+    with pytest.raises(GwmAuthenticationError) as raised:
+        await runtime.async_get_vehicle_data()
+
+    assert raised.value.api_code == "550004"
+    assert state_store.cleared
+    assert runtime.reusable_bootstrap is None
+
+
+@pytest.mark.asyncio
 async def test_rejected_runtime_revision_cannot_be_restaged() -> None:
     credentials, bootstrap = _bootstrap()
 
     class StateStore:
         cleared: dict[str, object] | None = None
+
+        async def async_save_auth_state(
+            self,
+            saved_credentials: GwmCloudCredentials,
+            state: AnzAuthState,
+        ) -> None:
+            del saved_credentials, state
 
         async def async_clear_auth_state(self, data: dict[str, object]) -> None:
             self.cleared = data

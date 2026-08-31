@@ -69,6 +69,17 @@
       "tls_mode": "default",
       "access_token_header": false,
       "body": "{\"account\":\"SYNTHETIC-owner+tag@example.invalid\",\"verifyCode\":\"SYNTHETIC-246810\",\"type\":\"17\",\"accountType\":\"2\",\"countryCode\":\"+61\",\"validCodeMode\":1}"
+    },
+    "refresh": {
+      "method": "POST",
+      "host": "aus-h5-gateway.gwmcloud.com",
+      "path": "/app-api/api/v1.0/userAuth/refreshToken",
+      "signing_prefix": "bt-auth-",
+      "tls_mode": "default",
+      "access_token_header": true,
+      "nonce_length": 16,
+      "content_type": "application/json; charset=utf-8",
+      "body": "{\"accessToken\":\"SYNTHETIC-OLD-ACCESS\",\"refreshToken\":\"SYNTHETIC-OLD-REFRESH\"}"
     }
   }
 }

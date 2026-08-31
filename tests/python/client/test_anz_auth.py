@@ -400,30 +400,46 @@ def test_current_anz_auth_requests_match_versioned_beta_wire_contract() -> None:
     assert credentials.authentication_method.value == fixture["credentials"]["authentication_method"]
     context = _default_context()
     endpoints = anz_auth._auth_endpoints(credentials)
+    state = replace(
+        AnzAuthState.for_credentials(credentials),
+        access_token=ACCESS,
+        refresh_token=REFRESH,
+        gw_id="SYNTHETIC-GW-ID",
+    )
     cases = {
         "login": (
             endpoints["login"],
             anz_auth._login_body(credentials, verification_code=None),
+            None,
             None,
         ),
         "verified_login": (
             endpoints["login"],
             anz_auth._login_body(credentials, verification_code="SYNTHETIC-246810"),
             None,
+            None,
         ),
         "request_verification": (
             endpoints["request_verification"],
             anz_auth._verification_request_body(credentials),
+            None,
             None,
         ),
         "verify_code": (
             endpoints["verify_code"],
             anz_auth._verification_check_body(credentials, "SYNTHETIC-246810"),
             None,
+            None,
+        ),
+        "refresh": (
+            endpoints["refresh_token"],
+            anz_auth._refresh_body(credentials, state),
+            ACCESS,
+            "SYNTHETIC-GW-ID",
         ),
     }
 
-    for name, (endpoint, body, token) in cases.items():
+    for name, (endpoint, body, token, gw_id) in cases.items():
         expected = fixture["operations"][name]
         request = anz_auth._prepare_request(
             endpoint=endpoint,
@@ -431,7 +447,7 @@ def test_current_anz_auth_requests_match_versioned_beta_wire_contract() -> None:
             body=body,
             access_token=token,
             ssl_context=context,
-            gw_id=None,
+            gw_id=gw_id,
         )
         parsed = urlsplit(request.url)
         assert request.method == expected["method"]
@@ -445,12 +461,18 @@ def test_current_anz_auth_requests_match_versioned_beta_wire_contract() -> None:
             assert request.headers[header] == value
         signing_headers = {key for key in request.headers if key.startswith(expected["signing_prefix"])}
         assert len(signing_headers) == 4
-        assert len(request.headers["bt-auth-nonce"]) == fixture["credentials"]["nonce_length"]
+        assert len(request.headers["bt-auth-nonce"]) == expected.get(
+            "nonce_length",
+            fixture["credentials"]["nonce_length"],
+        )
         assert request.body == (None if expected["body"] is None else expected["body"].encode())
         if expected["body"] is None:
             assert "Content-Type" not in request.headers
         else:
-            assert request.headers["Content-Type"] == "application/json"
+            assert request.headers["Content-Type"] == expected.get(
+                "content_type",
+                "application/json",
+            )
 
 
 def test_current_app_json_keeps_dart_compatible_text_while_legacy_encoder_is_unchanged() -> None:
@@ -467,6 +489,22 @@ def test_current_app_nonce_matches_sha256_epoch_millisecond_shape(
     monkeypatch.setattr(anz_auth.time, "time_ns", lambda: int(timestamp) * 1_000_000)
 
     assert anz_auth._new_current_app_nonce() == hashlib.sha256(timestamp.encode()).hexdigest()[:32]
+
+
+@pytest.mark.parametrize(
+    "code",
+    ["-101", "550004", "551004", "551006", "607124"],
+)
+def test_current_app_session_expiry_codes_are_supported(code: str) -> None:
+    assert anz_auth.is_current_anz_session_expired(GwmApiError(operation="acquire_vehicles", api_code=code))
+    assert not anz_auth.is_current_anz_session_expired(
+        GwmAuthenticationError(operation="acquire_vehicles", api_code=code)
+    )
+
+
+@pytest.mark.parametrize("code", ["551011", "607501", "900001"])
+def test_non_session_expiry_codes_do_not_trigger_current_refresh(code: str) -> None:
+    assert not anz_auth.is_current_anz_session_expired(GwmApiError(operation="acquire_vehicles", api_code=code))
 
 
 def test_current_app_signer_uses_live_gateway_path_target(
@@ -711,9 +749,7 @@ async def test_current_auth_success_publishes_session_from_login_response() -> N
 @pytest.mark.asyncio
 async def test_current_auth_does_not_require_an_unevidenced_refresh_token() -> None:
     credentials = _current_credentials()
-    transport = _QueueTransport(
-        [_response({"accessToken": NEW_ACCESS, "gwId": "SYNTHETIC-GW-ID"})]
-    )
+    transport = _QueueTransport([_response({"accessToken": NEW_ACCESS, "gwId": "SYNTHETIC-GW-ID"})])
 
     result = await _current_client(transport).authenticate_anz(
         credentials,
@@ -785,6 +821,133 @@ async def test_restored_current_session_skips_legacy_profile_validation() -> Non
     assert result.state == state
     assert result.session.gw_id == "SYNTHETIC-GW-ID"
     assert transport.requests == []
+
+
+@pytest.mark.asyncio
+async def test_current_session_refresh_uses_native_v1_contract_and_rotates() -> None:
+    credentials = _current_credentials()
+    state = replace(
+        AnzAuthState.for_credentials(credentials),
+        access_token=ACCESS,
+        refresh_token=REFRESH,
+        gw_id="SYNTHETIC-GW-ID",
+    )
+    context = _default_context()
+    transport = _QueueTransport([_response({"accessToken": NEW_ACCESS, "refreshToken": NEW_REFRESH})])
+    client = _current_client(
+        transport,
+        session=GwmSession(
+            "AU",
+            credentials.device_id,
+            ACCESS,
+            context,
+            gw_id="SYNTHETIC-GW-ID",
+        ),
+    )
+
+    result = await client.refresh_current_anz_session(credentials, state)
+
+    assert result.state.access_token == NEW_ACCESS
+    assert result.state.refresh_token == NEW_REFRESH
+    assert result.state.gw_id == "SYNTHETIC-GW-ID"
+    assert result.session.app_ssl_context is context
+    assert client._session == result.session
+    request = transport.requests[0]
+    assert request.operation == "refresh_token"
+    assert urlsplit(request.url).path == "/app-api/api/v1.0/userAuth/refreshToken"
+    assert request.body == (b'{"accessToken":"SYNTHETIC-OLD-ACCESS","refreshToken":"SYNTHETIC-OLD-REFRESH"}')
+    assert b"deviceId" not in (request.body or b"")
+    assert request.headers["accessToken"] == ACCESS
+    assert request.headers["gwId"] == "SYNTHETIC-GW-ID"
+    assert len(request.headers["bt-auth-nonce"]) == 16
+    assert request.headers["Content-Type"] == "application/json; charset=utf-8"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "code",
+    ["-101", "550004", "551004", "551006", "551011", "607124"],
+)
+async def test_current_refresh_rejection_retires_session(code: str) -> None:
+    credentials = _current_credentials()
+    state = replace(
+        AnzAuthState.for_credentials(credentials),
+        access_token=ACCESS,
+        refresh_token=REFRESH,
+        gw_id="SYNTHETIC-GW-ID",
+    )
+    client = _current_client(
+        _QueueTransport([_response(code=code, description=SENSITIVE)]),
+        session=GwmSession(
+            "AU",
+            credentials.device_id,
+            ACCESS,
+            _default_context(),
+            gw_id="SYNTHETIC-GW-ID",
+        ),
+    )
+
+    with pytest.raises(GwmAuthenticationError) as raised:
+        await client.refresh_current_anz_session(credentials, state)
+
+    assert raised.value.api_code == code
+    assert not client.authenticated
+    assert SENSITIVE not in repr(raised.value)
+
+
+@pytest.mark.asyncio
+async def test_current_session_without_refresh_token_requires_reauthentication() -> None:
+    credentials = _current_credentials()
+    state = replace(
+        AnzAuthState.for_credentials(credentials),
+        access_token=ACCESS,
+        gw_id="SYNTHETIC-GW-ID",
+    )
+    transport = _QueueTransport()
+    client = _current_client(
+        transport,
+        session=GwmSession(
+            "AU",
+            credentials.device_id,
+            ACCESS,
+            _default_context(),
+            gw_id="SYNTHETIC-GW-ID",
+        ),
+    )
+
+    with pytest.raises(GwmAuthenticationError):
+        await client.refresh_current_anz_session(credentials, state)
+
+    assert not client.authenticated
+    assert transport.requests == []
+
+
+@pytest.mark.asyncio
+async def test_unknown_current_refresh_failure_preserves_existing_session() -> None:
+    credentials = _current_credentials()
+    state = replace(
+        AnzAuthState.for_credentials(credentials),
+        access_token=ACCESS,
+        refresh_token=REFRESH,
+        gw_id="SYNTHETIC-GW-ID",
+    )
+    client = _current_client(
+        _QueueTransport([_response(code="900001", description=SENSITIVE)]),
+        session=GwmSession(
+            "AU",
+            credentials.device_id,
+            ACCESS,
+            _default_context(),
+            gw_id="SYNTHETIC-GW-ID",
+        ),
+    )
+
+    with pytest.raises(GwmApiError) as raised:
+        await client.refresh_current_anz_session(credentials, state)
+
+    assert raised.value.api_code == "900001"
+    assert client.authenticated
+    assert SENSITIVE not in repr(raised.value)
 
 
 @pytest.mark.asyncio
