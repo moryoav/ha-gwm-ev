@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import voluptuous as vol
@@ -77,6 +78,8 @@ from .const import (
     REGION_RUSSIA,
     SUPPORTED_CLOUD_REGIONS,
 )
+
+_LOGGER = logging.getLogger(__name__)
 
 _REGION_OPTIONS = [
     {"value": REGION_EU, "label": "Europe"},
@@ -196,6 +199,21 @@ def _cloud_options_schema(entry: ConfigEntry, defaults: dict[str, Any] | None = 
 def _is_cloud(data: dict[str, Any] | ConfigEntry | Any) -> bool:
     entry_data = data.data if isinstance(data, ConfigEntry) else data
     return entry_data.get(CONF_CONNECTION_TYPE) == CONNECTION_TYPE_CLOUD
+
+
+def _log_cloud_auth_failure(error: GwmClientError) -> None:
+    """Log only metadata that the client exception boundary has sanitized."""
+
+    _LOGGER.warning(
+        "GWM cloud authentication failed: type=%s category=%s operation=%s "
+        "api_code=%s http_status=%s retry_after_seconds=%s",
+        type(error).__name__,
+        error.category,
+        error.operation,
+        getattr(error, "api_code", None),
+        getattr(error, "status", None),
+        getattr(error, "retry_after_seconds", None),
+    )
 
 
 class GwmConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -502,19 +520,27 @@ class GwmConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 ),
                 allow_session_reclaim=allow_session_reclaim,
             )
-        except GwmRateLimitError:
+        except GwmRateLimitError as error:
+            _log_cloud_auth_failure(error)
             return None, "rate_limited"
-        except GwmAuthenticationError:
+        except GwmAuthenticationError as error:
+            _log_cloud_auth_failure(error)
             return None, (
                 "invalid_verification_code" if verification_code is not None else "invalid_auth"
             )
-        except GwmTransportError:
+        except GwmTransportError as error:
+            _log_cloud_auth_failure(error)
             return None, "cannot_connect"
-        except (GwmConfigurationError, EuIdentityError, RussiaIdentityError):
+        except GwmConfigurationError as error:
+            _log_cloud_auth_failure(error)
             return None, "local_configuration_error"
-        except GwmApiError:
+        except (EuIdentityError, RussiaIdentityError):
+            return None, "local_configuration_error"
+        except GwmApiError as error:
+            _log_cloud_auth_failure(error)
             return None, "service_error"
-        except GwmClientError:
+        except GwmClientError as error:
+            _log_cloud_auth_failure(error)
             return None, "service_error"
         except (TypeError, ValueError):
             return None, "invalid_account"

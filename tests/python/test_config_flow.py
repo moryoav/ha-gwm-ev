@@ -53,6 +53,7 @@ from gwm_client import (
     GwmConfigurationError,
     GwmNetworkError,
     GwmRateLimitError,
+    GwmSchemaError,
     GwmSession,
     RussiaAuthenticated,
     RussiaAuthState,
@@ -551,12 +552,14 @@ async def test_china_setup_is_available_and_risk_result_has_finite_route(
         (GwmNetworkError(operation="login"), None, "cannot_connect"),
         (GwmConfigurationError(operation="login"), None, "local_configuration_error"),
         (GwmApiError(operation="login", api_code="999999"), None, "service_error"),
+        (GwmSchemaError(operation="login"), None, "service_error"),
     ],
 )
 async def test_cloud_error_taxonomy(
     error: Exception,
     verification_code: str | None,
     expected: str,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     class Authenticator:
         async def async_authenticate(self, *args: Any, **kwargs: Any) -> object:
@@ -576,6 +579,21 @@ async def test_cloud_error_taxonomy(
 
     assert result is None
     assert mapped == expected
+    records = [record for record in caplog.records if record.name == config_flow.__name__]
+    assert len(records) == 1
+    message = records[0].getMessage()
+    assert type(error).__name__ in message
+    assert "operation=" in message
+    if isinstance(error, GwmApiError):
+        assert f"api_code={error.api_code}" in message
+    for secret in (
+        "account@example.invalid",
+        "password",
+        _DEVICE_ID,
+        verification_code,
+    ):
+        if secret:
+            assert secret not in message
 
 
 @pytest.mark.asyncio

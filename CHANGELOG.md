@@ -6,6 +6,12 @@ This project follows semantic versioning. HACS uses the latest GitHub release ta
 
 ## [Unreleased]
 
+## [0.16.6] - 2026-08-31
+
+### Changed
+
+- I log only sanitized authentication failure metadata, including the operation and GWM result code, so setup failures can be investigated without exposing credentials, tokens, request data, or response bodies.
+
 ## [0.16.5] - 2026-08-31
 
 ### Fixed
