@@ -13,7 +13,12 @@ from urllib.parse import urlsplit
 
 _OPERATION_ALIAS = re.compile(r"[a-z][a-z0-9_]{0,63}")
 _HEADER_NAME = re.compile(r"[-!#$%&'*+.^_`|~0-9A-Za-z]+")
-_JSON_CONTENT_TYPE = "application/json; charset=utf-8"
+_JSON_CONTENT_TYPES = frozenset(
+    {
+        "application/json",
+        "application/json; charset=utf-8",
+    }
+)
 _MAX_REQUEST_BODY_BYTES = 512 * 1024
 _FORBIDDEN_HEADERS = frozenset(
     {
@@ -90,7 +95,7 @@ class _TransportRequest:
                 or len(self.body) > _MAX_REQUEST_BODY_BYTES
             ):
                 raise ValueError("request_body_invalid")
-            if content_type != _JSON_CONTENT_TYPE:
+            if content_type not in _JSON_CONTENT_TYPES:
                 raise ValueError("header_invalid")
         object.__setattr__(self, "headers", MappingProxyType(copied))
 

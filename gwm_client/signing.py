@@ -9,9 +9,12 @@ import unicodedata
 import uuid
 from dataclasses import dataclass, field
 from typing import Literal
-from urllib.parse import SplitResult, quote, unquote, urlsplit, urlunsplit
+from urllib.parse import SplitResult, parse_qsl, quote, unquote, urlsplit, urlunsplit
 
-QueryPolicy = Literal["drop-empty-encoded", "keep-empty-decoded"]
+QueryPolicy = Literal["dart-current", "drop-empty-encoded", "keep-empty-decoded"]
+UriComponentSafe = Literal["-._~", "-._~!*'()"]
+WhitespacePolicy = Literal["dotnet", "preserve"]
+RequestTargetPolicy = Literal["path", "absolute-url"]
 _INVALID_PERCENT_ESCAPE = re.compile(r"%(?![0-9A-Fa-f]{2})")
 _HTTP_METHOD = re.compile(r"[-!#$%&'*+.^_`|~0-9A-Za-z]+")
 
@@ -28,7 +31,11 @@ class SigningProfile:
     uppercase_nonce: bool = False
 
     def __post_init__(self) -> None:
-        if self.query_policy not in {"drop-empty-encoded", "keep-empty-decoded"}:
+        if self.query_policy not in {
+            "dart-current",
+            "drop-empty-encoded",
+            "keep-empty-decoded",
+        }:
             raise ValueError(f"Unsupported query policy: {self.query_policy}")
 
 
@@ -88,16 +95,34 @@ def sign_request(
     *,
     timestamp: str | None = None,
     nonce: str | None = None,
+    uri_component_safe: UriComponentSafe = "-._~",
+    whitespace_policy: WhitespacePolicy = "dotnet",
+    request_target_policy: RequestTargetPolicy = "path",
+    query_policy: QueryPolicy | None = None,
 ) -> SignedRequest:
     """Sign one request without performing any I/O.
 
     ``body`` must be the exact serialized request text.  The official clients
     capture that representation rather than parsing and re-serializing JSON,
-    then remove all .NET whitespace globally—even inside JSON string values.
+    Legacy .NET clients remove whitespace globally, even inside JSON string values;
+    callers can preserve it for current-app protocols.
     Explicit timestamps and nonces make captured vectors reproducible.  URLs
     must already be absolute, ASCII, percent-encoded HTTP request URLs.
     """
 
+    if uri_component_safe not in {"-._~", "-._~!*'()"}:
+        raise ValueError("Unsupported URI component encoding policy")
+    if whitespace_policy not in {"dotnet", "preserve"}:
+        raise ValueError("Unsupported whitespace policy")
+    if request_target_policy not in {"path", "absolute-url"}:
+        raise ValueError("Unsupported request target policy")
+    actual_query_policy = profile.query_policy if query_policy is None else query_policy
+    if actual_query_policy not in {
+        "dart-current",
+        "drop-empty-encoded",
+        "keep-empty-decoded",
+    }:
+        raise ValueError("Unsupported query policy")
     request_method = method
     if _HTTP_METHOD.fullmatch(request_method) is None:
         raise ValueError("The request method must be a valid HTTP token")
@@ -105,10 +130,17 @@ def sign_request(
     _validate_url(url, parsed)
     path = parsed.path or "/"
 
-    if request_method == "POST":
+    if actual_query_policy == "dart-current":
+        parameters = _canonicalize_dart_current_parameters(
+            parsed.query,
+            body=body,
+            method=request_method,
+        )
+        outgoing_url = url
+    elif request_method == "POST":
         parameters = "" if not body else "json=" + body
         outgoing_url = url
-    elif profile.query_policy == "keep-empty-decoded":
+    elif actual_query_policy == "keep-empty-decoded":
         parameters = _canonicalize_decoded_query(parsed.query)
         outgoing_url = url
     else:
@@ -123,8 +155,11 @@ def sign_request(
         f"{prefix}-auth-nonce:{actual_nonce}"
         f"{prefix}-auth-timestamp:{actual_timestamp}"
     )
-    raw = _strip_dotnet_whitespace(request_method + path + auth + parameters + profile.app_secret)
-    escaped = quote(raw, safe="-._~", encoding="utf-8", errors="strict")
+    request_target = outgoing_url if request_target_policy == "absolute-url" else path
+    raw = request_method + request_target + auth + parameters + profile.app_secret
+    if whitespace_policy == "dotnet":
+        raw = _strip_dotnet_whitespace(raw)
+    escaped = quote(raw, safe=uri_component_safe, encoding="utf-8", errors="strict")
     signature = hashlib.sha256(escaped.encode()).hexdigest()
 
     headers = {
@@ -174,6 +209,25 @@ def _canonicalize_decoded_query(query: str) -> str:
         value = encoded_value if separator else ""
         parameters.append(f"{unquote(encoded_key).lower()}={unquote(value)}")
     return "".join(parameters)
+
+
+def _canonicalize_dart_current_parameters(
+    query: str,
+    *,
+    body: str | None,
+    method: str,
+) -> str:
+    parameters = dict(
+        parse_qsl(
+            query,
+            keep_blank_values=True,
+            encoding="utf-8",
+            errors="strict",
+        )
+    )
+    if method == "POST" and body is not None:
+        parameters["json"] = body
+    return "".join(f"{key}={parameters[key].replace(' ', '')}" for key in sorted(parameters))
 
 
 def _new_nonce(uppercase: bool) -> str:

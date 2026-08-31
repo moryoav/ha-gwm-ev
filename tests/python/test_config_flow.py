@@ -662,6 +662,8 @@ async def test_cloud_error_taxonomy(
     assert len(records) == 1
     message = records[0].getMessage()
     assert type(error).__name__ in message
+    assert "region=eu" in message
+    assert "authentication_method=None" in message
     assert "operation=" in message
     if isinstance(error, GwmApiError):
         assert f"api_code={error.api_code}" in message
@@ -673,6 +675,32 @@ async def test_cloud_error_taxonomy(
     ):
         if secret:
             assert secret not in message
+
+
+def test_cloud_error_log_identifies_safe_anz_authentication_route(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    credentials = config_flow.GwmCloudCredentials(
+        "aus",
+        "AU",
+        "account@example.invalid",
+        "password",
+        _DEVICE_ID,
+        authentication_method=ANZ_AUTHENTICATION_METHOD_CURRENT,
+    )
+
+    config_flow._log_cloud_auth_failure(
+        GwmApiError(operation="login", api_code="308001"),
+        credentials,
+    )
+
+    records = [record for record in caplog.records if record.name == config_flow.__name__]
+    assert len(records) == 1
+    message = records[0].getMessage()
+    assert "region=aus" in message
+    assert "authentication_method=current_v2" in message
+    for secret in ("account@example.invalid", "password", _DEVICE_ID):
+        assert secret not in message
 
 
 @pytest.mark.asyncio

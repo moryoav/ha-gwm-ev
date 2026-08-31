@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import ssl
 import time
@@ -16,6 +17,7 @@ from urllib.parse import urlsplit
 import pytest
 
 import gwm_client.anz_auth as anz_auth
+from gwm_client._dotnet_json import encode_dotnet_json
 from gwm_client._protocol import _Deadline, _TransportRequest, _TransportResponse
 from gwm_client.anz_auth import (
     AnzAuthenticated,
@@ -29,6 +31,7 @@ from gwm_client.client import GwmClient
 from gwm_client.config import GwmClientConfig, RequestTimeouts
 from gwm_client.errors import (
     GwmApiError,
+    GwmAuthenticationError,
     GwmConfigurationError,
     GwmDeadlineExceededError,
     GwmHttpError,
@@ -165,14 +168,30 @@ def _client(
     *,
     session: GwmSession | None = None,
     total_timeout: float = 5,
+    authentication_method: AnzAuthenticationMethod = AnzAuthenticationMethod.LEGACY,
 ) -> GwmClient:
     return GwmClient(
         GwmClientConfig(
             "aus",
             timeouts=RequestTimeouts(total=total_timeout, connect=1, read=1),
+            anz_authentication_method=authentication_method.value,
         ),
         session,
         transport=transport,
+    )
+
+
+def _current_client(
+    transport: _QueueTransport,
+    *,
+    session: GwmSession | None = None,
+    total_timeout: float = 5,
+) -> GwmClient:
+    return _client(
+        transport,
+        session=session,
+        total_timeout=total_timeout,
+        authentication_method=AnzAuthenticationMethod.CURRENT,
     )
 
 
@@ -217,6 +236,23 @@ def test_credentials_reject_unknown_authentication_method(method: object) -> Non
         )
 
 
+def test_current_credentials_match_app_account_space_normalization() -> None:
+    credentials = AnzCredentials(
+        " synthetic + owner@example.invalid ",
+        "SYNTHETIC-PASSWORD",
+        "AU",
+        "0123456789abcdef0123456789abcdef",
+        authentication_method=AnzAuthenticationMethod.CURRENT,
+    )
+
+    assert credentials.account == "synthetic+owner@example.invalid"
+
+
+def test_current_account_type_supports_email_and_phone_identifiers() -> None:
+    assert anz_auth._current_account_type("synthetic@example.invalid") == "2"
+    assert anz_auth._current_account_type("0412345678") == "1"
+
+
 @pytest.mark.parametrize("country", ["", "GB", "ZZ", "A", "AUS"])
 def test_credentials_reject_unknown_anz_registration_country(country: str) -> None:
     with pytest.raises(ValueError, match="^credentials_invalid$"):
@@ -244,6 +280,15 @@ def test_state_is_bound_to_exact_account_country_and_stable_device(country: str)
             credentials.password,
             country,
             credentials.device_id,
+        )
+    )
+    assert not state.matches(
+        AnzCredentials(
+            credentials.account,
+            credentials.password,
+            country,
+            credentials.device_id,
+            authentication_method=AnzAuthenticationMethod.CURRENT,
         )
     )
     other_country = "NZ" if country == "AU" else "AU"
@@ -313,6 +358,7 @@ def test_all_anz_auth_requests_match_versioned_closed_wire_contract() -> None:
         assert request.ssl_context is context
         signing_headers = {key for key in request.headers if key.startswith(expected["signing_prefix"])}
         assert len(signing_headers) == 4
+        assert len(request.headers["bt-auth-nonce"]) == 16
         if expected["body"] is None:
             assert request.body is None
             assert "Content-Type" not in request.headers
@@ -325,17 +371,10 @@ def test_all_anz_auth_requests_match_versioned_closed_wire_contract() -> None:
 
 def test_current_anz_auth_requests_match_versioned_beta_wire_contract() -> None:
     fixture = json.loads(CURRENT_FIXTURE_PATH.read_text(encoding="utf-8"))
-    assert fixture["schema_version"] == 1
+    assert fixture["schema_version"] == 2
     credentials = _current_credentials()
     assert credentials.authentication_method.value == fixture["credentials"]["authentication_method"]
     context = _default_context()
-    state = AnzAuthState(
-        account_binding=credentials.account_binding,
-        country=credentials.country,
-        device_id=credentials.device_id,
-        access_token=ACCESS,
-        refresh_token=REFRESH,
-    )
     endpoints = anz_auth._auth_endpoints(credentials)
     cases = {
         "login": (
@@ -358,12 +397,6 @@ def test_current_anz_auth_requests_match_versioned_beta_wire_contract() -> None:
             anz_auth._verification_check_body(credentials, "SYNTHETIC-246810"),
             None,
         ),
-        "refresh": (
-            endpoints["refresh_token"],
-            anz_auth._refresh_body(credentials, state),
-            ACCESS,
-        ),
-        "get_user_info": (endpoints["get_user_info"], None, ACCESS),
     }
 
     for name, (endpoint, body, token) in cases.items():
@@ -374,6 +407,7 @@ def test_current_anz_auth_requests_match_versioned_beta_wire_contract() -> None:
             body=body,
             access_token=token,
             ssl_context=context,
+            gw_id=None,
         )
         parsed = urlsplit(request.url)
         assert request.method == expected["method"]
@@ -381,23 +415,47 @@ def test_current_anz_auth_requests_match_versioned_beta_wire_contract() -> None:
         assert parsed.path == expected["path"]
         assert parsed.query == ""
         assert ("accessToken" in request.headers) is expected["access_token_header"]
+        assert ("gwId" in request.headers) is expected["access_token_header"]
         assert request.headers["deviceId"] == fixture["credentials"]["api_device_id"]
-        signing_headers = {
-            key for key in request.headers if key.startswith(expected["signing_prefix"])
-        }
+        for header, value in fixture["required_headers"].items():
+            assert request.headers[header] == value
+        signing_headers = {key for key in request.headers if key.startswith(expected["signing_prefix"])}
         assert len(signing_headers) == 4
-        assert request.body == (
-            None if expected["body"] is None else expected["body"].encode()
-        )
+        assert len(request.headers["bt-auth-nonce"]) == fixture["credentials"]["nonce_length"]
+        assert request.body == (None if expected["body"] is None else expected["body"].encode())
+        if expected["body"] is None:
+            assert "Content-Type" not in request.headers
+        else:
+            assert request.headers["Content-Type"] == "application/json"
 
 
-def test_auth_method_cannot_use_an_endpoint_from_the_other_protocol() -> None:
+def test_current_app_json_keeps_dart_compatible_text_while_legacy_encoder_is_unchanged() -> None:
+    value = {"account": "owner+tag@example.invalid", "label": "Māori"}
+
+    assert anz_auth._encode_current_app_json(value) == ('{"account":"owner+tag@example.invalid","label":"Māori"}')
+    assert encode_dotnet_json(value) == ('{"account":"owner\\u002Btag@example.invalid","label":"M\\u0101ori"}')
+
+
+def test_current_app_nonce_matches_sha256_epoch_millisecond_shape(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    timestamp = "1788148800123"
+    monkeypatch.setattr(anz_auth.time, "time_ns", lambda: int(timestamp) * 1_000_000)
+
+    assert anz_auth._new_current_app_nonce() == hashlib.sha256(timestamp.encode()).hexdigest()[:32]
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    [anz_auth._LOGIN, anz_auth._REFRESH, anz_auth._USER_INFO],
+)
+def test_current_auth_cannot_use_a_legacy_endpoint(endpoint: object) -> None:
     credentials = _current_credentials()
     with pytest.raises(GwmRoutePolicyError):
         anz_auth._prepare_request(
-            endpoint=anz_auth._LOGIN,
+            endpoint=endpoint,  # type: ignore[arg-type]
             credentials=credentials,
-            body=anz_auth._login_body(credentials, verification_code=None),
+            body=None,
             access_token=None,
             ssl_context=_default_context(),
         )
@@ -533,15 +591,13 @@ async def test_initial_challenge_requests_one_code_and_returns_continuation(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("challenge", ["308103", "110641"])
+@pytest.mark.parametrize("challenge", ["309702", "308103", "110641"])
 async def test_current_auth_challenge_uses_v2_verification_routes(
     challenge: str,
 ) -> None:
     credentials = _current_credentials()
-    transport = _QueueTransport(
-        [_response(code=challenge, description=SENSITIVE), _response()]
-    )
-    result = await _client(transport).authenticate_anz(
+    transport = _QueueTransport([_response(code=challenge, description=SENSITIVE), _response()])
+    result = await _current_client(transport).authenticate_anz(
         credentials,
         allow_session_reclaim=True,
     )
@@ -555,15 +611,20 @@ async def test_current_auth_challenge_uses_v2_verification_routes(
 
 
 @pytest.mark.asyncio
-async def test_current_auth_success_publishes_session_after_v1_profile_validation() -> None:
+async def test_current_auth_success_publishes_session_from_login_response() -> None:
     credentials = _current_credentials()
     transport = _QueueTransport(
         [
-            _response({"accessToken": NEW_ACCESS, "refreshToken": NEW_REFRESH}),
-            _response({"email": SENSITIVE}),
+            _response(
+                {
+                    "accessToken": NEW_ACCESS,
+                    "refreshToken": NEW_REFRESH,
+                    "gwId": "SYNTHETIC-GW-ID",
+                }
+            )
         ]
     )
-    client = _client(transport)
+    client = _current_client(transport)
 
     result = await client.authenticate_anz(
         credentials,
@@ -573,11 +634,31 @@ async def test_current_auth_success_publishes_session_after_v1_profile_validatio
     assert type(result) is AnzAuthenticated
     assert result.state.access_token == NEW_ACCESS
     assert result.state.refresh_token == NEW_REFRESH
+    assert result.state.gw_id == "SYNTHETIC-GW-ID"
+    assert result.session.gw_id == "SYNTHETIC-GW-ID"
     assert client.authenticated
     assert [urlsplit(request.url).path for request in transport.requests] == [
         "/app-api/api/v2.0/userAuth/loginWithPassword",
-        "/app-api/api/v1.0/user/getUserBaseInfo",
     ]
+
+
+@pytest.mark.asyncio
+async def test_current_auth_does_not_require_an_unevidenced_refresh_token() -> None:
+    credentials = _current_credentials()
+    transport = _QueueTransport(
+        [_response({"accessToken": NEW_ACCESS, "gwId": "SYNTHETIC-GW-ID"})]
+    )
+
+    result = await _current_client(transport).authenticate_anz(
+        credentials,
+        allow_session_reclaim=True,
+    )
+
+    assert type(result) is AnzAuthenticated
+    assert result.state.access_token == NEW_ACCESS
+    assert result.state.refresh_token is None
+    assert result.state.gw_id == "SYNTHETIC-GW-ID"
+    assert [request.operation for request in transport.requests] == ["login"]
 
 
 @pytest.mark.asyncio
@@ -585,17 +666,59 @@ async def test_current_auth_credential_rejection_never_falls_back_to_legacy() ->
     credentials = _current_credentials()
     transport = _QueueTransport([_response(code="308001", description=SENSITIVE)])
 
-    with pytest.raises(GwmApiError) as raised:
-        await _client(transport).authenticate_anz(
+    with pytest.raises(GwmAuthenticationError) as raised:
+        await _current_client(transport).authenticate_anz(
             credentials,
             allow_session_reclaim=True,
         )
 
     assert raised.value.api_code == "308001"
     assert len(transport.requests) == 1
-    assert urlsplit(transport.requests[0].url).path == (
-        "/app-api/api/v2.0/userAuth/loginWithPassword"
+    assert urlsplit(transport.requests[0].url).path == ("/app-api/api/v2.0/userAuth/loginWithPassword")
+
+
+@pytest.mark.asyncio
+async def test_current_session_without_gw_id_requires_fresh_login() -> None:
+    credentials = _current_credentials()
+    state = replace(
+        AnzAuthState.for_credentials(credentials),
+        access_token=ACCESS,
+        refresh_token=REFRESH,
     )
+    transport = _QueueTransport()
+
+    result = await _current_client(transport).authenticate_anz(
+        credentials,
+        state=state,
+    )
+
+    assert type(result) is AnzSessionReclaimRequired
+    assert result.state.access_token is None
+    assert result.state.refresh_token is None
+    assert result.state.gw_id is None
+    assert transport.requests == []
+
+
+@pytest.mark.asyncio
+async def test_restored_current_session_skips_legacy_profile_validation() -> None:
+    credentials = _current_credentials()
+    state = replace(
+        AnzAuthState.for_credentials(credentials),
+        access_token=ACCESS,
+        refresh_token=REFRESH,
+        gw_id="SYNTHETIC-GW-ID",
+    )
+    transport = _QueueTransport()
+
+    result = await _current_client(transport).authenticate_anz(
+        credentials,
+        state=state,
+    )
+
+    assert type(result) is AnzAuthenticated
+    assert result.state == state
+    assert result.session.gw_id == "SYNTHETIC-GW-ID"
+    assert transport.requests == []
 
 
 @pytest.mark.asyncio
@@ -730,12 +853,17 @@ async def test_current_verification_continuation_stays_on_v2_auth_routes() -> No
     transport = _QueueTransport(
         [
             _response(),
-            _response({"accessToken": NEW_ACCESS, "refreshToken": NEW_REFRESH}),
-            _response({"email": SENSITIVE}),
+            _response(
+                {
+                    "accessToken": NEW_ACCESS,
+                    "refreshToken": NEW_REFRESH,
+                    "gwId": "SYNTHETIC-GW-ID",
+                }
+            ),
         ]
     )
 
-    result = await _client(transport).authenticate_anz(
+    result = await _current_client(transport).authenticate_anz(
         credentials,
         state=state,
         verification_code="246810",
@@ -746,9 +874,8 @@ async def test_current_verification_continuation_stays_on_v2_auth_routes() -> No
     assert [urlsplit(request.url).path for request in transport.requests] == [
         "/app-api/api/v2.0/userAuth/checkVerifyCode",
         "/app-api/api/v2.0/userAuth/loginWithPassword",
-        "/app-api/api/v1.0/user/getUserBaseInfo",
     ]
-    assert b'"countryCode":"\\u002B64"' in (transport.requests[0].body or b"")
+    assert b'"countryCode":"+64"' in (transport.requests[0].body or b"")
 
 
 @pytest.mark.asyncio
@@ -786,6 +913,55 @@ async def test_only_308011_rejects_code_and_unknown_failures_propagate(
     assert raised.value.operation == "verify_code"
     assert len(unknown_transport.requests) == 1
     assert SENSITIVE not in repr(raised.value)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("rejected_at", ["check", "login"])
+@pytest.mark.parametrize("rejection_code", ["308011", "308012"])
+async def test_current_wrong_or_expired_code_returns_verification_form(
+    rejected_at: str,
+    rejection_code: str,
+) -> None:
+    credentials = _current_credentials()
+    state = replace(
+        AnzAuthState.for_credentials(credentials),
+        verification_requested_at=NOW - timedelta(minutes=1),
+        session_reclaim_required=True,
+    )
+    responses = [_response(code=rejection_code, description=SENSITIVE)]
+    if rejected_at == "login":
+        responses.insert(0, _response())
+
+    result = await _current_client(_QueueTransport(responses)).authenticate_anz(
+        credentials,
+        state=state,
+        verification_code="246810",
+        allow_session_reclaim=True,
+    )
+
+    assert type(result) is AnzVerificationRequired
+    assert result.code_rejected
+    assert result.state.verification_requested_at is None
+
+
+@pytest.mark.asyncio
+async def test_current_too_many_verification_failures_does_not_invite_retry() -> None:
+    credentials = _current_credentials()
+    state = replace(
+        AnzAuthState.for_credentials(credentials),
+        verification_requested_at=NOW - timedelta(minutes=1),
+        session_reclaim_required=True,
+    )
+
+    with pytest.raises(GwmApiError) as raised:
+        await _current_client(_QueueTransport([_response(code="318013")])).authenticate_anz(
+            credentials,
+            state=state,
+            verification_code="246810",
+            allow_session_reclaim=True,
+        )
+
+    assert raised.value.api_code == "318013"
 
 
 @pytest.mark.asyncio
@@ -835,7 +1011,8 @@ async def test_valid_access_token_discards_profile_pii_and_uses_default_tls() ->
 
     assert type(result) is AnzAuthenticated
     assert result.state == state
-    assert not hasattr(result.state, "gw_id")
+    assert result.state.gw_id is None
+    assert SENSITIVE not in repr(result.state)
     assert not hasattr(result.state, "email")
     assert [request.operation for request in transport.requests] == ["get_user_info"]
     assert result.session.app_ssl_context.security_level > 0
@@ -934,9 +1111,7 @@ async def test_607501_returns_typed_reclaim_continuation_and_retires_session(
     if reclaim_at == "access":
         responses.append(_response(code="607501", description=SENSITIVE))
     elif reclaim_at == "access_http":
-        responses.append(
-            _response(code="607501", status=401, description=SENSITIVE)
-        )
+        responses.append(_response(code="607501", status=401, description=SENSITIVE))
     else:
         responses.append(_response(status=401))
         if reclaim_at == "refresh":

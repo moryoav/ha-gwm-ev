@@ -228,12 +228,18 @@ def _is_cloud(data: dict[str, Any] | ConfigEntry | Any) -> bool:
     return entry_data.get(CONF_CONNECTION_TYPE) == CONNECTION_TYPE_CLOUD
 
 
-def _log_cloud_auth_failure(error: GwmClientError) -> None:
+def _log_cloud_auth_failure(
+    error: GwmClientError,
+    credentials: GwmCloudCredentials,
+) -> None:
     """Log only metadata that the client exception boundary has sanitized."""
 
     _LOGGER.warning(
-        "GWM cloud authentication failed: type=%s category=%s operation=%s "
+        "GWM cloud authentication failed: region=%s authentication_method=%s "
+        "type=%s category=%s operation=%s "
         "api_code=%s http_status=%s retry_after_seconds=%s",
+        credentials.region,
+        credentials.authentication_method,
         type(error).__name__,
         error.category,
         error.operation,
@@ -571,26 +577,26 @@ class GwmConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 allow_session_reclaim=allow_session_reclaim,
             )
         except GwmRateLimitError as error:
-            _log_cloud_auth_failure(error)
+            _log_cloud_auth_failure(error, credentials)
             return None, "rate_limited"
         except GwmAuthenticationError as error:
-            _log_cloud_auth_failure(error)
+            _log_cloud_auth_failure(error, credentials)
             return None, (
                 "invalid_verification_code" if verification_code is not None else "invalid_auth"
             )
         except GwmTransportError as error:
-            _log_cloud_auth_failure(error)
+            _log_cloud_auth_failure(error, credentials)
             return None, "cannot_connect"
         except GwmConfigurationError as error:
-            _log_cloud_auth_failure(error)
+            _log_cloud_auth_failure(error, credentials)
             return None, "local_configuration_error"
         except (EuIdentityError, RussiaIdentityError):
             return None, "local_configuration_error"
         except GwmApiError as error:
-            _log_cloud_auth_failure(error)
+            _log_cloud_auth_failure(error, credentials)
             return None, "service_error"
         except GwmClientError as error:
-            _log_cloud_auth_failure(error)
+            _log_cloud_auth_failure(error, credentials)
             return None, "service_error"
         except (TypeError, ValueError):
             return None, "invalid_account"

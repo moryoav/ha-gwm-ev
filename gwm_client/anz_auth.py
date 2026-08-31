@@ -9,6 +9,7 @@ import json
 import math
 import re
 import ssl
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
@@ -37,7 +38,7 @@ from .errors import (
     GwmTlsError,
 )
 from .models import GwmSession
-from .regions import GatewayRole, Region, TlsMode, get_region_protocol
+from .regions import GatewayRole, Region, RegionProtocol, TlsMode, get_region_protocol
 from .signing import SignedRequest, SigningProfile, sign_request
 
 _ACCOUNT_BINDING = re.compile(r"[0-9a-f]{64}")
@@ -50,13 +51,23 @@ _MAX_VERIFICATION_CODE_LENGTH = 64
 _MAX_JSON_DEPTH = 64
 _VERIFICATION_INTERVAL = timedelta(minutes=10)
 _LEGACY_VERIFICATION_REQUIRED_CODES = frozenset({"309702", "110641"})
-_CURRENT_VERIFICATION_REQUIRED_CODES = frozenset({"308103", "110641"})
+_CURRENT_VERIFICATION_REQUIRED_CODES = frozenset({"309702", "308103", "110641"})
+_CURRENT_CREDENTIAL_REJECTED_CODES = frozenset({"308001"})
+_CURRENT_VERIFICATION_REJECTED_CODES = frozenset({"308011", "308012"})
 # Historical, contributor-authored ANZ R&D evidence records 308011 as a wrong or
 # expired verification code. No other application code is inferred as rejection.
 _LEGACY_VERIFICATION_REJECTED_CODES = frozenset({"308011"})
 _SESSION_CONFLICT_CODE = "607501"
 _ANZ_COUNTRIES = frozenset({"AU", "NZ"})
 _CALLING_CODES = MappingProxyType({"AU": "+61", "NZ": "+64"})
+_CURRENT_APP_HEADERS = MappingProxyType(
+    {
+        "language": "en",
+        "cVer": "1.0.6",
+        "ip": "0.0.0.0",
+        "secVersion": "2.0",
+    }
+)
 # This persisted hash-domain value is a compatibility contract, not a vehicle-scope name.
 _LEGACY_ACCOUNT_BINDING_DOMAIN = b"gwm-ora-anz-account-v1\0"
 
@@ -94,8 +105,10 @@ class AnzCredentials:
         country = self.country.strip().upper()
         try:
             authentication_method = AnzAuthenticationMethod(self.authentication_method)
-        except ValueError:
+        except (TypeError, ValueError):
             raise ValueError("credentials_invalid") from None
+        if authentication_method is AnzAuthenticationMethod.CURRENT:
+            account = account.replace(" ", "")
         try:
             account_bytes = account.encode("utf-8", errors="strict")
             password_bytes = self.password.encode("utf-8", errors="strict")
@@ -131,12 +144,18 @@ class AnzAuthState:
     account_binding: str = field(repr=False)
     country: str
     device_id: str = field(repr=False)
+    authentication_method: AnzAuthenticationMethod | str = AnzAuthenticationMethod.LEGACY
     access_token: str | None = field(default=None, repr=False)
     refresh_token: str | None = field(default=None, repr=False)
+    gw_id: str | None = field(default=None, repr=False)
     verification_requested_at: datetime | None = field(default=None, repr=False)
     session_reclaim_required: bool = field(default=False, repr=False)
 
     def __post_init__(self) -> None:
+        try:
+            authentication_method = AnzAuthenticationMethod(self.authentication_method)
+        except (TypeError, ValueError):
+            raise ValueError("auth_state_invalid") from None
         if (
             not isinstance(self.account_binding, str)
             or _ACCOUNT_BINDING.fullmatch(self.account_binding) is None
@@ -147,8 +166,12 @@ class AnzAuthState:
             or type(self.session_reclaim_required) is not bool
         ):
             raise ValueError("auth_state_invalid")
+        object.__setattr__(self, "authentication_method", authentication_method)
         _validate_optional_token(self.access_token)
         _validate_optional_token(self.refresh_token)
+        _validate_optional_token(self.gw_id)
+        if self.access_token is None and self.gw_id is not None:
+            raise ValueError("auth_state_invalid")
         requested_at = self.verification_requested_at
         if requested_at is not None and (
             not isinstance(requested_at, datetime) or requested_at.tzinfo is None or requested_at.utcoffset() is None
@@ -167,6 +190,7 @@ class AnzAuthState:
             account_binding=credentials.account_binding,
             country=credentials.country,
             device_id=credentials.device_id,
+            authentication_method=credentials.authentication_method,
         )
 
     def matches(self, credentials: AnzCredentials) -> bool:
@@ -176,6 +200,7 @@ class AnzAuthState:
             self.account_binding == credentials.account_binding
             and self.country == credentials.country
             and self.device_id == credentials.device_id
+            and self.authentication_method is credentials.authentication_method
         )
 
 
@@ -240,9 +265,7 @@ class _AuthEndpoint:
     require_data: bool
 
 
-_LEGACY_LOGIN = _AuthEndpoint(
-    "login", GatewayRole.H5_V1, "userAuth/loginAccount", "POST", False, True
-)
+_LEGACY_LOGIN = _AuthEndpoint("login", GatewayRole.H5_V1, "userAuth/loginAccount", "POST", False, True)
 _LEGACY_REQUEST_VERIFICATION = _AuthEndpoint(
     "request_verification",
     GatewayRole.H5_V1,
@@ -326,8 +349,6 @@ _AUTH_ENDPOINTS = MappingProxyType(
                     _CURRENT_LOGIN,
                     _CURRENT_REQUEST_VERIFICATION,
                     _CURRENT_VERIFY_CODE,
-                    _REFRESH,
-                    _USER_INFO,
                 )
             }
         ),
@@ -358,11 +379,13 @@ async def authenticate_anz(
         or type(progress) is not _AnzAuthProgress
     ):
         raise GwmConfigurationError(operation="login")
-    candidate = (
-        state
-        if state is not None and state.matches(credentials)
-        else AnzAuthState.for_credentials(credentials)
-    )
+    authentication_method = credentials.authentication_method
+    if (
+        not isinstance(authentication_method, AnzAuthenticationMethod)
+        or config.anz_authentication_method != authentication_method.value
+    ):
+        raise GwmConfigurationError(operation="login")
+    candidate = state if state is not None and state.matches(credentials) else AnzAuthState.for_credentials(credentials)
     endpoints = _auth_endpoints(credentials)
     login_endpoint = endpoints["login"]
     request_verification_endpoint = endpoints["request_verification"]
@@ -381,10 +404,21 @@ async def authenticate_anz(
         raise GwmConfigurationError(operation="login") from None
     _ensure_deadline(deadline, operation="login")
 
+    # The current ANZ app installs the access token and gwId from the successful
+    # login response directly. It does not validate a fresh or restored session
+    # through the legacy v1 profile route.
+    if authentication_method is AnzAuthenticationMethod.CURRENT and not reclaim_attempt:
+        if candidate.access_token is not None and candidate.gw_id is not None:
+            return _authenticated_result(candidate, default_context)
+        candidate = _session_reclaim_state(candidate)
+        if not allow_session_reclaim:
+            return AnzSessionReclaimRequired(state=candidate)
+        reclaim_attempt = True
+
     access_rejected = False
     if not reclaim_attempt and candidate.access_token is not None:
         try:
-            await _request_data(
+            profile = await _request_data(
                 config=config,
                 transport=transport,
                 endpoint=_USER_INFO,
@@ -393,6 +427,7 @@ async def authenticate_anz(
                 access_token=candidate.access_token,
                 ssl_context=default_context,
                 deadline=deadline,
+                gw_id=candidate.gw_id,
             )
         except GwmAuthenticationError:
             access_rejected = True
@@ -406,13 +441,18 @@ async def authenticate_anz(
                 return AnzSessionReclaimRequired(state=candidate)
             reclaim_attempt = True
         else:
+            candidate = replace(
+                candidate,
+                gw_id=_updated_gw_id(
+                    profile,
+                    current=candidate.gw_id,
+                    operation="get_user_info",
+                    authentication_method=authentication_method,
+                ),
+            )
             return _authenticated_result(candidate, default_context)
 
-    if (
-        not reclaim_attempt
-        and candidate.access_token is not None
-        and candidate.refresh_token is not None
-    ):
+    if not reclaim_attempt and candidate.access_token is not None and candidate.refresh_token is not None:
         try:
             refreshed = await _request_data(
                 config=config,
@@ -423,9 +463,15 @@ async def authenticate_anz(
                 access_token=candidate.access_token,
                 ssl_context=default_context,
                 deadline=deadline,
+                gw_id=candidate.gw_id,
             )
         except GwmAuthenticationError:
-            candidate = replace(candidate, access_token=None, refresh_token=None)
+            candidate = replace(
+                candidate,
+                access_token=None,
+                refresh_token=None,
+                gw_id=None,
+            )
         except GwmApiError as error:
             if not _is_session_conflict(error):
                 raise
@@ -436,8 +482,14 @@ async def authenticate_anz(
             reclaim_attempt = True
         else:
             access_token, refresh_token = _parse_token_pair(refreshed, operation="refresh_token")
+            gw_id = _updated_gw_id(
+                refreshed,
+                current=candidate.gw_id,
+                operation="refresh_token",
+                authentication_method=authentication_method,
+            )
             try:
-                await _request_data(
+                profile = await _request_data(
                     config=config,
                     transport=transport,
                     endpoint=_USER_INFO,
@@ -446,10 +498,16 @@ async def authenticate_anz(
                     access_token=access_token,
                     ssl_context=default_context,
                     deadline=deadline,
+                    gw_id=gw_id,
                 )
             except GwmAuthenticationError:
                 progress.existing_session_rejected = True
-                candidate = replace(candidate, access_token=None, refresh_token=None)
+                candidate = replace(
+                    candidate,
+                    access_token=None,
+                    refresh_token=None,
+                    gw_id=None,
+                )
             except GwmApiError as error:
                 if not _is_session_conflict(error):
                     raise
@@ -463,11 +521,22 @@ async def authenticate_anz(
                     candidate,
                     access_token=access_token,
                     refresh_token=refresh_token,
+                    gw_id=_updated_gw_id(
+                        profile,
+                        current=gw_id,
+                        operation="get_user_info",
+                        authentication_method=authentication_method,
+                    ),
                     verification_requested_at=None,
                 )
                 return _authenticated_result(candidate, default_context)
     elif not reclaim_attempt and (access_rejected or candidate.access_token is None):
-        candidate = replace(candidate, access_token=None, refresh_token=None)
+        candidate = replace(
+            candidate,
+            access_token=None,
+            refresh_token=None,
+            gw_id=None,
+        )
 
     if not candidate.session_reclaim_required:
         candidate = _session_reclaim_state(candidate)
@@ -508,13 +577,18 @@ async def authenticate_anz(
                 deadline=deadline,
             )
         except GwmApiError as error:
-            if not _is_verification_rejection(error, credentials):
-                raise
-            return AnzVerificationRequired(
-                state=replace(candidate, verification_requested_at=None),
-                code_requested=False,
-                code_rejected=True,
-            )
+            if _is_verification_rejection(error, credentials):
+                return AnzVerificationRequired(
+                    state=replace(candidate, verification_requested_at=None),
+                    code_requested=False,
+                    code_rejected=True,
+                )
+            if _is_credential_rejection(error, credentials):
+                raise GwmAuthenticationError(
+                    operation=login_endpoint.operation,
+                    api_code=error.api_code,
+                ) from None
+            raise
     else:
         try:
             login = await _request_data(
@@ -528,14 +602,16 @@ async def authenticate_anz(
                 deadline=deadline,
             )
         except GwmApiError as error:
+            if _is_credential_rejection(error, credentials):
+                raise GwmAuthenticationError(
+                    operation=login_endpoint.operation,
+                    api_code=error.api_code,
+                ) from None
             if not _is_verification_challenge(error, credentials):
                 raise
             now = _utc_now()
             requested_at = candidate.verification_requested_at
-            throttled = (
-                requested_at is not None
-                and timedelta(0) <= now - requested_at < _VERIFICATION_INTERVAL
-            )
+            throttled = requested_at is not None and timedelta(0) <= now - requested_at < _VERIFICATION_INTERVAL
             if throttled:
                 return AnzVerificationRequired(state=candidate, code_requested=False)
             await _request_data(
@@ -553,17 +629,38 @@ async def authenticate_anz(
                 code_requested=True,
             )
 
-    access_token, refresh_token = _parse_token_pair(login, operation="login")
+    login_access_token, login_refresh_token = _parse_login_tokens(
+        login,
+        operation="login",
+        authentication_method=authentication_method,
+    )
+    gw_id = _updated_gw_id(
+        login,
+        current=None,
+        operation="login",
+        authentication_method=authentication_method,
+    )
+    if authentication_method is AnzAuthenticationMethod.CURRENT:
+        candidate = replace(
+            candidate,
+            access_token=login_access_token,
+            refresh_token=login_refresh_token,
+            gw_id=gw_id,
+            verification_requested_at=None,
+            session_reclaim_required=False,
+        )
+        return _authenticated_result(candidate, default_context)
     try:
-        await _request_data(
+        profile = await _request_data(
             config=config,
             transport=transport,
             endpoint=_USER_INFO,
             credentials=credentials,
             body=None,
-            access_token=access_token,
+            access_token=login_access_token,
             ssl_context=default_context,
             deadline=deadline,
+            gw_id=gw_id,
         )
     except GwmAuthenticationError:
         progress.existing_session_rejected = True
@@ -575,8 +672,14 @@ async def authenticate_anz(
         return AnzSessionReclaimRequired(state=_session_reclaim_state(candidate))
     candidate = replace(
         candidate,
-        access_token=access_token,
-        refresh_token=refresh_token,
+        access_token=login_access_token,
+        refresh_token=login_refresh_token,
+        gw_id=_updated_gw_id(
+            profile,
+            current=gw_id,
+            operation="get_user_info",
+            authentication_method=authentication_method,
+        ),
         verification_requested_at=None,
         session_reclaim_required=False,
     )
@@ -584,7 +687,11 @@ async def authenticate_anz(
 
 
 def _authenticated_result(state: AnzAuthState, context: ssl.SSLContext) -> AnzAuthenticated:
-    if state.access_token is None or state.session_reclaim_required:
+    if (
+        state.access_token is None
+        or state.session_reclaim_required
+        or (state.authentication_method is AnzAuthenticationMethod.CURRENT and state.gw_id is None)
+    ):
         raise GwmSchemaError(operation="login")
     return AnzAuthenticated(
         state=state,
@@ -593,6 +700,7 @@ def _authenticated_result(state: AnzAuthState, context: ssl.SSLContext) -> AnzAu
             device_id=state.device_id,
             access_token=state.access_token,
             app_ssl_context=context,
+            gw_id=state.gw_id,
         ),
     )
 
@@ -607,6 +715,7 @@ async def _request_data(
     access_token: str | None,
     ssl_context: ssl.SSLContext,
     deadline: _Deadline,
+    gw_id: str | None = None,
 ) -> object:
     request = _prepare_request(
         endpoint=endpoint,
@@ -614,6 +723,7 @@ async def _request_data(
         body=body,
         access_token=access_token,
         ssl_context=ssl_context,
+        gw_id=gw_id,
     )
     failure: GwmClientError | None = None
     try:
@@ -655,6 +765,7 @@ def _prepare_request(
     body: dict[str, object] | None,
     access_token: str | None,
     ssl_context: ssl.SSLContext,
+    gw_id: str | None = None,
 ) -> _TransportRequest:
     if _auth_endpoints(credentials).get(endpoint.operation) is not endpoint:
         raise GwmRoutePolicyError(operation=endpoint.operation)
@@ -667,8 +778,12 @@ def _prepare_request(
         body_text = None
     elif endpoint.method == "POST" and type(body) is dict:
         try:
-            body_text = encode_dotnet_json(body)
-        except ValueError:
+            body_text = (
+                _encode_current_app_json(body)
+                if credentials.authentication_method is AnzAuthenticationMethod.CURRENT
+                else encode_dotnet_json(body)
+            )
+        except (TypeError, ValueError):
             raise GwmRoutePolicyError(operation=endpoint.operation) from None
     else:
         raise GwmRoutePolicyError(operation=endpoint.operation)
@@ -677,21 +792,47 @@ def _prepare_request(
 
     unsigned_url = gateway.base_url + endpoint.path
     try:
-        signed = sign_request(gateway.signing_profile, endpoint.method, unsigned_url, body_text)
-        _validate_signed_auth_request(signed, endpoint=endpoint, expected_body=body_text)
-        device_id = protocol.normalize_device_id(credentials.device_id)
-        headers = {
-            **protocol.base_headers,
-            "country": credentials.country,
-            "regionCode": credentials.country,
-            "deviceId": device_id,
-            "iccid": device_id,
-        }
-        if access_token is not None:
-            _validate_token(access_token)
-            headers["accessToken"] = access_token
+        if credentials.authentication_method is AnzAuthenticationMethod.CURRENT:
+            signed = _sign_current_app_request(
+                gateway.signing_profile,
+                endpoint.method,
+                unsigned_url,
+                body_text,
+            )
+        else:
+            signed = sign_request(gateway.signing_profile, endpoint.method, unsigned_url, body_text)
+        _validate_signed_auth_request(
+            signed,
+            endpoint=endpoint,
+            expected_body=body_text,
+            credentials=credentials,
+        )
+        if credentials.authentication_method is AnzAuthenticationMethod.CURRENT:
+            headers = _current_app_headers(
+                protocol,
+                country=credentials.country,
+                device_id=credentials.device_id,
+                access_token=access_token,
+                gw_id=gw_id,
+            )
+        else:
+            device_id = protocol.normalize_device_id(credentials.device_id)
+            headers = {
+                **protocol.base_headers,
+                "country": credentials.country,
+                "regionCode": credentials.country,
+                "deviceId": device_id,
+                "iccid": device_id,
+            }
+            if access_token is not None:
+                _validate_token(access_token)
+                headers["accessToken"] = access_token
         if endpoint.method == "POST":
-            headers["Content-Type"] = "application/json; charset=utf-8"
+            headers["Content-Type"] = (
+                "application/json"
+                if credentials.authentication_method is AnzAuthenticationMethod.CURRENT
+                else "application/json; charset=utf-8"
+            )
         headers.update(signed.headers)
         _validate_gateway_tls(endpoint, credentials, ssl_context)
         return _TransportRequest(
@@ -708,11 +849,84 @@ def _prepare_request(
         raise GwmRoutePolicyError(operation=endpoint.operation) from None
 
 
+def _encode_current_app_json(value: object) -> str:
+    """Match the compact Dart JSON used by the current GWM ANZ app."""
+
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        allow_nan=False,
+        separators=(",", ":"),
+    )
+
+
+def _new_current_app_nonce() -> str:
+    """Return the current app's lowercase 32-character nonce shape."""
+
+    nonce_input = str(time.time_ns() // 1_000_000)
+    return hashlib.sha256(nonce_input.encode()).hexdigest()[:32]
+
+
+def _sign_current_app_request(
+    profile: SigningProfile,
+    method: str,
+    url: str,
+    body: str | None,
+) -> SignedRequest:
+    """Sign one request with the current GWM ANZ app's wire policy."""
+
+    timestamp = str(time.time_ns() // 1_000_000)
+    return sign_request(
+        profile,
+        method,
+        url,
+        body,
+        timestamp=timestamp,
+        nonce=_new_current_app_nonce(),
+        uri_component_safe="-._~!*'()",
+        whitespace_policy="preserve",
+        request_target_policy="absolute-url",
+        query_policy="dart-current",
+    )
+
+
+def _current_app_headers(
+    protocol: RegionProtocol,
+    *,
+    country: str,
+    device_id: str,
+    access_token: str | None,
+    gw_id: str | None = None,
+) -> dict[str, str]:
+    """Build the current app's full-device-ID ANZ headers."""
+
+    if type(protocol) is not RegionProtocol or protocol.region is not Region.ANZ:
+        raise ValueError("route_invalid")
+    protocol.validate_country(country)
+    protocol.normalize_device_id(device_id)
+    if access_token is not None:
+        _validate_token(access_token)
+    if gw_id is not None:
+        _validate_token(gw_id)
+    if (access_token is None) != (gw_id is None):
+        raise ValueError("route_invalid")
+    return {
+        **protocol.base_headers,
+        **_CURRENT_APP_HEADERS,
+        "country": country,
+        "regionCode": country,
+        "deviceId": device_id,
+        "iccid": device_id,
+        **({"accessToken": access_token, "gwId": gw_id} if access_token is not None and gw_id is not None else {}),
+    }
+
+
 def _validate_signed_auth_request(
     signed: SignedRequest,
     *,
     endpoint: _AuthEndpoint,
     expected_body: str | None,
+    credentials: AnzCredentials,
 ) -> None:
     if type(signed) is not SignedRequest:
         raise ValueError("route_invalid")
@@ -737,10 +951,19 @@ def _validate_signed_auth_request(
         or parsed.fragment
     ):
         raise ValueError("route_invalid")
-    _validate_signing_headers(signed, gateway.signing_profile)
+    _validate_signing_headers(
+        signed,
+        gateway.signing_profile,
+        nonce_length=(32 if credentials.authentication_method is AnzAuthenticationMethod.CURRENT else 16),
+    )
 
 
-def _validate_signing_headers(signed: SignedRequest, profile: SigningProfile) -> None:
+def _validate_signing_headers(
+    signed: SignedRequest,
+    profile: SigningProfile,
+    *,
+    nonce_length: int,
+) -> None:
     prefix = profile.prefix
     expected = {
         f"{prefix}-auth-appkey",
@@ -755,7 +978,7 @@ def _validate_signing_headers(signed: SignedRequest, profile: SigningProfile) ->
     signature = signed.headers[f"{prefix}-auth-sign"]
     if (
         signed.headers[f"{prefix}-auth-appkey"] != profile.app_key
-        or re.fullmatch(r"[0-9A-Fa-f]{16}", nonce) is None
+        or re.fullmatch(rf"[0-9A-Fa-f]{{{nonce_length}}}", nonce) is None
         or (profile.uppercase_nonce and nonce != nonce.upper())
         or (not profile.uppercase_nonce and nonce != nonce.lower())
         or not 10 <= len(timestamp) <= 17
@@ -815,11 +1038,7 @@ def _decode_auth_envelope(
         raise GwmAuthenticationError(operation=operation, api_code=safe_code)
     if response.status == 429:
         retry_after = response.headers.get("retry-after")
-        retry_seconds = (
-            int(retry_after)
-            if retry_after and len(retry_after) <= 10 and retry_after.isdecimal()
-            else None
-        )
+        retry_seconds = int(retry_after) if retry_after and len(retry_after) <= 10 and retry_after.isdecimal() else None
         raise GwmRateLimitError(
             operation=operation,
             api_code=safe_code,
@@ -849,13 +1068,13 @@ def _login_body(
     if credentials.authentication_method is AnzAuthenticationMethod.CURRENT:
         current_body: dict[str, object] = {
             "account": credentials.account,
-            "accountType": "2",
+            "accountType": _current_account_type(credentials.account),
             "countryCode": _CALLING_CODES[credentials.country],
             "agreement": [1, 2],
             "password": credentials.password,
-            "deviceId": credentials.device_id[:16],
+            "deviceId": credentials.device_id,
             "appType": "0",
-            "pushToken": "",
+            "pushToken": None,
             "country": credentials.country,
         }
         if verification_code is not None:
@@ -886,7 +1105,7 @@ def _verification_request_body(credentials: AnzCredentials) -> dict[str, object]
         return {
             "type": "17",
             "account": credentials.account,
-            "accountType": "2",
+            "accountType": _current_account_type(credentials.account),
             "countryCode": _CALLING_CODES[credentials.country],
             "validCodeMode": 1,
             "operateCode": "",
@@ -908,7 +1127,7 @@ def _verification_check_body(credentials: AnzCredentials, code: str) -> dict[str
             "account": credentials.account,
             "verifyCode": code,
             "type": "17",
-            "accountType": "2",
+            "accountType": _current_account_type(credentials.account),
             "countryCode": _CALLING_CODES[credentials.country],
             "validCodeMode": 1,
         }
@@ -925,8 +1144,18 @@ def _refresh_body(credentials: AnzCredentials, state: AnzAuthState) -> dict[str,
     return {
         "accessToken": state.access_token,
         "refreshToken": state.refresh_token,
-        "deviceId": credentials.device_id[:16],
+        "deviceId": (
+            credentials.device_id
+            if credentials.authentication_method is AnzAuthenticationMethod.CURRENT
+            else credentials.device_id[:16]
+        ),
     }
+
+
+def _current_account_type(account: str) -> str:
+    """Select the current app's email or phone account type from the identifier."""
+
+    return "2" if "@" in account else "1"
 
 
 def _parse_token_pair(data: object, *, operation: str) -> tuple[str, str]:
@@ -935,6 +1164,50 @@ def _parse_token_pair(data: object, *, operation: str) -> tuple[str, str]:
     _validate_token(access)
     _validate_token(refresh)
     return access, refresh
+
+
+def _parse_login_tokens(
+    data: object,
+    *,
+    operation: str,
+    authentication_method: AnzAuthenticationMethod,
+) -> tuple[str, str | None]:
+    """Parse login tokens without inventing a current-app refresh requirement."""
+
+    if authentication_method is AnzAuthenticationMethod.LEGACY:
+        return _parse_token_pair(data, operation=operation)
+    access = _required_text(data, "accessToken", operation=operation, maximum=_MAX_TOKEN_LENGTH)
+    assert isinstance(data, Mapping)
+    refresh = (
+        None
+        if data.get("refreshToken") is None
+        else _required_text(data, "refreshToken", operation=operation, maximum=_MAX_TOKEN_LENGTH)
+    )
+    return access, refresh
+
+
+def _updated_gw_id(
+    data: object,
+    *,
+    current: str | None,
+    operation: str,
+    authentication_method: AnzAuthenticationMethod,
+) -> str | None:
+    if authentication_method is AnzAuthenticationMethod.LEGACY:
+        return current
+    if not isinstance(data, Mapping):
+        return current
+    value = data.get("gwId")
+    if value is None:
+        return current
+    if (
+        not isinstance(value, str)
+        or not value
+        or len(value) > _MAX_TOKEN_LENGTH
+        or any(ord(character) < 0x21 or ord(character) > 0x7E for character in value)
+    ):
+        raise GwmSchemaError(operation=operation)
+    return value
 
 
 def _required_text(data: object, key: str, *, operation: str, maximum: int) -> str:
@@ -996,18 +1269,28 @@ def _is_verification_challenge(
     return type(error) is GwmApiError and error.api_code in _verification_required_codes(credentials)
 
 
+def _is_credential_rejection(
+    error: GwmApiError,
+    credentials: AnzCredentials,
+) -> bool:
+    return (
+        credentials.authentication_method is AnzAuthenticationMethod.CURRENT
+        and type(error) is GwmApiError
+        and error.api_code in _CURRENT_CREDENTIAL_REJECTED_CODES
+    )
+
+
 def _is_verification_rejection(
     error: GwmApiError,
     credentials: AnzCredentials,
 ) -> bool:
     rejected_codes = (
-        frozenset()
+        _CURRENT_VERIFICATION_REJECTED_CODES
         if credentials.authentication_method is AnzAuthenticationMethod.CURRENT
         else _LEGACY_VERIFICATION_REJECTED_CODES
     )
     return type(error) is GwmApiError and (
-        error.api_code in rejected_codes
-        or error.api_code in _verification_required_codes(credentials)
+        error.api_code in rejected_codes or error.api_code in _verification_required_codes(credentials)
     )
 
 
@@ -1020,6 +1303,7 @@ def _session_reclaim_state(state: AnzAuthState) -> AnzAuthState:
         state,
         access_token=None,
         refresh_token=None,
+        gw_id=None,
         session_reclaim_required=True,
     )
 

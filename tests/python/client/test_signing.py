@@ -96,14 +96,12 @@ SYNTHETIC_EU_VEHICLE_ID = (
         pytest.param(
             EU_BT_AUTH,
             "GET",
-            "https://eu-app-gateway.gwmcloud.com/app-api/api/v1.0/vehicle/test"
-            "?z=hello%20world&empty=&A=One%2FTwo",
+            "https://eu-app-gateway.gwmcloud.com/app-api/api/v1.0/vehicle/test?z=hello%20world&empty=&A=One%2FTwo",
             None,
             SYNTHETIC_TIMESTAMP,
             "0123456789ABCDEF",
             "d43ac09bf68b7ad87be78a756c43b96616b0aa4cb0d7a1fffd65c768d8834f76",
-            "https://eu-app-gateway.gwmcloud.com/app-api/api/v1.0/vehicle/test"
-            "?z=hello%20world&empty=&A=One%2FTwo",
+            "https://eu-app-gateway.gwmcloud.com/app-api/api/v1.0/vehicle/test?z=hello%20world&empty=&A=One%2FTwo",
             id="eu-bt-auth-decodes-for-signing-only",
         ),
         pytest.param(
@@ -260,6 +258,60 @@ def test_generic_profile_reconstructs_empty_path_as_root() -> None:
 
     assert signed.url == "https://example.test/?x=1"
     assert signed.headers["bt-auth-sign"] == "469b6993cfec72eadd61caef97a40aeca0836e48a680c5f328cc180b960359bc"
+
+
+def test_current_anz_dart_uri_component_signing_keeps_legacy_punctuation_safe() -> None:
+    body = '{"account":"owner@example.com","password":"SYNTHETIC!~*\'()"}'
+    signed = sign_request(
+        ANZ_BT_AUTH,
+        "POST",
+        "https://aus-h5-gateway.gwmcloud.com/app-api/api/v2.0/userAuth/loginWithPassword",
+        body,
+        timestamp=SYNTHETIC_TIMESTAMP,
+        nonce="0123456789abcdef0123456789abcdef",
+        uri_component_safe="-._~!*'()",
+        whitespace_policy="preserve",
+        request_target_policy="absolute-url",
+        query_policy="dart-current",
+    )
+
+    assert signed.headers["bt-auth-sign"] == ("5e291e86fb88f1deaee8aec072edc4f26a154da9e2756dc0c044076971cabe0c")
+
+
+def test_current_anz_signing_preserves_non_ascii_space_in_json_values() -> None:
+    body = '{"account":"owner@example.com","password":"two\u00a0words"}'
+    signed = sign_request(
+        ANZ_BT_AUTH,
+        "POST",
+        "https://aus-h5-gateway.gwmcloud.com/app-api/api/v2.0/userAuth/loginWithPassword",
+        body,
+        timestamp=SYNTHETIC_TIMESTAMP,
+        nonce="0123456789abcdef0123456789abcdef",
+        uri_component_safe="-._~!*'()",
+        whitespace_policy="preserve",
+        request_target_policy="absolute-url",
+        query_policy="dart-current",
+    )
+
+    assert signed.headers["bt-auth-sign"] == ("c8f6a388573e38ad5ac5ffaf68c89b013c387f74445c9ac5445aaf6e9e0d2ece")
+
+
+def test_current_anz_signing_keeps_empty_query_and_signs_decoded_pairs() -> None:
+    url = "https://aus-h5-gateway.gwmcloud.com/app-api/api/v1.0/vehicle/getLastStatus?vin=SYNTHETIC%2BID&seqNo="
+    signed = sign_request(
+        ANZ_BT_AUTH,
+        "GET",
+        url,
+        timestamp=SYNTHETIC_TIMESTAMP,
+        nonce="0123456789abcdef0123456789abcdef",
+        uri_component_safe="-._~!*'()",
+        whitespace_policy="preserve",
+        request_target_policy="absolute-url",
+        query_policy="dart-current",
+    )
+
+    assert signed.url == url
+    assert signed.headers["bt-auth-sign"] == ("274f1afffc6dea98655a08ede8468fc30072112279dd7766b4d5e99453acfd51")
 
 
 def test_method_case_is_preserved_for_csharp_parity() -> None:

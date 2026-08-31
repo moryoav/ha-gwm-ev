@@ -23,6 +23,7 @@ from custom_components.gwm_ora.cloud_auth import (
 )
 from custom_components.gwm_ora.cloud_storage import (
     GwmOwnedChargingPlan,
+    _decode_auth_state,
     async_remove_cloud_state,
     cloud_authentication_context_binding,
     cloud_state_store,
@@ -185,9 +186,7 @@ async def test_account_context_change_atomically_retires_state_and_commands(
         ),
     )
 
-    assert cloud_authentication_context_binding(changed) != (
-        cloud_authentication_context_binding(credentials)
-    )
+    assert cloud_authentication_context_binding(changed) != (cloud_authentication_context_binding(credentials))
     assert await store.async_load_auth_state(cloud_entry_data(changed)) is None
     assert await store.async_get_command_journal(cloud_entry_data(changed)) == ()
     assert await store.async_get_owned_charging_plans(cloud_entry_data(changed)) == ()
@@ -214,12 +213,8 @@ async def test_anz_authentication_method_change_retires_legacy_session(
         "aus",
         authentication_method=ANZ_AUTHENTICATION_METHOD_CURRENT,
     )
-    assert cloud_authentication_context_binding(legacy) == (
-        cloud_authentication_context_binding(implicit_legacy)
-    )
-    assert cloud_authentication_context_binding(current) != (
-        cloud_authentication_context_binding(legacy)
-    )
+    assert cloud_authentication_context_binding(legacy) == (cloud_authentication_context_binding(implicit_legacy))
+    assert cloud_authentication_context_binding(current) != (cloud_authentication_context_binding(legacy))
     assert cloud_unique_id(current) == cloud_unique_id(legacy)
 
     hass = HomeAssistant(str(tmp_path))
@@ -232,9 +227,28 @@ async def test_anz_authentication_method_change_retires_legacy_session(
     await store.async_save_auth_state(current, current_state)
     restarted_hass = HomeAssistant(str(tmp_path))
     restarted_store = cloud_state_store(restarted_hass, cloud_unique_id(current))
-    assert await restarted_store.async_load_auth_state(
-        cloud_entry_data(current)
-    ) == current_state
+    assert await restarted_store.async_load_auth_state(cloud_entry_data(current)) == current_state
+
+
+def test_old_anz_state_decodes_as_legacy_without_a_gw_id() -> None:
+    credentials = _credentials("aus")
+    state = _decode_auth_state(
+        "aus",
+        {
+            "account_binding": credentials.account_binding,
+            "device_id": _DEVICE_ID,
+            "verification_requested_at": None,
+            "kind": "aus",
+            "country": "AU",
+            "access_token": "synthetic-access",
+            "refresh_token": "synthetic-refresh",
+            "session_reclaim_required": False,
+        },
+    )
+
+    assert isinstance(state, AnzAuthState)
+    assert state.authentication_method.value == ANZ_AUTHENTICATION_METHOD_LEGACY
+    assert state.gw_id is None
 
 
 @pytest.mark.asyncio
@@ -267,9 +281,7 @@ async def test_accepted_commands_are_serialized_and_restart_safe(
     second = cloud_state_store(second_hass, unique_id)
     restored = await second.async_get_command_journal(cloud_entry_data(credentials))
     assert len(restored) == 100
-    assert {entry.cloud_command_id for entry in restored} <= {
-        f"SYNTHETIC-CLOUD-{index}" for index in range(105)
-    }
+    assert {entry.cloud_command_id for entry in restored} <= {f"SYNTHETIC-CLOUD-{index}" for index in range(105)}
 
     updated = await second.async_update_command(
         credentials,
@@ -322,19 +334,13 @@ async def test_owned_charging_plan_is_restart_safe_replaceable_and_removable(
 
     second_hass = HomeAssistant(str(tmp_path))
     second = cloud_state_store(second_hass, unique_id)
-    assert await second.async_get_owned_charging_plans(
-        cloud_entry_data(credentials)
-    ) == (initial,)
+    assert await second.async_get_owned_charging_plans(cloud_entry_data(credentials)) == (initial,)
     confirmed = replace(initial, plan_id=42)
     await second.async_set_owned_charging_plan(credentials, confirmed)
-    assert await second.async_get_owned_charging_plans(
-        cloud_entry_data(credentials)
-    ) == (confirmed,)
+    assert await second.async_get_owned_charging_plans(cloud_entry_data(credentials)) == (confirmed,)
 
     await second.async_remove_owned_charging_plan(credentials, initial.vehicle_id)
-    assert await second.async_get_owned_charging_plans(
-        cloud_entry_data(credentials)
-    ) == ()
+    assert await second.async_get_owned_charging_plans(cloud_entry_data(credentials)) == ()
 
 
 @pytest.mark.asyncio
@@ -355,12 +361,8 @@ async def test_pre_task20_storage_without_charging_key_remains_loadable(
 
     second_hass = HomeAssistant(str(tmp_path))
     second = cloud_state_store(second_hass, unique_id)
-    assert await second.async_load_auth_state(cloud_entry_data(credentials)) == _state(
-        credentials
-    )
-    assert await second.async_get_owned_charging_plans(
-        cloud_entry_data(credentials)
-    ) == ()
+    assert await second.async_load_auth_state(cloud_entry_data(credentials)) == _state(credentials)
+    assert await second.async_get_owned_charging_plans(cloud_entry_data(credentials)) == ()
 
 
 @pytest.mark.asyncio

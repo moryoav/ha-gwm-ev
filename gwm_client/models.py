@@ -47,11 +47,19 @@ class GwmSession:
     device_id: str = field(repr=False)
     access_token: str = field(repr=False)
     app_ssl_context: ssl.SSLContext = field(repr=False)
+    gw_id: str | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         if not all(isinstance(value, str) for value in (self.country, self.device_id, self.access_token)):
             raise ValueError("session_invalid")
         if not isinstance(self.app_ssl_context, ssl.SSLContext):
+            raise ValueError("session_invalid")
+        if self.gw_id is not None and (
+            not isinstance(self.gw_id, str)
+            or not self.gw_id
+            or len(self.gw_id) > 16 * 1024
+            or any(ord(character) < 0x21 or ord(character) > 0x7E for character in self.gw_id)
+        ):
             raise ValueError("session_invalid")
 
 
@@ -145,30 +153,14 @@ def parse_cloud_vehicles(
                 app_show_series_name=_optional_string(
                     item.get("appShowSeriesName"), allow_integer=allow_numbers_for_strings
                 ),
-                vehicle_nickname=_optional_string(
-                    item.get("vehicleNick"), allow_integer=allow_numbers_for_strings
-                ),
-                model_name=_optional_string(
-                    item.get("modelName"), allow_integer=allow_numbers_for_strings
-                ),
-                brand_name=_optional_string(
-                    item.get("brandName"), allow_integer=allow_numbers_for_strings
-                ),
-                other_brand_name=_optional_string(
-                    item.get("otBrandName"), allow_integer=allow_numbers_for_strings
-                ),
-                vehicle_type=_optional_string(
-                    item.get("vtype"), allow_integer=allow_numbers_for_strings
-                ),
-                vehicle_type_name=_optional_string(
-                    item.get("vTypeName"), allow_integer=allow_numbers_for_strings
-                ),
-                vehicle_id=_optional_string(
-                    item.get("vehicleId"), allow_integer=allow_numbers_for_strings
-                ),
-                platform=_optional_string(
-                    item.get("belongPlatform"), allow_integer=allow_numbers_for_strings
-                ),
+                vehicle_nickname=_optional_string(item.get("vehicleNick"), allow_integer=allow_numbers_for_strings),
+                model_name=_optional_string(item.get("modelName"), allow_integer=allow_numbers_for_strings),
+                brand_name=_optional_string(item.get("brandName"), allow_integer=allow_numbers_for_strings),
+                other_brand_name=_optional_string(item.get("otBrandName"), allow_integer=allow_numbers_for_strings),
+                vehicle_type=_optional_string(item.get("vtype"), allow_integer=allow_numbers_for_strings),
+                vehicle_type_name=_optional_string(item.get("vTypeName"), allow_integer=allow_numbers_for_strings),
+                vehicle_id=_optional_string(item.get("vehicleId"), allow_integer=allow_numbers_for_strings),
+                platform=_optional_string(item.get("belongPlatform"), allow_integer=allow_numbers_for_strings),
             )
         )
     return tuple(vehicles)
@@ -206,28 +198,16 @@ def parse_cloud_vehicle_status(
             CloudStatusItem(
                 code=code,
                 value=_freeze_json(item.get("value")),
-                unit=_optional_string(
-                    item.get("unit"), allow_integer=allow_numbers_for_strings
-                ),
+                unit=_optional_string(item.get("unit"), allow_integer=allow_numbers_for_strings),
             )
         )
 
     return CloudVehicleStatus(
-        device_id=_optional_string(
-            data.get("deviceId"), allow_integer=allow_numbers_for_strings
-        ),
-        acquisition_time_ms=_optional_timestamp(
-            data.get("acquisitionTime"), allow_string=allow_stringified_numbers
-        ),
-        update_time_ms=_optional_timestamp(
-            data.get("updateTime"), allow_string=allow_stringified_numbers
-        ),
-        latitude=_optional_coordinate(
-            data.get("latitude"), allow_string=allow_stringified_numbers
-        ),
-        longitude=_optional_coordinate(
-            data.get("longitude"), allow_string=allow_stringified_numbers
-        ),
+        device_id=_optional_string(data.get("deviceId"), allow_integer=allow_numbers_for_strings),
+        acquisition_time_ms=_optional_timestamp(data.get("acquisitionTime"), allow_string=allow_stringified_numbers),
+        update_time_ms=_optional_timestamp(data.get("updateTime"), allow_string=allow_stringified_numbers),
+        latitude=_optional_coordinate(data.get("latitude"), allow_string=allow_stringified_numbers),
+        longitude=_optional_coordinate(data.get("longitude"), allow_string=allow_stringified_numbers),
         items=tuple(items),
     )
 
@@ -294,12 +274,7 @@ def _optional_timestamp(value: object, *, allow_string: bool) -> int | None:
         if not digits or any(character < "0" or character > "9" for character in digits):
             raise ValueError("payload_schema_invalid")
         value = int(value)
-    if (
-        not isinstance(value, int)
-        or isinstance(value, bool)
-        or value < _MIN_TIMESTAMP
-        or value > _MAX_TIMESTAMP
-    ):
+    if not isinstance(value, int) or isinstance(value, bool) or value < _MIN_TIMESTAMP or value > _MAX_TIMESTAMP:
         raise ValueError("payload_schema_invalid")
     return value
 
@@ -341,10 +316,5 @@ def _freeze_json(value: object, *, depth: int = 0) -> FrozenJsonValue:
     if isinstance(value, Mapping):
         if not all(isinstance(key, str) for key in value):
             raise ValueError("payload_schema_invalid")
-        return MappingProxyType(
-            {
-                key: _freeze_json(item, depth=depth + 1)
-                for key, item in value.items()
-            }
-        )
+        return MappingProxyType({key: _freeze_json(item, depth=depth + 1) for key, item in value.items()})
     raise ValueError("payload_schema_invalid")

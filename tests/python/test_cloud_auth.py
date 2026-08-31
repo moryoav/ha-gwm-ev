@@ -121,17 +121,9 @@ def test_anz_authentication_method_is_explicit_and_legacy_compatible() -> None:
 
     assert legacy.authentication_method == ANZ_AUTHENTICATION_METHOD_LEGACY
     assert isinstance(legacy.client_credentials(), AnzCredentials)
-    assert (
-        legacy.client_credentials().authentication_method
-        is AnzAuthenticationMethod.LEGACY
-    )
-    assert (
-        current.client_credentials().authentication_method
-        is AnzAuthenticationMethod.CURRENT
-    )
-    assert cloud_entry_data(current)[CONF_AUTHENTICATION_METHOD] == (
-        ANZ_AUTHENTICATION_METHOD_CURRENT
-    )
+    assert legacy.client_credentials().authentication_method is AnzAuthenticationMethod.LEGACY
+    assert current.client_credentials().authentication_method is AnzAuthenticationMethod.CURRENT
+    assert cloud_entry_data(current)[CONF_AUTHENTICATION_METHOD] == (ANZ_AUTHENTICATION_METHOD_CURRENT)
     assert cloud_unique_id(current) == cloud_unique_id(legacy)
 
 
@@ -225,11 +217,42 @@ async def test_overseas_attempt_dispatches_and_always_closes(
 
     assert result is marker
     assert clients[0].config.region.value == region
+    assert clients[0].config.anz_authentication_method == (
+        ANZ_AUTHENTICATION_METHOD_LEGACY if region == "aus" else None
+    )
     assert clients[0].calls[0][0] == region
     assert clients[0].calls[0][1]["verification_code"] == "123456"
     if region != "aus":
         assert clients[0].calls[0][1]["allow_password_login"] is True
     assert clients[0].closed
+
+
+@pytest.mark.asyncio
+async def test_current_anz_method_reaches_the_temporary_authentication_client() -> None:
+    marker = object()
+    clients: list[_OverseasClient] = []
+
+    def factory(config: GwmClientConfig) -> Any:
+        client = _OverseasClient(config, marker)
+        clients.append(client)
+        return client
+
+    credentials = GwmCloudCredentials(
+        "aus",
+        "AU",
+        "account@example.invalid",
+        "password",
+        _DEVICE_ID,
+        ANZ_AUTHENTICATION_METHOD_CURRENT,
+    )
+
+    result = await GwmCloudAuthenticator(overseas_client_factory=factory).async_authenticate(
+        credentials,
+        allow_session_reclaim=True,
+    )
+
+    assert result is marker
+    assert clients[0].config.anz_authentication_method == ANZ_AUTHENTICATION_METHOD_CURRENT
 
 
 @pytest.mark.asyncio

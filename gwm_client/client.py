@@ -18,10 +18,14 @@ from ._dotnet_json import encode_dotnet_json
 from ._protocol import _AsyncTransport, _Deadline, _TransportRequest, _TransportResponse
 from .anz_auth import (
     AnzAuthenticated,
+    AnzAuthenticationMethod,
     AnzAuthenticationResult,
     AnzAuthState,
     AnzCredentials,
     _AnzAuthProgress,
+    _current_app_headers,
+    _encode_current_app_json,
+    _sign_current_app_request,
 )
 from .anz_auth import authenticate_anz as _run_anz_authentication
 from .charging import (
@@ -130,10 +134,7 @@ _VEHICLE_BASICS = _ReadEndpoint(
     ),
 )
 _READ_ENDPOINTS = MappingProxyType(
-    {
-        endpoint.operation: endpoint
-        for endpoint in (_ACQUIRE_VEHICLES, _LAST_STATUS, _VEHICLE_BASICS)
-    }
+    {endpoint.operation: endpoint for endpoint in (_ACQUIRE_VEHICLES, _LAST_STATUS, _VEHICLE_BASICS)}
 )
 
 
@@ -160,9 +161,7 @@ class GwmClient:
         self._h5_ssl_context: ssl.SSLContext | None = None
         self._transport: _AsyncTransport
         if transport is None:
-            self._transport = AiohttpTransport.create_owned(
-                max_response_bytes=config.max_response_bytes
-            )
+            self._transport = AiohttpTransport.create_owned(max_response_bytes=config.max_response_bytes)
             self._owns_transport = True
         else:
             self._transport = transport
@@ -176,6 +175,13 @@ class GwmClient:
     @property
     def region(self) -> Region:
         return self._protocol.region
+
+    @property
+    def _uses_current_anz(self) -> bool:
+        return (
+            self.region is Region.ANZ
+            and self._config.anz_authentication_method == AnzAuthenticationMethod.CURRENT.value
+        )
 
     @property
     def closed(self) -> bool:
@@ -266,6 +272,7 @@ class GwmClient:
                             current.country == state.country
                             and current.device_id == state.device_id
                             and current.access_token == state.access_token
+                            and (not self._uses_current_anz or current.gw_id == state.gw_id)
                         )
                     if not reusable:
                         self._session = None
@@ -340,6 +347,12 @@ class GwmClient:
             or type(allow_session_reclaim) is not bool
         ):
             raise GwmConfigurationError(operation=operation)
+        authentication_method = credentials.authentication_method
+        if (
+            not isinstance(authentication_method, AnzAuthenticationMethod)
+            or self._config.anz_authentication_method != authentication_method.value
+        ):
+            raise GwmConfigurationError(operation=operation)
         if self._closed or self._closing:
             raise GwmClosedError(operation=operation)
         total_timeout = self._validated_timeout(timeout, operation=operation)
@@ -378,9 +391,7 @@ class GwmClient:
                             progress=progress,
                         )
                         replacement = (
-                            self._validated_session(result.session)
-                            if type(result) is AnzAuthenticated
-                            else None
+                            self._validated_session(result.session) if type(result) is AnzAuthenticated else None
                         )
                         self._replace_session_if_revision(
                             expected_revision=attempt_revision,
@@ -475,9 +486,7 @@ class GwmClient:
                             progress=progress,
                         )
                         replacement = (
-                            self._validated_session(result.session)
-                            if type(result) is RussiaAuthenticated
-                            else None
+                            self._validated_session(result.session) if type(result) is RussiaAuthenticated else None
                         )
                         self._replace_session_if_revision(
                             expected_revision=attempt_revision,
@@ -624,7 +633,7 @@ class GwmClient:
                     "weeks": command.weeks or "",
                 }
             )
-        body = encode_dotnet_json(payload)
+        body = self._encode_request_json(payload)
 
         async def action(session: GwmSession, deadline: _Deadline) -> None:
             request = self._prepare_command_request(
@@ -634,9 +643,7 @@ class GwmClient:
                 path="vehicleCharge/setChargingPlan",
                 body=body,
                 session=session,
-                vin_header=(
-                    command.identifier if self.region is Region.ANZ else None
-                ),
+                vin_header=(command.identifier if self.region is Region.ANZ else None),
             )
             await self._send_command_request(request, deadline=deadline)
 
@@ -667,7 +674,7 @@ class GwmClient:
             or not 5 <= operation_time_minutes <= 30
         ):
             raise GwmConfigurationError(operation=operation)
-        body = encode_dotnet_json(
+        body = self._encode_request_json(
             {
                 "airConditionerTemperature": str(temperature),
                 "airConditionerTime": str(operation_time_minutes * 60),
@@ -711,7 +718,7 @@ class GwmClient:
             raise GwmConfigurationError(operation=operation) from None
         switch_order = "0" if command.mode == "off" else "1"
         command_type = 3 if self.region is Region.RUSSIA else 2
-        body = encode_dotnet_json(
+        body = self._encode_request_json(
             {
                 "instructions": {
                     "0x04": {
@@ -732,9 +739,7 @@ class GwmClient:
 
         async def action(session: GwmSession, deadline: _Deadline) -> RemoteCommandAcceptance:
             if self.region is Region.RUSSIA:
-                check_body = encode_dotnet_json(
-                    {"securityPassword": security_password_hash, "type": "3"}
-                )
+                check_body = self._encode_request_json({"securityPassword": security_password_hash, "type": "3"})
                 check = self._prepare_command_request(
                     operation=operation,
                     gateway_role=GatewayRole.H5_V1,
@@ -832,7 +837,7 @@ class GwmClient:
             )
         except (TypeError, ValueError):
             raise GwmConfigurationError(operation=operation) from None
-        body = encode_dotnet_json(
+        body = self._encode_request_json(
             {
                 "instructions": instructions,
                 "remoteType": "0",
@@ -850,9 +855,7 @@ class GwmClient:
                     gateway_role=GatewayRole.H5_V1,
                     method="POST",
                     path="userAuth/checkSecurityPassword",
-                    body=encode_dotnet_json(
-                        {"securityPassword": security_password_hash, "type": "3"}
-                    ),
+                    body=self._encode_request_json({"securityPassword": security_password_hash, "type": "3"}),
                     session=session,
                     vin_header=None,
                 )
@@ -902,9 +905,7 @@ class GwmClient:
                 path=f"vehicle/getRemoteCtrlResultT5?seqNo={encoded_command_id}",
                 body=None,
                 session=session,
-                vin_header=(
-                    identifier if self.region in {Region.ANZ, Region.RUSSIA} else None
-                ),
+                vin_header=(identifier if self.region in {Region.ANZ, Region.RUSSIA} else None),
             )
             data = await self._send_command_request(request, deadline=deadline)
             try:
@@ -993,6 +994,39 @@ class GwmClient:
                 raise GwmTlsError(operation=operation)
             self._h5_ssl_context = context
 
+    def _encode_request_json(self, value: object) -> str:
+        if self._uses_current_anz:
+            return _encode_current_app_json(value)
+        return encode_dotnet_json(value)
+
+    def _sign_overseas_request(
+        self,
+        profile: SigningProfile,
+        method: str,
+        url: str,
+        body: str | None = None,
+    ) -> SignedRequest:
+        if self._uses_current_anz:
+            return _sign_current_app_request(profile, method, url, body)
+        return sign_request(profile, method, url, body)
+
+    def _authenticated_headers(self, session: GwmSession) -> dict[str, str]:
+        if self._uses_current_anz:
+            return _current_app_headers(
+                self._protocol,
+                country=session.country,
+                device_id=session.device_id,
+                access_token=session.access_token,
+                gw_id=session.gw_id,
+            )
+        return dict(
+            self._protocol.authenticated_headers(
+                country=session.country,
+                device_id=session.device_id,
+                access_token=session.access_token,
+            )
+        )
+
     def _prepare_command_request(
         self,
         *,
@@ -1007,25 +1041,24 @@ class GwmClient:
         try:
             gateway = self._protocol.gateway(gateway_role)
             unsigned_url = gateway.base_url + path
-            signed = sign_request(gateway.signing_profile, method, unsigned_url, body)
+            signed = self._sign_overseas_request(
+                gateway.signing_profile,
+                method,
+                unsigned_url,
+                body,
+            )
             headers = {
-                **self._protocol.authenticated_headers(
-                    country=session.country,
-                    device_id=session.device_id,
-                    access_token=session.access_token,
-                ),
+                **self._authenticated_headers(session),
                 "Accept": "application/json",
                 **signed.headers,
             }
             if body is not None:
-                headers["Content-Type"] = "application/json; charset=utf-8"
+                headers["Content-Type"] = (
+                    "application/json" if self._uses_current_anz else "application/json; charset=utf-8"
+                )
             if vin_header is not None:
                 headers["vin"] = vin_header.value
-            ssl_context = (
-                session.app_ssl_context
-                if gateway_role is GatewayRole.APP_V1
-                else self._h5_ssl_context
-            )
+            ssl_context = session.app_ssl_context if gateway_role is GatewayRole.APP_V1 else self._h5_ssl_context
             if ssl_context is None:
                 raise GwmConfigurationError(operation=operation)
             return _TransportRequest(
@@ -1173,19 +1206,21 @@ class GwmClient:
             gateway = self._protocol.gateway(GatewayRole.APP_V1)
             relative_url = endpoint.path + _logical_query(endpoint, identifier)
             unsigned_url = gateway.base_url + relative_url
-            signed = sign_request(gateway.signing_profile, "GET", unsigned_url)
+            signed = self._sign_overseas_request(
+                gateway.signing_profile,
+                "GET",
+                unsigned_url,
+            )
             _validate_signed_read(
                 signed,
                 endpoint=endpoint,
                 protocol=self._protocol,
                 identifier=identifier,
+                nonce_length=32 if self._uses_current_anz else 16,
+                current_app=self._uses_current_anz,
             )
             headers = {
-                **self._protocol.authenticated_headers(
-                    country=session.country,
-                    device_id=session.device_id,
-                    access_token=session.access_token,
-                ),
+                **self._authenticated_headers(session),
                 "Accept": "application/json",
                 **signed.headers,
             }
@@ -1209,11 +1244,7 @@ class GwmClient:
         try:
             self._protocol.validate_country(session.country)
             self._protocol.normalize_device_id(session.device_id)
-            self._protocol.authenticated_headers(
-                country=session.country,
-                device_id=session.device_id,
-                access_token=session.access_token,
-            )
+            self._authenticated_headers(session)
             _validate_app_tls_context(self._protocol, session.app_ssl_context)
         except (AttributeError, TypeError, ValueError):
             invalid = True
@@ -1258,6 +1289,8 @@ def _validate_signed_read[T](
     endpoint: _ReadEndpoint[T],
     protocol: RegionProtocol,
     identifier: VehicleIdentifier | None,
+    nonce_length: int,
+    current_app: bool,
 ) -> None:
     gateway = protocol.gateway(GatewayRole.APP_V1)
     parsed = urlsplit(signed.url)
@@ -1274,12 +1307,12 @@ def _validate_signed_read[T](
         raise ValueError("route_invalid")
     elif endpoint.query_kind == "last_status":
         expected_query = f"vin={identifier.encoded}" + (
-            "&seqNo=" if protocol.region is Region.EU else ""
+            "&seqNo=" if protocol.region is Region.EU or current_app else ""
         )
     elif endpoint.query_kind == "vehicle_basics":
         expected_query = (
             f"vin={identifier.encoded}&flag=true"
-            if protocol.region is Region.EU
+            if protocol.region is Region.EU or current_app
             else f"flag=true&vin={identifier.encoded}"
         )
     else:
@@ -1298,12 +1331,18 @@ def _validate_signed_read[T](
         or parsed.fragment
     ):
         raise ValueError("route_invalid")
-    _validate_signing_headers(signed, gateway.signing_profile)
+    _validate_signing_headers(
+        signed,
+        gateway.signing_profile,
+        nonce_length=nonce_length,
+    )
 
 
 def _validate_signing_headers(
     signed: SignedRequest,
     profile: SigningProfile,
+    *,
+    nonce_length: int,
 ) -> None:
     prefix = profile.prefix
     expected_names = {
@@ -1319,7 +1358,7 @@ def _validate_signing_headers(
     signature = signed.headers[f"{prefix}-auth-sign"]
     if (
         signed.headers[f"{prefix}-auth-appkey"] != profile.app_key
-        or re.fullmatch(r"[0-9A-Fa-f]{16}", nonce) is None
+        or re.fullmatch(rf"[0-9A-Fa-f]{{{nonce_length}}}", nonce) is None
         or (profile.uppercase_nonce and nonce != nonce.upper())
         or (not profile.uppercase_nonce and nonce != nonce.lower())
         or not 10 <= len(timestamp) <= 17
@@ -1340,10 +1379,7 @@ def _validate_app_tls_context(protocol: RegionProtocol, context: object) -> None
     maximum_version = context.maximum_version
     if minimum_version < ssl.TLSVersion.TLSv1_2 or (
         maximum_version != ssl.TLSVersion.MAXIMUM_SUPPORTED
-        and (
-            maximum_version < ssl.TLSVersion.TLSv1_2
-            or maximum_version < minimum_version
-        )
+        and (maximum_version < ssl.TLSVersion.TLSv1_2 or maximum_version < minimum_version)
     ):
         raise ValueError("tls_context_invalid")
     tls_mode = protocol.gateway(GatewayRole.APP_V1).tls_mode
@@ -1391,11 +1427,7 @@ def _decode_envelope(response: _TransportResponse, *, operation: str) -> object:
         raise GwmAuthenticationError(operation=operation)
     if response.status == 429:
         retry_after = response.headers.get("retry-after")
-        retry_seconds = (
-            int(retry_after)
-            if retry_after and len(retry_after) <= 10 and retry_after.isdecimal()
-            else None
-        )
+        retry_seconds = int(retry_after) if retry_after and len(retry_after) <= 10 and retry_after.isdecimal() else None
         raise GwmRateLimitError(
             operation=operation,
             retry_after_seconds=retry_seconds,

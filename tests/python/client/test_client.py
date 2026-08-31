@@ -215,9 +215,7 @@ def _operation_response(operation: str) -> _TransportResponse:
                 "items": [{"code": "SYNTHETIC-CODE", "value": "synthetic"}],
             }
         )
-    return _response(
-        {"config": {"airConditionerTemperature": "22.0", "airConditionerStatusTime": "15"}}
-    )
+    return _response({"config": {"airConditionerTemperature": "22.0", "airConditionerStatusTime": "15"}})
 
 
 async def _invoke(client: GwmClient, operation: str) -> object:
@@ -300,10 +298,7 @@ async def test_versioned_read_fixture_matches_all_regions_and_operations() -> No
             assert request.headers["accessToken"] == ACCESS_TOKEN
             assert request.headers["country"] == region_case["country"]
             assert request.headers["Accept"] == "application/json"
-            assert any(
-                name.startswith(region_case["signing_prefix"])
-                for name in request.headers
-            )
+            assert any(name.startswith(region_case["signing_prefix"]) for name in request.headers)
             assert all(name not in request.headers for name in region_case["absent_headers"])
             assert ACCESS_TOKEN not in repr(request)
             assert transport.timeout_pairs == [(10.0, 20.0)]
@@ -318,6 +313,75 @@ async def test_versioned_read_fixture_matches_all_regions_and_operations() -> No
             assert transport.close_calls == 0
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("operation", "expected_query"),
+    [
+        ("acquire_vehicles", ""),
+        (
+            "get_last_status",
+            "vin=SYNTHETIC%2BOPAQUE%2FID%3D&seqNo=",
+        ),
+        (
+            "get_vehicle_basics",
+            "vin=SYNTHETIC%2BOPAQUE%2FID%3D&flag=true",
+        ),
+    ],
+)
+async def test_current_anz_reads_keep_the_current_app_wire_policy(
+    operation: str,
+    expected_query: str,
+) -> None:
+    device_id = "0123456789abcdef0123456789abcdef"
+    transport = _RecordingTransport([_operation_response(operation)])
+    client = GwmClient(
+        GwmClientConfig(
+            Region.ANZ,
+            anz_authentication_method="current_v2",
+        ),
+        GwmSession(
+            country="AU",
+            device_id=device_id,
+            access_token=ACCESS_TOKEN,
+            app_ssl_context=_tls_context(Region.ANZ),
+            gw_id="SYNTHETIC-GW-ID",
+        ),
+        transport=transport,
+    )
+
+    await _invoke(client, operation)
+
+    request = transport.requests[0]
+    parsed = urlsplit(request.url)
+    assert parsed.hostname == "aus-h5-gateway.gwmcloud.com"
+    assert parsed.query == expected_query
+    assert request.headers["deviceId"] == request.headers["iccid"] == device_id
+    assert request.headers["accessToken"] == ACCESS_TOKEN
+    assert request.headers["gwId"] == "SYNTHETIC-GW-ID"
+    assert request.headers["language"] == "en"
+    assert request.headers["cVer"] == "1.0.6"
+    assert request.headers["ip"] == "0.0.0.0"
+    assert request.headers["secVersion"] == "2.0"
+    assert len(request.headers["bt-auth-nonce"]) == 32
+
+
+def test_current_anz_session_requires_the_access_token_and_gw_id_pair() -> None:
+    with pytest.raises(GwmConfigurationError):
+        GwmClient(
+            GwmClientConfig(
+                Region.ANZ,
+                anz_authentication_method="current_v2",
+            ),
+            GwmSession(
+                country="AU",
+                device_id="0123456789abcdef0123456789abcdef",
+                access_token=ACCESS_TOKEN,
+                app_ssl_context=_tls_context(Region.ANZ),
+            ),
+            transport=_RecordingTransport([]),
+        )
+
+
 def test_only_closed_operation_surfaces_and_typed_public_methods_exist() -> None:
     assert set(_READ_ENDPOINTS) == {
         "acquire_vehicles",
@@ -325,9 +389,7 @@ def test_only_closed_operation_surfaces_and_typed_public_methods_exist() -> None
         "get_vehicle_basics",
     }
     public_coroutines = {
-        name
-        for name, value in inspect.getmembers(GwmClient, inspect.iscoroutinefunction)
-        if not name.startswith("_")
+        name for name, value in inspect.getmembers(GwmClient, inspect.iscoroutinefunction) if not name.startswith("_")
     }
     assert public_coroutines == {
         "aclose",
@@ -432,9 +494,7 @@ async def test_http_statuses_map_to_secret_safe_categories(
     headers: Mapping[str, str],
     expected: type[Exception],
 ) -> None:
-    transport = _RecordingTransport(
-        [_TransportResponse(status=status, headers=headers, body=SENSITIVE.encode())]
-    )
+    transport = _RecordingTransport([_TransportResponse(status=status, headers=headers, body=SENSITIVE.encode())])
     client = GwmClient(GwmClientConfig(region=Region.ANZ), _session(Region.ANZ), transport=transport)
 
     with pytest.raises(expected) as raised:
@@ -449,9 +509,7 @@ async def test_http_statuses_map_to_secret_safe_categories(
 
 @pytest.mark.asyncio
 async def test_oversized_retry_after_remains_bounded_rate_limit_error() -> None:
-    transport = _RecordingTransport(
-        [_TransportResponse(429, {"Retry-After": "9" * 5000}, b"")]
-    )
+    transport = _RecordingTransport([_TransportResponse(429, {"Retry-After": "9" * 5000}, b"")])
     client = GwmClient(GwmClientConfig(region=Region.ANZ), _session(Region.ANZ), transport=transport)
 
     with pytest.raises(GwmRateLimitError) as raised:
@@ -461,9 +519,7 @@ async def test_oversized_retry_after_remains_bounded_rate_limit_error() -> None:
 
 @pytest.mark.asyncio
 async def test_api_error_discards_cloud_description_and_body() -> None:
-    body = json.dumps(
-        {"code": "607501", "description": SENSITIVE, "data": {"raw": SENSITIVE}}
-    ).encode()
+    body = json.dumps({"code": "607501", "description": SENSITIVE, "data": {"raw": SENSITIVE}}).encode()
     transport = _RecordingTransport([_TransportResponse(200, {}, body)])
     client = GwmClient(GwmClientConfig(region=Region.ANZ), _session(Region.ANZ), transport=transport)
 
@@ -597,10 +653,7 @@ async def test_nonfinite_exponent_is_rejected_even_in_ignored_field() -> None:
     response = _TransportResponse(
         status=200,
         headers={"Content-Type": "application/json"},
-        body=(
-            b'{"code":"000000","data":['
-            b'{"vin":"SYNTHETIC-ID","ignored":1e999}]}'
-        ),
+        body=(b'{"code":"000000","data":[{"vin":"SYNTHETIC-ID","ignored":1e999}]}'),
     )
     client = GwmClient(
         GwmClientConfig(region=Region.ANZ),
@@ -651,9 +704,7 @@ async def test_account_requests_do_not_overlap() -> None:
 
 @pytest.mark.asyncio
 async def test_session_replacement_affects_only_future_requests_and_is_redacted() -> None:
-    transport = _RecordingTransport(
-        [_operation_response("acquire_vehicles"), _operation_response("acquire_vehicles")]
-    )
+    transport = _RecordingTransport([_operation_response("acquire_vehicles"), _operation_response("acquire_vehicles")])
     client = GwmClient(
         GwmClientConfig(region=Region.ANZ),
         _session(Region.ANZ, token="SYNTHETIC-FIRST-TOKEN"),
@@ -1040,11 +1091,7 @@ async def test_russia_http_authentication_read_retires_matching_session(status: 
 async def test_rejected_read_cannot_erase_newer_session_replacement(region: Region) -> None:
     replacement_token = "SYNTHETIC-CONCURRENT-READ-TOKEN"
     replacement_context = _tls_context(region)
-    rejection = (
-        _api_failure("607501")
-        if region is Region.ANZ
-        else _TransportResponse(401, {}, b"")
-    )
+    rejection = _api_failure("607501") if region is Region.ANZ else _TransportResponse(401, {}, b"")
     transport = _RecordingTransport(
         [rejection, _operation_response("acquire_vehicles")],
         delay=0.02,

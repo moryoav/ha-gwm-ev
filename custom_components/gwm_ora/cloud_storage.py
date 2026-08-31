@@ -152,11 +152,8 @@ class _GwmCloudRecord:
             or len({command.journal_id for command in self.commands}) != len(self.commands)
             or not isinstance(self.charging_plans, tuple)
             or len(self.charging_plans) > _MAX_CHARGING_PLANS
-            or any(
-                type(plan) is not GwmOwnedChargingPlan for plan in self.charging_plans
-            )
-            or len({plan.vehicle_id.casefold() for plan in self.charging_plans})
-            != len(self.charging_plans)
+            or any(type(plan) is not GwmOwnedChargingPlan for plan in self.charging_plans)
+            or len({plan.vehicle_id.casefold() for plan in self.charging_plans}) != len(self.charging_plans)
         ):
             raise ValueError("direct_cloud_state_invalid")
         if self.auth_state is not None:
@@ -218,15 +215,9 @@ class GwmCloudStateStore:
         )
         async with self._lock:
             await self._async_ensure_loaded()
-            commands = (
-                self._record.commands
-                if self._record_matches(credentials) and self._record is not None
-                else ()
-            )
+            commands = self._record.commands if self._record_matches(credentials) and self._record is not None else ()
             charging_plans = (
-                self._record.charging_plans
-                if self._record_matches(credentials) and self._record is not None
-                else ()
+                self._record.charging_plans if self._record_matches(credentials) and self._record is not None else ()
             )
             record = _record_for_credentials(
                 credentials,
@@ -245,15 +236,9 @@ class GwmCloudStateStore:
         credentials = _credentials_from_entry(entry_data)
         async with self._lock:
             await self._async_ensure_loaded()
-            commands = (
-                self._record.commands
-                if self._record_matches(credentials) and self._record is not None
-                else ()
-            )
+            commands = self._record.commands if self._record_matches(credentials) and self._record is not None else ()
             charging_plans = (
-                self._record.charging_plans
-                if self._record_matches(credentials) and self._record is not None
-                else ()
+                self._record.charging_plans if self._record_matches(credentials) and self._record is not None else ()
             )
             await self._async_save(
                 _record_for_credentials(
@@ -303,11 +288,7 @@ class GwmCloudStateStore:
         )
         async with self._lock:
             await self._async_ensure_loaded()
-            if (
-                not self._record_matches(credentials)
-                or self._record is None
-                or self._record.auth_state is None
-            ):
+            if not self._record_matches(credentials) or self._record is None or self._record.auth_state is None:
                 raise ValueError("direct_cloud_state_invalid")
             commands = (*self._record.commands, entry)[-_MAX_COMMANDS:]
             await self._async_save(
@@ -342,10 +323,7 @@ class GwmCloudStateStore:
             for index, current in enumerate(commands):
                 if current.journal_id != journal_id:
                     continue
-                if (
-                    state not in _COMMAND_TRANSITIONS[current.state]
-                    or updated_at < current.updated_at
-                ):
+                if state not in _COMMAND_TRANSITIONS[current.state] or updated_at < current.updated_at:
                     raise ValueError("command_journal_invalid")
                 updated = GwmCommandJournalEntry(
                     journal_id=current.journal_id,
@@ -427,9 +405,7 @@ class GwmCloudStateStore:
             if not self._record_matches(credentials) or self._record is None:
                 raise ValueError("direct_cloud_state_invalid")
             charging_plans = tuple(
-                plan
-                for plan in self._record.charging_plans
-                if plan.vehicle_id.casefold() != vehicle_id.casefold()
+                plan for plan in self._record.charging_plans if plan.vehicle_id.casefold() != vehicle_id.casefold()
             )
             if charging_plans == self._record.charging_plans:
                 return
@@ -469,10 +445,7 @@ class GwmCloudStateStore:
             and record.account_binding == credentials.account_binding
             and record.context_binding == cloud_authentication_context_binding(credentials)
             and cloud_unique_id(credentials) == self.unique_id
-            and (
-                record.auth_state is None
-                or _auth_state_matches_credentials(record.auth_state, credentials)
-            )
+            and (record.auth_state is None or _auth_state_matches_credentials(record.auth_state, credentials))
         )
 
     async def _async_replace_for_context(
@@ -522,11 +495,7 @@ async def async_remove_cloud_state(
     if not isinstance(unique_id, str):
         return
     stores = hass.data.get(_STORAGE_CACHE_KEY)
-    store = (
-        stores.get(unique_id)
-        if isinstance(stores, dict)
-        else None
-    )
+    store = stores.get(unique_id) if isinstance(stores, dict) else None
     if not isinstance(store, GwmCloudStateStore):
         store = GwmCloudStateStore(hass, unique_id)
     await store.async_remove()
@@ -549,10 +518,7 @@ def cloud_authentication_context_binding(
         credentials.account,
         credentials.password or "",
     ]
-    if (
-        credentials.region == REGION_ANZ
-        and credentials.authentication_method != ANZ_AUTHENTICATION_METHOD_LEGACY
-    ):
+    if credentials.region == REGION_ANZ and credentials.authentication_method != ANZ_AUTHENTICATION_METHOD_LEGACY:
         values.append(credentials.authentication_method or "")
     for value in values:
         encoded = value.encode("utf-8", errors="strict")
@@ -568,11 +534,7 @@ def _credentials_from_entry(entry_data: dict[str, object]) -> GwmCloudCredential
         region=str(entry_data.get(CONF_REGION, "")),
         country=str(entry_data.get(CONF_COUNTRY, "")),
         account=str(entry_data.get(CONF_ACCOUNT, "")),
-        password=(
-            str(entry_data[CONF_PASSWORD])
-            if isinstance(entry_data.get(CONF_PASSWORD), str)
-            else None
-        ),
+        password=(str(entry_data[CONF_PASSWORD]) if isinstance(entry_data.get(CONF_PASSWORD), str) else None),
         authentication_method=(
             str(entry_data[CONF_AUTHENTICATION_METHOD])
             if isinstance(entry_data.get(CONF_AUTHENTICATION_METHOD), str)
@@ -677,13 +639,9 @@ def _encode_record(record: _GwmCloudRecord) -> dict[str, Any]:
         "region": record.region,
         "account_binding": record.account_binding,
         "context_binding": record.context_binding,
-        "auth_state": (
-            None if record.auth_state is None else _encode_auth_state(record.auth_state)
-        ),
+        "auth_state": (None if record.auth_state is None else _encode_auth_state(record.auth_state)),
         "commands": [_encode_command(command) for command in record.commands],
-        "charging_plans": [
-            _encode_owned_charging_plan(plan) for plan in record.charging_plans
-        ],
+        "charging_plans": [_encode_owned_charging_plan(plan) for plan in record.charging_plans],
     }
 
 
@@ -708,13 +666,9 @@ def _decode_record(data: object) -> _GwmCloudRecord:
         region=region,
         account_binding=_required_text(value["account_binding"], 64),
         context_binding=_required_text(value["context_binding"], 64),
-        auth_state=(
-            None if auth_data is None else _decode_auth_state(region, auth_data)
-        ),
+        auth_state=(None if auth_data is None else _decode_auth_state(region, auth_data)),
         commands=tuple(_decode_command(command) for command in commands),
-        charging_plans=tuple(
-            _decode_owned_charging_plan(plan) for plan in charging_plans
-        ),
+        charging_plans=tuple(_decode_owned_charging_plan(plan) for plan in charging_plans),
     )
 
 
@@ -722,9 +676,7 @@ def _encode_auth_state(state: CloudAuthState) -> dict[str, Any]:
     common: dict[str, Any] = {
         "account_binding": state.account_binding,
         "device_id": state.device_id,
-        "verification_requested_at": _encode_datetime(
-            state.verification_requested_at
-        ),
+        "verification_requested_at": _encode_datetime(state.verification_requested_at),
     }
     if type(state) is EuAuthState:
         return {
@@ -749,8 +701,10 @@ def _encode_auth_state(state: CloudAuthState) -> dict[str, Any]:
             **common,
             "kind": REGION_ANZ,
             "country": state.country,
+            "authentication_method": state.authentication_method.value,
             "access_token": state.access_token,
             "refresh_token": state.refresh_token,
+            "gw_id": state.gw_id,
             "session_reclaim_required": state.session_reclaim_required,
         }
     if type(state) is RussiaAuthState:
@@ -790,9 +744,7 @@ def _decode_auth_state(region: str, data: object) -> CloudAuthState:
     common = {
         "account_binding": _required_text(data.get("account_binding"), 64),
         "device_id": _required_text(data.get("device_id"), 128),
-        "verification_requested_at": _decode_datetime(
-            data.get("verification_requested_at")
-        ),
+        "verification_requested_at": _decode_datetime(data.get("verification_requested_at")),
     }
     if region == REGION_EU:
         _require_keys(
@@ -826,22 +778,28 @@ def _decode_auth_state(region: str, data: object) -> CloudAuthState:
             issued_identity=identity,
         )
     if region == REGION_ANZ:
-        _require_keys(
-            data,
-            {
-                *common,
-                "kind",
-                "country",
-                "access_token",
-                "refresh_token",
-                "session_reclaim_required",
-            },
-        )
+        legacy_keys = {
+            *common,
+            "kind",
+            "country",
+            "access_token",
+            "refresh_token",
+            "session_reclaim_required",
+        }
+        current_keys = {*legacy_keys, "authentication_method", "gw_id"}
+        if set(data) not in (legacy_keys, current_keys):
+            raise ValueError("auth_state_invalid")
         return AnzAuthState(
             **common,
             country=_required_text(data["country"], 8),
+            authentication_method=(
+                _required_text(data["authentication_method"], 32)
+                if "authentication_method" in data
+                else ANZ_AUTHENTICATION_METHOD_LEGACY
+            ),
             access_token=_optional_text(data["access_token"], 16 * 1024),
             refresh_token=_optional_text(data["refresh_token"], 16 * 1024),
+            gw_id=(_optional_text(data["gw_id"], 16 * 1024) if "gw_id" in data else None),
             session_reclaim_required=_required_bool(data["session_reclaim_required"]),
         )
     if region == REGION_RUSSIA:
@@ -985,15 +943,11 @@ def _bounded_text(value: object, maximum: int) -> bool:
 
 
 def _bounded_command_text(value: object, maximum: int) -> bool:
-    return _bounded_text(value, maximum) and all(
-        0x21 <= ord(character) <= 0x7E for character in value
-    )
+    return _bounded_text(value, maximum) and all(0x21 <= ord(character) <= 0x7E for character in value)
 
 
 def _bounded_command_name(value: object, maximum: int) -> bool:
-    return _bounded_text(value, maximum) and all(
-        0x20 <= ord(character) <= 0x7E for character in value
-    )
+    return _bounded_text(value, maximum) and all(0x20 <= ord(character) <= 0x7E for character in value)
 
 
 def _required_bool(value: object) -> bool:
@@ -1023,11 +977,7 @@ def _required_int32(value: object) -> int:
 
 
 def _required_bounded_string(value: object, maximum: int) -> str:
-    if (
-        not isinstance(value, str)
-        or len(value) > maximum
-        or any(ord(character) < 0x20 for character in value)
-    ):
+    if not isinstance(value, str) or len(value) > maximum or any(ord(character) < 0x20 for character in value):
         raise ValueError("direct_cloud_state_invalid")
     return value
 
@@ -1051,11 +1001,7 @@ def _required_datetime(value: object) -> datetime:
 
 
 def _normalized_datetime(value: datetime) -> datetime:
-    if (
-        not isinstance(value, datetime)
-        or value.tzinfo is None
-        or value.utcoffset() is None
-    ):
+    if not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None:
         raise ValueError("direct_cloud_state_invalid")
     return value.astimezone(UTC)
 

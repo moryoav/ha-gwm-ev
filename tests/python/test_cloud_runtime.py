@@ -42,6 +42,7 @@ from gwm_client import (
     CloudVehicleBasics,
     CloudVehicleStatus,
     DoorLockCommand,
+    GwmClient,
     GwmConfigurationError,
     GwmNetworkError,
     GwmOptionalEndpointError,
@@ -68,12 +69,14 @@ def _bootstrap() -> tuple[GwmCloudCredentials, GwmCloudBootstrap]:
     state = replace(
         AnzAuthState.for_credentials(regional),
         access_token="synthetic-access-token",
+        gw_id="synthetic-gw-id",
     )
     session = GwmSession(
         "AU",
         _DEVICE_ID,
         "synthetic-access-token",
         ssl.create_default_context(),
+        gw_id="synthetic-gw-id",
     )
     return credentials, GwmCloudBootstrap.from_authentication(
         credentials,
@@ -110,9 +113,7 @@ class _ReadClient:
             ),
         }
         self.basics: dict[str, CloudVehicleBasics | Exception] = {
-            "SYNTHETIC-VEHICLE-A": CloudVehicleBasics(
-                CloudClimateConfiguration(temperature="23", operation_time="15")
-            ),
+            "SYNTHETIC-VEHICLE-A": CloudVehicleBasics(CloudClimateConfiguration(temperature="23", operation_time="15")),
             "SYNTHETIC-VEHICLE-B": GwmOptionalEndpointError(
                 operation="vehicle_basics",
                 api_code="607099",
@@ -169,6 +170,8 @@ async def test_handoff_is_one_shot_and_validates_entry_identity() -> None:
     )
     assert runtime.region == "aus"
     assert runtime.reusable_bootstrap is bootstrap
+    assert isinstance(runtime._client, GwmClient)
+    assert runtime._client._config.anz_authentication_method == ANZ_AUTHENTICATION_METHOD_CURRENT
     await runtime.aclose()
 
 
@@ -203,10 +206,7 @@ async def test_multi_vehicle_refresh_maps_snapshots_and_anz_optional_basics() ->
     assert vehicles[0]["climate"]["target_temperature_c"] == 23
     assert vehicles[1]["values"]["soc"] == 55.0
     assert vehicles[1]["climate"]["target_temperature_c"] == 22
-    assert all(
-        vehicle["timestamps"]["last_refresh"] == "2026-08-28T12:00:00+00:00"
-        for vehicle in vehicles
-    )
+    assert all(vehicle["timestamps"]["last_refresh"] == "2026-08-28T12:00:00+00:00" for vehicle in vehicles)
 
 
 @pytest.mark.asyncio
@@ -230,10 +230,7 @@ async def test_charging_capability_and_typed_delegation_follow_independent_opt_i
 
     result = await runtime.async_get_vehicle_data()
     assert result["charging_control_enabled"] is True
-    assert all(
-        vehicle["capabilities"]["charging_control"] is True
-        for vehicle in result["vehicles"]
-    )
+    assert all(vehicle["capabilities"]["charging_control"] is True for vehicle in result["vehicles"])
     identifier = VehicleIdentifier("SYNTHETIC-VEHICLE-A")
     assert await runtime.async_get_charging_plan(identifier) == ChargingPlanInfo()
     command = ChargingPlanCommand(identifier, False)

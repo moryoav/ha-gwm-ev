@@ -56,10 +56,7 @@ from .const import (
 type ClientCredentials = EuCredentials | AnzCredentials | RussiaCredentials | ChinaCredentials
 type CloudAuthState = EuAuthState | AnzAuthState | RussiaAuthState | ChinaAuthState
 type CloudAuthenticationResult = (
-    EuAuthenticationResult
-    | AnzAuthenticationResult
-    | RussiaAuthenticationResult
-    | ChinaAuthenticationResult
+    EuAuthenticationResult | AnzAuthenticationResult | RussiaAuthenticationResult | ChinaAuthenticationResult
 )
 type BootstrapMaterial = EuBootstrapMaterial | RussiaBootstrapMaterial | None
 type OverseasClientFactory = Callable[[GwmClientConfig], GwmClient]
@@ -128,9 +125,7 @@ class GwmCloudCredentials:
                 password=_required_password(self.password),
                 country=self.country,
                 device_id=self.device_id,
-                authentication_method=(
-                    self.authentication_method or ANZ_AUTHENTICATION_METHOD_LEGACY
-                ),
+                authentication_method=(self.authentication_method or ANZ_AUTHENTICATION_METHOD_LEGACY),
             )
         if self.region == REGION_RUSSIA:
             return RussiaCredentials(
@@ -202,7 +197,14 @@ class GwmCloudAuthenticator:
                 await client.aclose()
 
         material = await self._async_load_material(credentials.region)
-        client = self._overseas_client_factory(GwmClientConfig(_overseas_region(credentials.region)))
+        client = self._overseas_client_factory(
+            GwmClientConfig(
+                _overseas_region(credentials.region),
+                anz_authentication_method=(
+                    credentials.authentication_method if credentials.region == REGION_ANZ else None
+                ),
+            )
+        )
         try:
             if credentials.region == REGION_EU:
                 if state is not None and type(state) is not EuAuthState:
@@ -231,9 +233,8 @@ class GwmCloudAuthenticator:
             if credentials.region == REGION_RUSSIA:
                 if state is not None and type(state) is not RussiaAuthState:
                     raise GwmConfigurationError(operation="login")
-                if (
-                    type(material) is not RussiaBootstrapMaterial
-                    or not isinstance(regional_credentials, RussiaCredentials)
+                if type(material) is not RussiaBootstrapMaterial or not isinstance(
+                    regional_credentials, RussiaCredentials
                 ):
                     raise GwmConfigurationError(operation="login")
                 return await client.authenticate_russia(

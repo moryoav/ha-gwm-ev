@@ -606,6 +606,14 @@ def test_wire_request_enforces_safe_get_and_post_body_contracts() -> None:
         ssl_context=_context(),
         body=b"{}",
     ).body == b"{}"
+    assert _TransportRequest(
+        operation="request",
+        method="POST",
+        url="https://example.invalid/read",
+        headers={"content-type": "application/json"},
+        ssl_context=_context(),
+        body=b"{}",
+    ).body == b"{}"
 
     invalid_requests = [
         {
@@ -632,11 +640,6 @@ def test_wire_request_enforces_safe_get_and_post_body_contracts() -> None:
             "method": "POST",
             "headers": {"Content-Type": "application/json; charset=utf-8"},
             "body": bytearray(b"{}"),
-        },
-        {
-            "method": "POST",
-            "headers": {"Content-Type": "application/json"},
-            "body": b"{}",
         },
         {
             "method": "POST",

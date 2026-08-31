@@ -40,12 +40,14 @@ def test_session_repr_hides_authentication_and_tls_material() -> None:
         device_id="SENSITIVE-DEVICE",
         access_token="SENSITIVE-TOKEN",
         app_ssl_context=context,
+        gw_id="SENSITIVE-GW-ID",
     )
 
     rendered = repr(session)
     assert "IL" in rendered
     assert "SENSITIVE-DEVICE" not in rendered
     assert "SENSITIVE-TOKEN" not in rendered
+    assert "SENSITIVE-GW-ID" not in rendered
     assert repr(context) not in rendered
 
 

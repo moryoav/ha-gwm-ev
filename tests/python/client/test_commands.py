@@ -166,6 +166,55 @@ async def test_regional_climate_contracts_are_closed_and_header_exact(region: Re
 
 
 @pytest.mark.asyncio
+async def test_current_anz_commands_and_result_poll_keep_current_app_policy() -> None:
+    fixture = _fixture()
+    device_id = "0123456789abcdef0123456789abcdef"
+    identifier = VehicleIdentifier("SYNTHETIC+CURRENT/ANZ")
+    transport = _RecordingTransport([_response(), _response(), _response([])])
+    client = GwmClient(
+        GwmClientConfig(
+            Region.ANZ,
+            anz_authentication_method="current_v2",
+        ),
+        GwmSession(
+            country="AU",
+            device_id=device_id,
+            access_token="SYNTHETIC-COMMAND-TOKEN",
+            app_ssl_context=_context(Region.ANZ),
+            gw_id="SYNTHETIC-GW-ID",
+        ),
+        transport=transport,
+        sequence_source=lambda: fixture["sequence_number"],
+    )
+
+    await client.update_climate_defaults(
+        identifier,
+        temperature=21,
+        operation_time_minutes=10,
+    )
+    acceptance = await client.send_climate_command(
+        ClimateCommand(identifier, "cool", 21, 10),
+        security_password_hash=fixture["security_password_hash"],
+    )
+    await client.get_remote_command_results(identifier, acceptance.command_id)
+
+    assert len(transport.requests) == 3
+    for request in transport.requests:
+        assert request.headers["deviceId"] == request.headers["iccid"] == device_id
+        assert request.headers["accessToken"] == "SYNTHETIC-COMMAND-TOKEN"
+        assert request.headers["gwId"] == "SYNTHETIC-GW-ID"
+        assert request.headers["language"] == "en"
+        assert request.headers["cVer"] == "1.0.6"
+        assert request.headers["ip"] == "0.0.0.0"
+        assert request.headers["secVersion"] == "2.0"
+        assert len(request.headers["bt-auth-nonce"]) == 32
+    for request in transport.requests[:2]:
+        assert request.headers["Content-Type"] == "application/json"
+        assert b'"vin":"SYNTHETIC+CURRENT/ANZ"' in (request.body or b"")
+    assert "Content-Type" not in transport.requests[2].headers
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("region", list(Region))
 async def test_regional_lock_and_close_window_contracts_are_exact(region: Region) -> None:
     fixture = _fixture()
@@ -292,16 +341,12 @@ def test_result_selection_preserves_russian_and_default_semantics() -> None:
     sequence = _fixture()["sequence_number"]
     stale = RemoteCommandResultItem("stale", "0x04", "0", "Success")
     current = RemoteCommandResultItem(sequence, "0x04", "1000", "Waiting")
-    assert select_remote_command_result(
-        (stale, current), command_id=sequence, region=Region.RUSSIA
-    ).state == "pending"
+    assert select_remote_command_result((stale, current), command_id=sequence, region=Region.RUSSIA).state == "pending"
     success = RemoteCommandResultItem(None, "0x04", "6", "Done")
-    assert select_remote_command_result(
-        (stale, success), command_id=sequence, region=Region.RUSSIA
-    ).state == "completed"
-    assert select_remote_command_result(
-        (stale, current), command_id=sequence, region=Region.EU
-    ).state == "failed"
+    assert (
+        select_remote_command_result((stale, success), command_id=sequence, region=Region.RUSSIA).state == "completed"
+    )
+    assert select_remote_command_result((stale, current), command_id=sequence, region=Region.EU).state == "failed"
 
 
 def test_china_vehicle_control_contract_is_closed_and_platform_filtered() -> None:
@@ -314,11 +359,14 @@ def test_china_vehicle_control_contract_is_closed_and_platform_filtered() -> Non
         "flash_lights",
         "sunroof_close",
     } == BEANTECH_CHINA_VEHICLE_CONTROL_ACTIONS
-    assert ChinaVehicleControlCommand(
-        identifier,
-        "remote_start",
-        20,
-    ).run_time_minutes == 20
+    assert (
+        ChinaVehicleControlCommand(
+            identifier,
+            "remote_start",
+            20,
+        ).run_time_minutes
+        == 20
+    )
     assert ChinaVehicleControlCommand(identifier, "horn").action == "horn"
 
     for action, run_time in (

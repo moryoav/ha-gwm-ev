@@ -112,7 +112,9 @@ def test_client_fixtures_are_versioned_and_explicitly_synthetic() -> None:
     for fixture_path in fixture_paths:
         text = fixture_path.read_text(encoding="utf-8")
         payload = json.loads(text)
-        assert payload["schema_version"] == 1
+        _, separator, filename_version = fixture_path.stem.rpartition("_v")
+        assert separator and filename_version.isdecimal()
+        assert payload["schema_version"] == int(filename_version)
         _assert_no_raw_identity_text(text)
         _assert_sensitive_fixture_values_are_synthetic(payload)
 

@@ -6,6 +6,19 @@ This project follows semantic versioning. HACS uses the latest GitHub release ta
 
 ## [Unreleased]
 
+## [0.16.8] - 2026-08-31
+
+### Fixed
+
+- I aligned the beta current GWM ANZ password and verification requests with the signed GWM ANZ 1.0.6 app. This includes full absolute-URL signing, its decoded query rules, 32-character nonce, URI encoding, compact JSON, headers, full device ID, content type, account type, nullable push token, and verification result handling.
+- I retain the current app's `gwId` with its access token and carry the selected ANZ method through authentication state, Home Assistant restart recovery, polling, commands, and command-result polling.
+- I now publish a successful current-app session directly from the v2 login response, as the signed app does. Current login no longer makes an unevidenced legacy v1 profile request or requires an unevidenced `refreshToken` field.
+- I kept the legacy add-on-compatible ANZ authentication request unchanged.
+
+### Changed
+
+- I added the selected region and authentication method to the sanitized setup failure log. Account details, passwords, codes, tokens, device IDs, request data, and response data remain excluded.
+
 ## [0.16.7] - 2026-08-31
 
 ### Added

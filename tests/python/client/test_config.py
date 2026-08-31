@@ -16,6 +16,32 @@ def test_client_config_normalizes_region_and_uses_bounded_defaults() -> None:
     assert config.region is Region.EU
     assert config.timeouts == RequestTimeouts()
     assert config.max_response_bytes == 4 * 1024 * 1024
+    assert config.anz_authentication_method is None
+
+
+def test_anz_config_defaults_to_legacy_and_accepts_current_method() -> None:
+    assert GwmClientConfig(Region.ANZ).anz_authentication_method == "legacy_v1"
+    assert (
+        GwmClientConfig(
+            Region.ANZ,
+            anz_authentication_method="current_v2",
+        ).anz_authentication_method
+        == "current_v2"
+    )
+
+
+@pytest.mark.parametrize("method", ["unknown", "CURRENT", 1, False])
+def test_anz_config_rejects_unknown_authentication_method(method: object) -> None:
+    with pytest.raises(ValueError, match="^anz_authentication_method_invalid$"):
+        GwmClientConfig(
+            Region.ANZ,
+            anz_authentication_method=method,  # type: ignore[arg-type]
+        )
+
+
+def test_non_anz_config_rejects_anz_authentication_method() -> None:
+    with pytest.raises(ValueError, match="^anz_authentication_method_invalid$"):
+        GwmClientConfig(Region.EU, anz_authentication_method="current_v2")
 
 
 @pytest.mark.parametrize("region", ["", "usa", "eu/../rus", 1, None])
