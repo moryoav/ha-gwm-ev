@@ -14,7 +14,7 @@ If this project is useful to you, you can support its continued development:
 
 ---
 
-<img alt="GWM" src="brand/gwm-logo-white.svg">
+<img alt="GWM" src="https://raw.githubusercontent.com/moryoav/ha-gwm-ev/main/brand/gwm-logo-white.svg">
 
 This custom integration connects Home Assistant directly to supported regional GWM cloud services. It discovers vehicles on the account, creates native Home Assistant entities, polls vehicle status, and provides explicitly enabled remote controls.
 
@@ -260,7 +260,7 @@ Historical ORA test results and attribution to `ora2mqtt` remain named where the
 
 ## Protocol Materials
 
-Some protocol values and bootstrap materials were obtained through interoperability research on official GWM applications. I record their sources, hashes, certificate renewal deadlines, and unresolved redistribution conditions in [Third-Party and Protocol Material Notice](THIRD_PARTY_NOTICES.md).
+Some protocol values and bootstrap materials were obtained through interoperability research on official GWM applications. I record their sources, hashes, certificate renewal deadlines, and unresolved redistribution conditions in [Third-Party and Protocol Material Notice](https://github.com/moryoav/ha-gwm-ev/blob/main/THIRD_PARTY_NOTICES.md).
 
 This remains an early integration release. Publishing the standalone client through a public package index remains blocked until the recorded permission or authorized-replacement conditions are resolved.
 
