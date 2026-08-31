@@ -6,6 +6,12 @@ This project follows semantic versioning. HACS uses the latest GitHub release ta
 
 ## [Unreleased]
 
+## [0.16.12] - 2026-08-31
+
+### Fixed
+
+- I separated current ANZ authentication signing from native vehicle-read signing. Current-v2 sessions keep their full device ID, access token, `gwId`, and current app headers, while discovery, status, and basics reads now use the official app's native 16-character nonce and regional query canonicalization. This addresses the exact `607099` signature rejection reported at `getLastStatus` after login and vehicle discovery had already succeeded.
+
 ## [0.16.11] - 2026-08-31
 
 ### Changed

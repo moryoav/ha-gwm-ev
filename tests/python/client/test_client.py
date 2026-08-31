@@ -320,15 +320,15 @@ async def test_versioned_read_fixture_matches_all_regions_and_operations() -> No
         ("acquire_vehicles", ""),
         (
             "get_last_status",
-            "vin=SYNTHETIC%2BOPAQUE%2FID%3D&seqNo=",
+            "vin=SYNTHETIC%2BOPAQUE%2FID%3D",
         ),
         (
             "get_vehicle_basics",
-            "vin=SYNTHETIC%2BOPAQUE%2FID%3D&flag=true",
+            "flag=true&vin=SYNTHETIC%2BOPAQUE%2FID%3D",
         ),
     ],
 )
-async def test_current_anz_reads_keep_the_current_app_wire_policy(
+async def test_current_anz_session_uses_native_vehicle_read_signing_policy(
     operation: str,
     expected_query: str,
 ) -> None:
@@ -362,7 +362,7 @@ async def test_current_anz_reads_keep_the_current_app_wire_policy(
     assert request.headers["cVer"] == "1.0.6"
     assert request.headers["ip"] == "0.0.0.0"
     assert request.headers["secVersion"] == "2.0"
-    assert len(request.headers["bt-auth-nonce"]) == 32
+    assert len(request.headers["bt-auth-nonce"]) == 16
 
 
 def test_current_anz_session_requires_the_access_token_and_gw_id_pair() -> None:

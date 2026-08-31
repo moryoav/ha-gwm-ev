@@ -1010,6 +1010,22 @@ class GwmClient:
             return _sign_current_app_request(profile, method, url, body)
         return sign_request(profile, method, url, body)
 
+    @staticmethod
+    def _sign_vehicle_read_request(
+        profile: SigningProfile,
+        method: str,
+        url: str,
+    ) -> SignedRequest:
+        """Sign a read through the native overseas vehicle request policy.
+
+        The current ANZ app performs authentication in its Flutter networking
+        layer, but sends vehicle reads through its native request interceptor.
+        The native interceptor uses the established regional query
+        canonicalization and nonce shape even for a current-v2 session.
+        """
+
+        return sign_request(profile, method, url)
+
     def _authenticated_headers(self, session: GwmSession) -> dict[str, str]:
         if self._uses_current_anz:
             return _current_app_headers(
@@ -1206,7 +1222,7 @@ class GwmClient:
             gateway = self._protocol.gateway(GatewayRole.APP_V1)
             relative_url = endpoint.path + _logical_query(endpoint, identifier)
             unsigned_url = gateway.base_url + relative_url
-            signed = self._sign_overseas_request(
+            signed = self._sign_vehicle_read_request(
                 gateway.signing_profile,
                 "GET",
                 unsigned_url,
@@ -1216,8 +1232,7 @@ class GwmClient:
                 endpoint=endpoint,
                 protocol=self._protocol,
                 identifier=identifier,
-                nonce_length=32 if self._uses_current_anz else 16,
-                current_app=self._uses_current_anz,
+                nonce_length=16,
             )
             headers = {
                 **self._authenticated_headers(session),
@@ -1290,7 +1305,6 @@ def _validate_signed_read[T](
     protocol: RegionProtocol,
     identifier: VehicleIdentifier | None,
     nonce_length: int,
-    current_app: bool,
 ) -> None:
     gateway = protocol.gateway(GatewayRole.APP_V1)
     parsed = urlsplit(signed.url)
@@ -1307,12 +1321,12 @@ def _validate_signed_read[T](
         raise ValueError("route_invalid")
     elif endpoint.query_kind == "last_status":
         expected_query = f"vin={identifier.encoded}" + (
-            "&seqNo=" if protocol.region is Region.EU or current_app else ""
+            "&seqNo=" if protocol.region is Region.EU else ""
         )
     elif endpoint.query_kind == "vehicle_basics":
         expected_query = (
             f"vin={identifier.encoded}&flag=true"
-            if protocol.region is Region.EU or current_app
+            if protocol.region is Region.EU
             else f"flag=true&vin={identifier.encoded}"
         )
     else:
