@@ -6,6 +6,12 @@ This project follows semantic versioning. HACS uses the latest GitHub release ta
 
 ## [Unreleased]
 
+## [0.16.11] - 2026-08-31
+
+### Changed
+
+- I added privacy-safe metadata for vehicle refresh failures and show GWM's sanitized API result code in Home Assistant's failed-setup message. This lets the ANZ current-app beta distinguish a signing or request-contract mismatch without logging account details, tokens, VINs, headers, signatures, or response text.
+
 ## [0.16.10] - 2026-08-31
 
 ### Fixed

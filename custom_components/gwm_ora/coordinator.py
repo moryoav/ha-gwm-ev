@@ -65,15 +65,33 @@ class GwmDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     )
             return self._overlay_command_statuses(data)
         except GwmAuthenticationError as err:
+            self._log_cloud_refresh_failure(err)
             with suppress(Exception):
                 await self.cloud_client.async_authentication_rejected()
             raise ConfigEntryAuthFailed(
                 "GWM cloud authentication was rejected"
             ) from err
         except GwmClientError as err:
-            raise UpdateFailed(
-                f"GWM cloud {err.category} during {err.operation}"
-            ) from err
+            self._log_cloud_refresh_failure(err)
+            message = f"GWM cloud {err.category} during {err.operation}"
+            if (api_code := getattr(err, "api_code", None)) is not None:
+                message += f" (API code {api_code})"
+            raise UpdateFailed(message) from err
+
+    def _log_cloud_refresh_failure(self, error: GwmClientError) -> None:
+        """Log only the client's bounded, sanitized failure metadata."""
+
+        _LOGGER.warning(
+            "GWM cloud refresh failed: region=%s type=%s category=%s "
+            "operation=%s api_code=%s http_status=%s retry_after_seconds=%s",
+            self.cloud_client.region,
+            type(error).__name__,
+            error.category,
+            error.operation,
+            getattr(error, "api_code", None),
+            getattr(error, "status", None),
+            getattr(error, "retry_after_seconds", None),
+        )
 
     @property
     def vehicles(self) -> list[dict[str, Any]]:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from unittest.mock import AsyncMock
 
 import pytest
@@ -15,7 +16,7 @@ from homeassistant.helpers.update_coordinator import UpdateFailed
 
 from custom_components.gwm_ora.cloud_commands import GwmCommandApi
 from custom_components.gwm_ora.coordinator import GwmDataUpdateCoordinator
-from gwm_client import GwmAuthenticationError, GwmNetworkError
+from gwm_client import GwmApiError, GwmAuthenticationError, GwmNetworkError
 
 
 def _coordinator_with(vehicles: list[dict]) -> GwmDataUpdateCoordinator:
@@ -168,6 +169,7 @@ async def test_cloud_coordinator_classifies_refresh_failures(
     expected: type[Exception],
 ) -> None:
     class CloudClient:
+        region = "eu"
         retired = False
 
         async def async_get_vehicle_data(self) -> dict:
@@ -187,6 +189,35 @@ async def test_cloud_coordinator_classifies_refresh_failures(
     with pytest.raises(expected):
         await coordinator._async_update_data()
     assert cloud_client.retired is isinstance(error, GwmAuthenticationError)
+
+
+@pytest.mark.asyncio
+async def test_cloud_coordinator_surfaces_only_sanitized_api_failure_metadata(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class CloudClient:
+        region = "aus"
+
+        async def async_get_vehicle_data(self) -> dict:
+            raise GwmApiError(operation="get_last_status", api_code="607099")
+
+    coordinator = GwmDataUpdateCoordinator(
+        HomeAssistant("synthetic-config"),
+        AsyncMock(),
+        cloud_client=CloudClient(),  # type: ignore[arg-type]
+    )
+
+    with caplog.at_level(logging.WARNING), pytest.raises(UpdateFailed) as raised:
+        await coordinator._async_update_data()
+
+    assert str(raised.value) == (
+        "GWM cloud api_error during get_last_status (API code 607099)"
+    )
+    assert caplog.messages[-1] == (
+        "GWM cloud refresh failed: region=aus type=GwmApiError "
+        "category=api_error operation=get_last_status api_code=607099 "
+        "http_status=None retry_after_seconds=None"
+    )
 
 
 @pytest.mark.asyncio
