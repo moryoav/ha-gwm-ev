@@ -250,6 +250,7 @@
       "door_lock": { "name": "Door lock" }
     },
     "button": {
+      "start_air_circulation": { "name": "Start air circulation" },
       "close_windows": { "name": "Close windows" },
       "remote_start": { "name": "Remote start" },
       "remote_stop": { "name": "Remote stop" },
@@ -264,6 +265,7 @@
       "fully_open_sunroof": { "name": "Fully open sunroof" }
     },
     "switch": {
+      "front_defroster": { "name": "Front defroster" },
       "charging_schedule": { "name": "Scheduled charging" }
     }
   },

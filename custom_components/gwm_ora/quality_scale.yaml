@@ -2,7 +2,7 @@ rules:
   # Bronze
   action-setup:
     status: exempt
-    comment: The integration does not register standalone service actions; remote commands use native climate, lock, button, and number entity actions.
+    comment: The integration does not register standalone service actions; remote commands use native climate, lock, button, number, and switch entity actions.
   appropriate-polling: done
   brands: done
   common-modules: done

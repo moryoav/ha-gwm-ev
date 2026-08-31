@@ -333,11 +333,13 @@ def test_entity_keys_and_translation_keys_are_unique_and_complete() -> None:
         translation_keys = {description.translation_key for description in descriptions}
         assert translation_keys <= set(translations[platform])
         assert set(icons.get(platform, {})) <= set(translations[platform])
+    assert set(icons["button"]) <= set(translations["button"])
+    assert set(icons["switch"]) <= set(translations["switch"])
 
 
 def test_platforms_declare_parallel_updates() -> None:
     pytest.importorskip("homeassistant")
-    from custom_components.gwm_ora import binary_sensor, button, climate, device_tracker, lock, number, sensor
+    from custom_components.gwm_ora import binary_sensor, button, climate, device_tracker, lock, number, sensor, switch
 
     assert sensor.PARALLEL_UPDATES == 0
     assert binary_sensor.PARALLEL_UPDATES == 0
@@ -345,7 +347,25 @@ def test_platforms_declare_parallel_updates() -> None:
     assert lock.PARALLEL_UPDATES == 0
     assert button.PARALLEL_UPDATES == 0
     assert number.PARALLEL_UPDATES == 0
+    assert switch.PARALLEL_UPDATES == 0
     assert device_tracker.PARALLEL_UPDATES == 0
+
+
+def test_overseas_comfort_control_metadata() -> None:
+    pytest.importorskip("homeassistant")
+    from homeassistant.const import Platform
+
+    from custom_components.gwm_ora.button import GwmCabinCleanButton
+    from custom_components.gwm_ora.const import PLATFORMS
+    from custom_components.gwm_ora.switch import GwmFrontDefrosterSwitch
+
+    defroster = object.__new__(GwmFrontDefrosterSwitch)
+    circulation = object.__new__(GwmCabinCleanButton)
+
+    assert Platform.BUTTON in PLATFORMS
+    assert Platform.SWITCH in PLATFORMS
+    assert defroster.translation_key == "front_defroster"
+    assert circulation.translation_key == "start_air_circulation"
 
 
 def test_climate_run_time_number_metadata() -> None:

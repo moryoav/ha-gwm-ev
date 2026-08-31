@@ -250,6 +250,7 @@
       "door_lock": { "name": "门锁" }
     },
     "button": {
+      "start_air_circulation": { "name": "启动空气循环" },
       "close_windows": { "name": "关闭车窗" },
       "remote_start": { "name": "远程启动" },
       "remote_stop": { "name": "远程停止" },
@@ -264,6 +265,7 @@
       "fully_open_sunroof": { "name": "天窗全开" }
     },
     "switch": {
+      "front_defroster": { "name": "前除霜" },
       "charging_schedule": { "name": "定时充电" }
     }
   },

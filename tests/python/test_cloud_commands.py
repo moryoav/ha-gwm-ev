@@ -68,6 +68,8 @@ class _Cloud:
         self.sent = []
         self.lock_sent = []
         self.windows_sent = []
+        self.front_defroster_sent = []
+        self.cabin_clean_sent = []
         self.vehicle_controls_sent: list[ChinaVehicleControlCommand] = []
         self.charging_sent: list[ChargingPlanCommand] = []
         self.charging_info = ChargingPlanInfo()
@@ -160,6 +162,34 @@ class _Cloud:
             assert len(security_password_hash) == 32
         self.windows_sent.append(command)
         return RemoteCommandAcceptance("provider-command-windows")
+
+    async def async_send_front_defroster_command(
+        self,
+        command: object,
+        *,
+        security_password_hash: str | None = None,
+    ) -> RemoteCommandAcceptance:
+        if self.send_error is not None:
+            raise self.send_error
+        assert self.region != "cn"
+        assert security_password_hash is not None
+        assert len(security_password_hash) == 32
+        self.front_defroster_sent.append(command)
+        return RemoteCommandAcceptance("provider-command-defrost")
+
+    async def async_send_cabin_clean_command(
+        self,
+        command: object,
+        *,
+        security_password_hash: str | None = None,
+    ) -> RemoteCommandAcceptance:
+        if self.send_error is not None:
+            raise self.send_error
+        assert self.region != "cn"
+        assert security_password_hash is not None
+        assert len(security_password_hash) == 32
+        self.cabin_clean_sent.append(command)
+        return RemoteCommandAcceptance("provider-command-cabin-clean")
 
     async def async_send_vehicle_control_command(
         self,
@@ -746,9 +776,11 @@ async def test_overseas_write_lifecycle_matrix_resumes_every_family_without_rese
         await first.async_set_climate(_VIN, mode="cool"),
         await first.async_lock(_VIN, "lock"),
         await first.async_close_windows(_VIN),
+        await first.async_set_front_defroster(_VIN, enabled=True),
+        await first.async_start_cabin_clean(_VIN),
     )
     assert (
-        len(await store.async_get_command_journal(cloud_entry_data(credentials))) == 3
+        len(await store.async_get_command_journal(cloud_entry_data(credentials))) == 5
     )
 
     second_cloud = _Cloud()
@@ -757,6 +789,8 @@ async def test_overseas_write_lifecycle_matrix_resumes_every_family_without_rese
         ("provider-command-1", "0x04"),
         ("provider-command-lock", "0x05"),
         ("provider-command-windows", "0x08"),
+        ("provider-command-defrost", "0x0B"),
+        ("provider-command-cabin-clean", "0x11"),
     )
     second_cloud.poll_results = [
         (
@@ -784,6 +818,8 @@ async def test_overseas_write_lifecycle_matrix_resumes_every_family_without_rese
     assert second_cloud.sent == []
     assert second_cloud.lock_sent == []
     assert second_cloud.windows_sent == []
+    assert second_cloud.front_defroster_sent == []
+    assert second_cloud.cabin_clean_sent == []
 
     for item in accepted:
         assert (await second.async_get_command(str(item["id"])))["state"] == "completed"
@@ -791,6 +827,8 @@ async def test_overseas_write_lifecycle_matrix_resumes_every_family_without_rese
     assert second_cloud.sent == []
     assert second_cloud.lock_sent == []
     assert second_cloud.windows_sent == []
+    assert second_cloud.front_defroster_sent == []
+    assert second_cloud.cabin_clean_sent == []
     assert {
         entry.state
         for entry in await store.async_get_command_journal(

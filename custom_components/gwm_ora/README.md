@@ -45,6 +45,8 @@ Vehicle models and regions expose different values. Missing signals remain unava
 
 The optional **Scheduled charging** switch and `gwm_ora.set_charging_plan` and `gwm_ora.clear_charging_plan` actions require charging control to be enabled in the integration options.
 
+On supported overseas vehicles, I expose a **Front defroster** switch and a **Start air circulation** button when the matching status signals are present. Front defrost runs for 15 minutes unless it is stopped early. Air circulation runs the official app's fixed 60-second external-air cabin-clean cycle and cannot be stopped once started.
+
 ## Diagnostics
 
 Diagnostics redact known credentials, tokens, security PINs, vehicle identifiers, and locations. Review every diagnostic file before sharing it.

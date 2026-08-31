@@ -13,6 +13,7 @@ from typing import Any, cast
 from gwm_client import (
     DEFAULT_OPERATION_TIME_MINUTES,
     DEFAULT_TEMPERATURE_C,
+    CabinCleanCommand,
     ChargingPlanCommand,
     ChargingPlanItem,
     ChinaVehicleControlCommand,
@@ -20,6 +21,7 @@ from gwm_client import (
     ClimateMode,
     CloseWindowsCommand,
     DoorLockCommand,
+    FrontDefrosterCommand,
     GwmClientError,
     Region,
     VehicleIdentifier,
@@ -310,6 +312,43 @@ class GwmCommandApi:
             identifier, "Window close", acceptance.command_id
         )
 
+    async def async_set_front_defroster(
+        self,
+        vin: str,
+        *,
+        enabled: bool,
+    ) -> dict[str, object]:
+        """Validate, send, and journal one overseas front-defroster request."""
+
+        self._ensure_overseas_comfort_commands_available()
+        identifier = _vehicle_identifier(vin, command_name="Front defroster")
+        if type(enabled) is not bool:
+            raise GwmCommandError("Front defroster command requires an on or off state")
+        acceptance = await self._cloud.async_send_front_defroster_command(
+            FrontDefrosterCommand(identifier, enabled),
+            security_password_hash=_security_password_hash(self._security_pin),
+        )
+        return await self._record_acceptance(
+            identifier,
+            "Front defroster",
+            acceptance.command_id,
+        )
+
+    async def async_start_cabin_clean(self, vin: str) -> dict[str, object]:
+        """Validate, send, and journal the overseas 60-second air-circulation action."""
+
+        self._ensure_overseas_comfort_commands_available()
+        identifier = _vehicle_identifier(vin, command_name="Air circulation")
+        acceptance = await self._cloud.async_send_cabin_clean_command(
+            CabinCleanCommand(identifier),
+            security_password_hash=_security_password_hash(self._security_pin),
+        )
+        return await self._record_acceptance(
+            identifier,
+            "Air circulation",
+            acceptance.command_id,
+        )
+
     async def async_vehicle_control(
         self,
         vin: str,
@@ -535,6 +574,15 @@ class GwmCommandApi:
                 "These vehicle controls are available only for mainland China"
             )
 
+    def _ensure_overseas_comfort_commands_available(self) -> None:
+        """Require the overseas remote-command opt-in and security PIN."""
+
+        self._ensure_available()
+        if self._cloud.region == "cn":
+            raise GwmCommandForbidden(
+                "Front defroster and air circulation controls are not available for mainland China"
+            )
+
     def _now(self) -> datetime:
         value = self._clock()
         if (
@@ -744,6 +792,10 @@ def _expected_remote_type(command_name: str) -> str:
         return "0x05"
     if command_name == "Window close":
         return "0x08"
+    if command_name == "Front defroster":
+        return "0x0B"
+    if command_name == "Air circulation":
+        return "0x11"
     if command_name in _CHINA_VEHICLE_CONTROL_NAMES.values():
         return "china"
     raise GwmCommandError(

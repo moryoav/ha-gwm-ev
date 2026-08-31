@@ -32,6 +32,8 @@ _SAFE_OPERATION_ALIASES: Final = frozenset(
         "request",
         "request_verification",
         "send_command",
+        "send_cabin_clean_command",
+        "send_front_defroster_command",
         "set_charging_plan",
         "vehicle_basics",
         "verify_code",

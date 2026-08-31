@@ -27,6 +27,9 @@
       }
     },
     "button": {
+      "start_air_circulation": {
+        "default": "mdi:air-filter"
+      },
       "close_windows": {
         "default": "mdi:window-closed-variant"
       },
@@ -136,6 +139,9 @@
       }
     },
     "switch": {
+      "front_defroster": {
+        "default": "mdi:car-defrost-front"
+      },
       "charging_schedule": {
         "default": "mdi:calendar-clock"
       }

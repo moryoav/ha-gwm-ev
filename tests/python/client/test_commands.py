@@ -13,10 +13,12 @@ import pytest
 from gwm_client import (
     BEANTECH_CHINA_VEHICLE_CONTROL_ACTIONS,
     NAVINFO_CHINA_VEHICLE_CONTROL_ACTIONS,
+    CabinCleanCommand,
     ChinaVehicleControlCommand,
     ClimateCommand,
     CloseWindowsCommand,
     DoorLockCommand,
+    FrontDefrosterCommand,
     GwmApiError,
     GwmClient,
     GwmClientConfig,
@@ -283,6 +285,92 @@ async def test_regional_lock_and_close_window_contracts_are_exact(region: Region
         },
         **common,
     }
+    if case["security_check"]:
+        checks = [request for request in transport.requests if request.url.endswith("/userAuth/checkSecurityPassword")]
+        assert len(checks) == 3
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("region", list(Region))
+async def test_regional_front_defrost_and_cabin_clean_contracts_are_exact(
+    region: Region,
+) -> None:
+    fixture = _fixture()
+    case = fixture["regions"][region.value]
+    response_count = 6 if case["security_check"] else 3
+    transport = _RecordingTransport([_response() for _ in range(response_count)])
+    client = GwmClient(
+        GwmClientConfig(region),
+        GwmSession(
+            country=case["country"],
+            device_id=case["device_id"],
+            access_token="SYNTHETIC-COMMAND-TOKEN",
+            app_ssl_context=_context(region),
+        ),
+        transport=transport,
+        sequence_source=lambda: fixture["sequence_number"],
+    )
+    identifier = VehicleIdentifier(fixture["vin"])
+
+    started = await client.send_front_defroster_command(
+        FrontDefrosterCommand(identifier, True),
+        security_password_hash=fixture["security_password_hash"],
+    )
+    stopped = await client.send_front_defroster_command(
+        FrontDefrosterCommand(identifier, False),
+        security_password_hash=fixture["security_password_hash"],
+    )
+    cleaned = await client.send_cabin_clean_command(
+        CabinCleanCommand(identifier),
+        security_password_hash=fixture["security_password_hash"],
+    )
+
+    assert started.command_id == stopped.command_id == cleaned.command_id == fixture["sequence_number"]
+    sends = [request for request in transport.requests if request.url.endswith("/vehicle/T5/sendCmd")]
+    assert len(sends) == 3
+    common = {
+        "remoteType": "0",
+        "securityPassword": fixture["security_password_hash"],
+        "seqNo": fixture["sequence_number"],
+        "type": case["type"],
+        "vin": fixture["vin"],
+    }
+    assert _body(sends[0]) == {
+        "instructions": {
+            "0x0B": {
+                "defrost": {
+                    "defrostFront": 1,
+                    "operationTime": "900",
+                    "switchOrder": "1",
+                }
+            }
+        },
+        **common,
+    }
+    assert _body(sends[1]) == {
+        "instructions": {
+            "0x0B": {
+                "defrost": {
+                    "defrostFront": 0,
+                    "operationTime": "0",
+                    "switchOrder": "1",
+                }
+            }
+        },
+        **common,
+    }
+    assert _body(sends[2]) == {
+        "instructions": {
+            "0x11": {
+                "cabinClean": {
+                    "operationTime": "60",
+                    "switchOrder": "1",
+                }
+            }
+        },
+        **common,
+    }
+    assert all((request.headers.get("vin") == fixture["vin"]) is case["send_vin_header"] for request in sends)
     if case["security_check"]:
         checks = [request for request in transport.requests if request.url.endswith("/userAuth/checkSecurityPassword")]
         assert len(checks) == 3

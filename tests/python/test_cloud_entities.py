@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -12,6 +13,7 @@ pytest.importorskip("homeassistant")
 from homeassistant.core import HomeAssistant
 
 from custom_components.gwm_ora.button import (
+    GwmCabinCleanButton,
     GwmChinaRemoteButton,
     GwmCloseWindowsButton,
 )
@@ -25,7 +27,10 @@ from custom_components.gwm_ora.sensor import (
     GwmSensor,
     _sensor_descriptions_for_vehicle,
 )
-from custom_components.gwm_ora.switch import GwmChargingScheduleSwitch
+from custom_components.gwm_ora.switch import (
+    GwmChargingScheduleSwitch,
+    GwmFrontDefrosterSwitch,
+)
 
 
 def _vehicle(
@@ -38,6 +43,9 @@ def _vehicle(
     lock_window_commands: bool = False,
     china_vehicle_commands: bool = False,
     charging_control: bool = False,
+    front_defroster_commands: bool = False,
+    cabin_clean_commands: bool = False,
+    front_defroster: bool | None = None,
 ) -> dict[str, Any]:
     return {
         "vin": vin,
@@ -52,8 +60,14 @@ def _vehicle(
             "lock_window_commands": lock_window_commands,
             "china_vehicle_commands": china_vehicle_commands,
             "charging_control": charging_control,
+            "front_defroster_commands": front_defroster_commands,
+            "cabin_clean_commands": cabin_clean_commands,
         },
-        "values": {"soc": soc, "charge_soc": charge_soc},
+        "values": {
+            "soc": soc,
+            "charge_soc": charge_soc,
+            "front_defroster": front_defroster,
+        },
         "timestamps": {},
         "climate": {},
         "raw_items": {},
@@ -348,3 +362,56 @@ async def test_task20_capability_exposes_existing_charging_switch_only_when_enab
 
     assert GwmChargingScheduleSwitch(api, coordinator, "SYNTHETIC-A").available
     assert not GwmChargingScheduleSwitch(api, coordinator, "SYNTHETIC-B").available
+
+
+@pytest.mark.asyncio
+async def test_overseas_front_defroster_switch_and_air_circulation_button_are_capability_gated() -> None:
+    api = SimpleNamespace(
+        async_set_front_defroster=AsyncMock(
+            side_effect=(
+                {"id": "front-on", "state": "in_progress"},
+                {"id": "front-off", "state": "in_progress"},
+            )
+        ),
+        async_start_cabin_clean=AsyncMock(
+            return_value={"id": "cabin-clean", "state": "in_progress"}
+        ),
+    )
+    coordinator = GwmDataUpdateCoordinator(
+        HomeAssistant("synthetic-config"),
+        api,
+        cloud_client=SimpleNamespace(),  # type: ignore[arg-type]
+    )
+    coordinator.async_set_updated_data(
+        {
+            "region": "eu",
+            "vehicles": [
+                _vehicle(
+                    "SYNTHETIC-A",
+                    80,
+                    front_defroster_commands=True,
+                    cabin_clean_commands=True,
+                    front_defroster=False,
+                ),
+                _vehicle("SYNTHETIC-B", 70),
+            ],
+        }
+    )
+    coordinator.async_track_command = Mock()  # type: ignore[method-assign]
+
+    defroster = GwmFrontDefrosterSwitch(api, coordinator, "SYNTHETIC-A")
+    circulation = GwmCabinCleanButton(api, coordinator, "SYNTHETIC-A")
+    assert defroster.available
+    assert defroster.is_on is False
+    assert circulation.available
+    assert not GwmFrontDefrosterSwitch(api, coordinator, "SYNTHETIC-B").available
+    assert not GwmCabinCleanButton(api, coordinator, "SYNTHETIC-B").available
+
+    await defroster.async_turn_on()
+    await defroster.async_turn_off()
+    await circulation.async_press()
+
+    assert api.async_set_front_defroster.await_args_list[0].kwargs == {"enabled": True}
+    assert api.async_set_front_defroster.await_args_list[1].kwargs == {"enabled": False}
+    api.async_start_cabin_clean.assert_awaited_once_with("SYNTHETIC-A")
+    assert coordinator.async_track_command.call_count == 3

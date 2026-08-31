@@ -22,6 +22,7 @@ from gwm_client import (
     AnzAuthenticationMethod,
     AnzAuthState,
     AnzCredentials,
+    CabinCleanCommand,
     ChargingPlanCommand,
     ChargingPlanInfo,
     ChinaAuthenticated,
@@ -39,6 +40,7 @@ from gwm_client import (
     EuAuthenticated,
     EuAuthState,
     EuCredentials,
+    FrontDefrosterCommand,
     GwmApiError,
     GwmAuthenticationError,
     GwmClient,
@@ -153,6 +155,20 @@ class _OverseasReadClient(Protocol):
     async def send_close_windows_command(
         self,
         command: CloseWindowsCommand,
+        *,
+        security_password_hash: str,
+    ) -> RemoteCommandAcceptance: ...
+
+    async def send_front_defroster_command(
+        self,
+        command: FrontDefrosterCommand,
+        *,
+        security_password_hash: str,
+    ) -> RemoteCommandAcceptance: ...
+
+    async def send_cabin_clean_command(
+        self,
+        command: CabinCleanCommand,
         *,
         security_password_hash: str,
     ) -> RemoteCommandAcceptance: ...
@@ -541,6 +557,16 @@ class GwmCloudClient:
                 )
                 capabilities["charging_control"] = charging_control_available
                 capabilities["china_vehicle_commands"] = self._lock_window_commands_enabled and china_supported
+                raw_items = snapshot.get("raw_items")
+                overseas_status_codes = (
+                    raw_items if self.region != REGION_CHINA and isinstance(raw_items, dict) else {}
+                )
+                capabilities["front_defroster_commands"] = (
+                    self._climate_commands_enabled and "2222001" in overseas_status_codes
+                )
+                capabilities["cabin_clean_commands"] = (
+                    self._climate_commands_enabled and "2078020" in overseas_status_codes
+                )
                 snapshot["capabilities"] = capabilities
                 snapshots.append(snapshot)
         except (TypeError, ValueError):
@@ -687,6 +713,44 @@ class GwmCloudClient:
             raise GwmConfigurationError(operation="send_close_windows_command")
         return await self._async_with_session_renewal(
             lambda: cast(_OverseasReadClient, self._client).send_close_windows_command(
+                command,
+                security_password_hash=security_password_hash,
+            )
+        )
+
+    async def async_send_front_defroster_command(
+        self,
+        command: FrontDefrosterCommand,
+        *,
+        security_password_hash: str | None = None,
+    ) -> RemoteCommandAcceptance:
+        """Send one overseas front-defroster operation."""
+
+        if self.region == REGION_CHINA:
+            raise GwmRoutePolicyError(operation="send_front_defroster_command")
+        if not isinstance(security_password_hash, str):
+            raise GwmConfigurationError(operation="send_front_defroster_command")
+        return await self._async_with_session_renewal(
+            lambda: cast(_OverseasReadClient, self._client).send_front_defroster_command(
+                command,
+                security_password_hash=security_password_hash,
+            )
+        )
+
+    async def async_send_cabin_clean_command(
+        self,
+        command: CabinCleanCommand,
+        *,
+        security_password_hash: str | None = None,
+    ) -> RemoteCommandAcceptance:
+        """Send one overseas fixed-duration cabin-clean operation."""
+
+        if self.region == REGION_CHINA:
+            raise GwmRoutePolicyError(operation="send_cabin_clean_command")
+        if not isinstance(security_password_hash, str):
+            raise GwmConfigurationError(operation="send_cabin_clean_command")
+        return await self._async_with_session_renewal(
+            lambda: cast(_OverseasReadClient, self._client).send_cabin_clean_command(
                 command,
                 security_password_hash=security_password_hash,
             )

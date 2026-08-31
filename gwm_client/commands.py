@@ -105,6 +105,29 @@ class CloseWindowsCommand:
 
 
 @dataclass(frozen=True, slots=True, repr=False)
+class FrontDefrosterCommand:
+    """One front-defroster start or stop operation."""
+
+    identifier: VehicleIdentifier = field(repr=False)
+    enabled: bool
+
+    def __post_init__(self) -> None:
+        if type(self.identifier) is not VehicleIdentifier or type(self.enabled) is not bool:
+            raise ValueError("front_defroster_command_invalid")
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class CabinCleanCommand:
+    """One fixed-duration external-air cabin-clean operation."""
+
+    identifier: VehicleIdentifier = field(repr=False)
+
+    def __post_init__(self) -> None:
+        if type(self.identifier) is not VehicleIdentifier:
+            raise ValueError("cabin_clean_command_invalid")
+
+
+@dataclass(frozen=True, slots=True, repr=False)
 class ChinaVehicleControlCommand:
     """One platform-filtered mainland-China vehicle-control operation."""
 
@@ -178,7 +201,13 @@ class RemoteCommandResult:
 
 
 def validate_overseas_command_inputs(
-    command: ClimateCommand | DoorLockCommand | CloseWindowsCommand,
+    command: (
+        CabinCleanCommand
+        | ClimateCommand
+        | CloseWindowsCommand
+        | DoorLockCommand
+        | FrontDefrosterCommand
+    ),
     *,
     security_password_hash: str,
     sequence_number: str,
@@ -187,7 +216,14 @@ def validate_overseas_command_inputs(
     """Reject malformed or region-incompatible command material before I/O."""
 
     if (
-        type(command) not in {ClimateCommand, DoorLockCommand, CloseWindowsCommand}
+        type(command)
+        not in {
+            CabinCleanCommand,
+            ClimateCommand,
+            CloseWindowsCommand,
+            DoorLockCommand,
+            FrontDefrosterCommand,
+        }
         or type(region) is not Region
         or region not in {Region.EU, Region.ANZ, Region.RUSSIA}
         or (type(command) is ClimateCommand and command.mode == "heat")
@@ -320,12 +356,14 @@ def _successful(result: RemoteCommandResultItem) -> bool:
 
 __all__ = [
     "BEANTECH_CHINA_VEHICLE_CONTROL_ACTIONS",
+    "CabinCleanCommand",
     "ChinaVehicleControlAction",
     "ChinaVehicleControlCommand",
     "CloseWindowsCommand",
     "ClimateCommand",
     "ClimateMode",
     "DoorLockCommand",
+    "FrontDefrosterCommand",
     "NAVINFO_CHINA_VEHICLE_CONTROL_ACTIONS",
     "RemoteCommandAcceptance",
     "RemoteCommandResult",

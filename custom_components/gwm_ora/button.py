@@ -62,7 +62,12 @@ async def async_setup_entry(
                 entry.runtime_data.api,
                 entry.runtime_data.coordinator,
                 vin,
-            )
+            ),
+            GwmCabinCleanButton(
+                entry.runtime_data.api,
+                entry.runtime_data.coordinator,
+                vin,
+            ),
         ]
         if entry.runtime_data.coordinator.region == "cn":
             entities.extend(
@@ -102,6 +107,29 @@ class GwmCloseWindowsButton(GwmEntity, ButtonEntity):
     async def async_press(self) -> None:
         """Close windows."""
         command = await async_call_gwm_api(self._api.async_close_windows(self.vin))
+        self.coordinator.async_track_command(command)
+
+
+class GwmCabinCleanButton(GwmEntity, ButtonEntity):
+    """Run the overseas app's 60-second external-air circulation action."""
+
+    _attr_translation_key = "start_air_circulation"
+
+    def __init__(self, api, coordinator, vin: str) -> None:
+        super().__init__(coordinator, vin)
+        self._api = api
+        self._attr_unique_id = f"{vin}_cabin_clean"
+
+    @property
+    def available(self) -> bool:
+        """Return whether this vehicle reports the air-circulation feature."""
+        return super().available and self.cabin_clean_commands_available
+
+    async def async_press(self) -> None:
+        """Start the fixed 60-second air-circulation action."""
+        command = await async_call_gwm_api(
+            self._api.async_start_cabin_clean(self.vin)
+        )
         self.coordinator.async_track_command(command)
 
 

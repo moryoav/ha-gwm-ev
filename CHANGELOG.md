@@ -6,6 +6,13 @@ This project follows semantic versioning. HACS uses the latest GitHub release ta
 
 ## [Unreleased]
 
+## [0.16.16] - 2026-08-31
+
+### Added
+
+- I added a capability-gated **Front defroster** switch for overseas vehicles that report front-defroster status. It uses the official app's 15-minute start request, supports an explicit stop request, and follows the existing restart-safe command journal and result polling.
+- I added a capability-gated **Start air circulation** button for overseas vehicles that report the matching status. It runs the official app's fixed 60-second external-air cabin-clean action and follows the same command journal and result polling.
+
 ## [0.16.15] - 2026-08-31
 
 ### Fixed

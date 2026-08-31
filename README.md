@@ -124,6 +124,8 @@ Depending on the vehicle and region, the integration can create:
 - A number entity for the next climate run time.
 - A lock entity for door lock and unlock.
 - A button for closing all windows.
+- I expose a front-defroster switch on supported overseas vehicles.
+- I expose a button that starts the supported vehicle's 60-second external-air circulation cycle.
 - A scheduled charging switch.
 
 Missing vehicle signals remain unavailable without interrupting the other entities. Model-specific diagnostic entities are disabled by default where appropriate.
@@ -133,6 +135,10 @@ Missing vehicle signals remain unavailable without interrupting the other entiti
 Remote commands are slower than ordinary Home Assistant operations because the request travels through the GWM cloud and then waits for the vehicle result. The **Remote command status** sensor shows the current progress.
 
 Set **Climate run time** and the target temperature before starting A/C. Changing either setting only saves it for the next start. It does not start the climate system, and neither setting can be changed after A/C has started.
+
+On supported Europe, Australia and New Zealand, and Russia vehicles, the **Front defroster** switch starts the official app's 15-minute defrost cycle and can stop it early. The **Start air circulation** button starts the official app's 60-second external-air cabin-clean cycle. GWM does not provide a stop action for that cycle. I expose these controls only when the vehicle reports their matching status signals and remote commands are enabled.
+
+These two controls are based on the official app protocol and have offline contract coverage, but they still need live confirmation on each supported model. Test them manually while the vehicle is parked before using them in an automation.
 
 Remote operations can affect a real vehicle. Test them manually before using them in automations.
 

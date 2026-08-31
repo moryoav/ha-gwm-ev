@@ -14,7 +14,7 @@ from gwm_client import GwmClientError
 
 from . import GwmConfigEntry
 from .const import DEFAULT_CHARGE_WINDOW_HOURS
-from .entity import GwmEntity, async_call_gwm_api, setup_vehicle_entities
+from .entity import GwmEntity, async_call_gwm_api, setup_vehicle_entities, vehicle_value
 from .errors import GwmCommandError
 
 PARALLEL_UPDATES = 0
@@ -43,8 +43,47 @@ async def async_setup_entry(
             GwmChargingScheduleSwitch(
                 entry.runtime_data.api, entry.runtime_data.coordinator, vehicle["vin"]
             ),
+            GwmFrontDefrosterSwitch(
+                entry.runtime_data.api, entry.runtime_data.coordinator, vehicle["vin"]
+            ),
         ),
     )
+
+
+class GwmFrontDefrosterSwitch(GwmEntity, SwitchEntity):
+    """Start or stop the overseas front defroster."""
+
+    _attr_translation_key = "front_defroster"
+
+    def __init__(self, api, coordinator, vin: str) -> None:
+        super().__init__(coordinator, vin)
+        self._api = api
+        self._attr_unique_id = f"{vin}_front_defroster_control"
+
+    @property
+    def available(self) -> bool:
+        """Return whether this vehicle reports and supports front defrost."""
+        return super().available and self.front_defroster_commands_available
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return the polled front-defroster state."""
+        value = vehicle_value(self.vehicle, "front_defroster")
+        return value if isinstance(value, bool) else None
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        """Start front defrost for the official app's 15-minute duration."""
+        command = await async_call_gwm_api(
+            self._api.async_set_front_defroster(self.vin, enabled=True)
+        )
+        self.coordinator.async_track_command(command)
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        """Stop front defrost."""
+        command = await async_call_gwm_api(
+            self._api.async_set_front_defroster(self.vin, enabled=False)
+        )
+        self.coordinator.async_track_command(command)
 
 
 class GwmChargingScheduleSwitch(GwmEntity, SwitchEntity):

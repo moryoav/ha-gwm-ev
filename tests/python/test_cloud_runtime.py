@@ -30,6 +30,7 @@ from gwm_client import (
     AnzAuthenticated,
     AnzAuthState,
     AnzCredentials,
+    CabinCleanCommand,
     ChargingPlanCommand,
     ChargingPlanInfo,
     ChinaAuthenticated,
@@ -47,6 +48,7 @@ from gwm_client import (
     EuAuthenticated,
     EuAuthState,
     EuCredentials,
+    FrontDefrosterCommand,
     GwmApiError,
     GwmAuthenticationError,
     GwmClient,
@@ -113,7 +115,11 @@ class _ReadClient:
         self.statuses = {
             "SYNTHETIC-VEHICLE-A": CloudVehicleStatus(
                 device_id="SYNTHETIC-SERIAL-A",
-                items=(CloudStatusItem("2013021", 80, "%"),),
+                items=(
+                    CloudStatusItem("2013021", 80, "%"),
+                    CloudStatusItem("2078020", 0),
+                    CloudStatusItem("2222001", 0),
+                ),
             ),
             "SYNTHETIC-VEHICLE-B": CloudVehicleStatus(
                 device_id="SYNTHETIC-SERIAL-B",
@@ -129,6 +135,8 @@ class _ReadClient:
         }
         self.calls: list[tuple[str, str | None]] = []
         self.charging_commands: list[ChargingPlanCommand] = []
+        self.front_defroster_commands: list[FrontDefrosterCommand] = []
+        self.cabin_clean_commands: list[CabinCleanCommand] = []
 
     async def acquire_vehicles(self) -> tuple[CloudVehicle, ...]:
         self.calls.append(("vehicles", None))
@@ -154,6 +162,26 @@ class _ReadClient:
 
     async def set_charging_plan(self, command: ChargingPlanCommand) -> None:
         self.charging_commands.append(command)
+
+    async def send_front_defroster_command(
+        self,
+        command: FrontDefrosterCommand,
+        *,
+        security_password_hash: str,
+    ) -> RemoteCommandAcceptance:
+        assert len(security_password_hash) == 32
+        self.front_defroster_commands.append(command)
+        return RemoteCommandAcceptance("provider-command-defrost")
+
+    async def send_cabin_clean_command(
+        self,
+        command: CabinCleanCommand,
+        *,
+        security_password_hash: str,
+    ) -> RemoteCommandAcceptance:
+        assert len(security_password_hash) == 32
+        self.cabin_clean_commands.append(command)
+        return RemoteCommandAcceptance("provider-command-cabin-clean")
 
     async def aclose(self) -> None:
         self.closed = True
@@ -244,6 +272,40 @@ async def test_charging_capability_and_typed_delegation_follow_independent_opt_i
     command = ChargingPlanCommand(identifier, False)
     await runtime.async_set_charging_plan(command)
     assert client.charging_commands == [command]
+
+
+@pytest.mark.asyncio
+async def test_overseas_comfort_controls_require_reported_status_and_delegate_typed_commands() -> None:
+    client = _ReadClient()
+    runtime = GwmCloudClient(
+        "aus",
+        client,
+        clock=lambda: _REFRESHED_AT,
+        climate_commands_enabled=True,
+    )
+
+    result = await runtime.async_get_vehicle_data()
+    vehicles = result["vehicles"]
+    assert isinstance(vehicles, list)
+    assert vehicles[0]["capabilities"]["front_defroster_commands"] is True
+    assert vehicles[0]["capabilities"]["cabin_clean_commands"] is True
+    assert vehicles[1]["capabilities"]["front_defroster_commands"] is False
+    assert vehicles[1]["capabilities"]["cabin_clean_commands"] is False
+
+    identifier = VehicleIdentifier("SYNTHETIC-VEHICLE-A")
+    defrost = FrontDefrosterCommand(identifier, True)
+    cabin_clean = CabinCleanCommand(identifier)
+    await runtime.async_send_front_defroster_command(
+        defrost,
+        security_password_hash="0123456789abcdef0123456789abcdef",
+    )
+    await runtime.async_send_cabin_clean_command(
+        cabin_clean,
+        security_password_hash="0123456789abcdef0123456789abcdef",
+    )
+
+    assert client.front_defroster_commands == [defrost]
+    assert client.cabin_clean_commands == [cabin_clean]
 
 
 @pytest.mark.asyncio
@@ -815,6 +877,8 @@ async def test_china_runtime_handoff_maps_platform_capabilities_and_no_pin_write
         "climate_commands": True,
         "lock_window_commands": True,
         "china_vehicle_commands": True,
+        "front_defroster_commands": False,
+        "cabin_clean_commands": False,
     }
     assert snapshots[1]["capabilities"] == {
         "remote_commands": True,
@@ -822,6 +886,8 @@ async def test_china_runtime_handoff_maps_platform_capabilities_and_no_pin_write
         "climate_commands": False,
         "lock_window_commands": True,
         "china_vehicle_commands": True,
+        "front_defroster_commands": False,
+        "cabin_clean_commands": False,
     }
 
     context = await runtime.async_get_climate_context(

@@ -36,9 +36,11 @@ from .charging import (
     parse_charging_plan_info,
 )
 from .commands import (
+    CabinCleanCommand,
     ClimateCommand,
     CloseWindowsCommand,
     DoorLockCommand,
+    FrontDefrosterCommand,
     RemoteCommandAcceptance,
     RemoteCommandResultItem,
     parse_remote_command_results,
@@ -1024,11 +1026,70 @@ class GwmClient:
             timeout=timeout,
         )
 
+    async def send_front_defroster_command(
+        self,
+        command: FrontDefrosterCommand,
+        *,
+        security_password_hash: str,
+        timeout: float | None = None,
+    ) -> RemoteCommandAcceptance:
+        """Start or stop the overseas front defroster."""
+
+        if type(command) is not FrontDefrosterCommand:
+            raise GwmConfigurationError(operation="send_front_defroster_command")
+        enabled = command.enabled
+        return await self._send_overseas_remote_command(
+            operation="send_front_defroster_command",
+            command=command,
+            security_password_hash=security_password_hash,
+            instructions={
+                "0x0B": {
+                    "defrost": {
+                        "defrostFront": 1 if enabled else 0,
+                        "operationTime": "900" if enabled else "0",
+                        "switchOrder": "1",
+                    }
+                }
+            },
+            timeout=timeout,
+        )
+
+    async def send_cabin_clean_command(
+        self,
+        command: CabinCleanCommand,
+        *,
+        security_password_hash: str,
+        timeout: float | None = None,
+    ) -> RemoteCommandAcceptance:
+        """Start the overseas app's fixed 60-second cabin-clean action."""
+
+        if type(command) is not CabinCleanCommand:
+            raise GwmConfigurationError(operation="send_cabin_clean_command")
+        return await self._send_overseas_remote_command(
+            operation="send_cabin_clean_command",
+            command=command,
+            security_password_hash=security_password_hash,
+            instructions={
+                "0x11": {
+                    "cabinClean": {
+                        "operationTime": "60",
+                        "switchOrder": "1",
+                    }
+                }
+            },
+            timeout=timeout,
+        )
+
     async def _send_overseas_remote_command(
         self,
         *,
         operation: str,
-        command: DoorLockCommand | CloseWindowsCommand,
+        command: (
+            CabinCleanCommand
+            | CloseWindowsCommand
+            | DoorLockCommand
+            | FrontDefrosterCommand
+        ),
         security_password_hash: str,
         instructions: Mapping[str, object],
         timeout: float | None,

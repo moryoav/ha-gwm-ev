@@ -75,6 +75,22 @@ class GwmEntity(CoordinatorEntity[GwmDataUpdateCoordinator]):
         return capabilities.get("lock_window_commands") is True
 
     @property
+    def front_defroster_commands_available(self) -> bool:
+        """Return the capability for the overseas front-defroster control."""
+
+        vehicle = self.vehicle or {}
+        capabilities = vehicle.get("capabilities") or {}
+        return capabilities.get("front_defroster_commands") is True
+
+    @property
+    def cabin_clean_commands_available(self) -> bool:
+        """Return the capability for the overseas air-circulation action."""
+
+        vehicle = self.vehicle or {}
+        capabilities = vehicle.get("capabilities") or {}
+        return capabilities.get("cabin_clean_commands") is True
+
+    @property
     def china_vehicle_commands_available(self) -> bool:
         """Return the extended-China capability."""
 
