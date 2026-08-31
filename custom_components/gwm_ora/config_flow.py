@@ -209,6 +209,7 @@ class GwmConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._cloud_region: str | None = None
         self._cloud_credentials: GwmCloudCredentials | None = None
         self._auth_state: CloudAuthState | None = None
+        self._anz_session_reclaim_confirmed = False
         self._initialization_failures: tuple[str, ...] = ()
 
     @staticmethod
@@ -236,6 +237,7 @@ class GwmConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             )
         self._cloud_region = region
         self._auth_state = None
+        self._anz_session_reclaim_confirmed = False
         return await self.async_step_account()
 
     async def async_step_account(
@@ -254,6 +256,7 @@ class GwmConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     user_input,
                 )
                 self._auth_state = None
+                self._anz_session_reclaim_confirmed = False
                 early_result = await self._async_restore_cloud_state()
             except (TypeError, ValueError):
                 errors["base"] = "invalid_account"
@@ -283,7 +286,10 @@ class GwmConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
         if user_input is not None:
             code = user_input.get(CONF_VERIFICATION_CODE)
-            result, error = await self._async_authenticate(verification_code=code)
+            result, error = await self._async_authenticate(
+                verification_code=code,
+                allow_session_reclaim=self._anz_session_reclaim_confirmed,
+            )
             if error:
                 errors[CONF_VERIFICATION_CODE if error == "invalid_verification_code" else "base"] = error
             elif result is not None:
@@ -303,8 +309,10 @@ class GwmConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if user_input.get(CONF_ALLOW_SESSION_RECLAIM) is not True:
                 errors[CONF_ALLOW_SESSION_RECLAIM] = "session_reclaim_not_confirmed"
             else:
+                self._anz_session_reclaim_confirmed = True
                 result, error = await self._async_authenticate(allow_session_reclaim=True)
                 if error:
+                    self._anz_session_reclaim_confirmed = False
                     errors["base"] = error
                 elif result is not None:
                     return await self._async_route_authentication(result)
@@ -341,6 +349,7 @@ class GwmConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._cloud_mode = "reauth"
         self._cloud_region = str(entry_data.get(CONF_REGION, ""))
         self._auth_state = None
+        self._anz_session_reclaim_confirmed = False
         return await self.async_step_reauth_confirm()
 
     async def async_step_reauth_confirm(
@@ -368,6 +377,7 @@ class GwmConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     device_id=generate_device_id(),
                 )
                 self._auth_state = None
+                self._anz_session_reclaim_confirmed = False
                 early_result = await self._async_restore_cloud_state()
             except (TypeError, ValueError):
                 errors["base"] = "invalid_account"
@@ -416,6 +426,7 @@ class GwmConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             )
         self._cloud_region = region
         self._auth_state = None
+        self._anz_session_reclaim_confirmed = False
         return await self.async_step_reconfigure_account()
 
     async def async_step_reconfigure_account(
@@ -440,6 +451,7 @@ class GwmConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     user_input,
                 )
                 self._auth_state = None
+                self._anz_session_reclaim_confirmed = False
                 early_result = await self._async_restore_cloud_state()
             except (TypeError, ValueError):
                 errors["base"] = "invalid_account"
@@ -526,6 +538,7 @@ class GwmConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if isinstance(result, AnzSessionReclaimRequired):
             await self._async_persist_auth_state(result.state)
             self._auth_state = result.state
+            self._anz_session_reclaim_confirmed = False
             return self.async_show_form(
                 step_id="session_reclaim",
                 data_schema=vol.Schema(
@@ -613,6 +626,7 @@ class GwmConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         except GwmConfigurationError:
             return self.async_abort(reason="invalid_flow_state")
         self._auth_state = None
+        self._anz_session_reclaim_confirmed = False
 
         if self._cloud_mode == "user":
             await self.async_set_unique_id(unique_id)

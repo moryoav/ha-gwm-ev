@@ -6,6 +6,12 @@ This project follows semantic versioning. HACS uses the latest GitHub release ta
 
 ## [Unreleased]
 
+## [0.16.5] - 2026-08-31
+
+### Fixed
+
+- I preserve explicit Australia/New Zealand single-session consent while continuing through e-mail verification, preventing setup from returning to the consent form without submitting the code.
+
 ## [0.16.4] - 2026-08-30
 
 ### Fixed

@@ -39,6 +39,7 @@ from gwm_client import (
     AnzAuthState,
     AnzCredentials,
     AnzSessionReclaimRequired,
+    AnzVerificationRequired,
     ChinaAuthenticated,
     ChinaAuthState,
     ChinaCredentials,
@@ -354,6 +355,60 @@ async def test_anz_reclaim_requires_explicit_unchecked_consent(
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert authenticator.calls == [False, True]
     assert consume_cloud_bootstrap(flow.hass, flow.context["unique_id"]) is not None
+
+
+@pytest.mark.asyncio
+async def test_anz_verification_preserves_explicit_session_reclaim_consent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Authenticator:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, Any]] = []
+
+        async def async_authenticate(
+            self,
+            credentials: config_flow.GwmCloudCredentials,
+            **kwargs: Any,
+        ) -> object:
+            self.calls.append(kwargs)
+            regional = credentials.client_credentials()
+            assert isinstance(regional, AnzCredentials)
+            state = replace(
+                AnzAuthState.for_credentials(regional),
+                session_reclaim_required=True,
+            )
+            if not kwargs["allow_session_reclaim"]:
+                return AnzSessionReclaimRequired(state)
+            if kwargs["verification_code"] is None:
+                return AnzVerificationRequired(state, code_requested=True)
+            return _authenticated(credentials)
+
+    authenticator = Authenticator()
+    flow = _prepare_user_flow(monkeypatch, authenticator)
+    await flow.async_step_user({CONF_REGION: "aus"})
+    reclaim = await flow.async_step_account(
+        {
+            CONF_COUNTRY: "AU",
+            CONF_ACCOUNT: "account@example.invalid",
+            CONF_PASSWORD: "password",
+        }
+    )
+    assert reclaim["step_id"] == "session_reclaim"
+
+    verification = await flow.async_step_session_reclaim(
+        {CONF_ALLOW_SESSION_RECLAIM: True}
+    )
+    assert verification["step_id"] == "verification"
+
+    result = await flow.async_step_verification({CONF_VERIFICATION_CODE: "123456"})
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert [call["allow_session_reclaim"] for call in authenticator.calls] == [
+        False,
+        True,
+        True,
+    ]
+    assert authenticator.calls[-1]["verification_code"] == "123456"
 
 
 @pytest.mark.asyncio
