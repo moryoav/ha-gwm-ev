@@ -30,6 +30,7 @@ _SYNTHETIC_NUMERIC_IDENTIFIER_SENTINELS = frozenset(
         9_007_199_254_740_995,
     }
 )
+_SYNTHETIC_PASSWORD_SENTINELS = frozenset({"SYNTHETICPASSWORD"})
 
 
 def test_client_package_has_no_home_assistant_imports() -> None:
@@ -162,7 +163,10 @@ def _assert_sensitive_fixture_values_are_synthetic(value: object) -> None:
                     and child in _SYNTHETIC_NUMERIC_IDENTIFIER_SENTINELS
                 )
             if normalized_key == "password":
-                assert isinstance(child, str) and child.startswith("SYNTHETIC-")
+                assert isinstance(child, str) and (
+                    child.startswith("SYNTHETIC-")
+                    or child in _SYNTHETIC_PASSWORD_SENTINELS
+                )
             if normalized_key in {"account", "email"}:
                 assert isinstance(child, str) and child.startswith("SYNTHETIC-")
             if normalized_key in {"smscode", "verificationcode", "verifycode"} and not isinstance(

@@ -41,7 +41,7 @@
       "signing_prefix": "bt-auth-",
       "tls_mode": "default",
       "access_token_header": false,
-      "body": "{\"account\":\"SYNTHETIC-owner+tag@example.invalid\",\"accountType\":\"2\",\"countryCode\":\"+61\",\"agreement\":[1,2],\"password\":\"SYNTHETIC-PASSWORD\",\"deviceId\":\"0123456789abcdef0123456789abcdef\",\"appType\":\"0\",\"pushToken\":null,\"country\":\"AU\"}"
+      "body": "{\"account\":\"SYNTHETIC-owner+tag@example.invalid\",\"accountType\":\"2\",\"countryCode\":\"+61\",\"agreement\":[1,2],\"password\":\"SYNTHETICPASSWORD\",\"deviceId\":\"0123456789abcdef0123456789abcdef\",\"appType\":\"0\",\"pushToken\":null,\"country\":\"AU\"}"
     },
     "verified_login": {
       "method": "POST",
@@ -50,7 +50,7 @@
       "signing_prefix": "bt-auth-",
       "tls_mode": "default",
       "access_token_header": false,
-      "body": "{\"account\":\"SYNTHETIC-owner+tag@example.invalid\",\"accountType\":\"2\",\"countryCode\":\"+61\",\"agreement\":[1,2],\"password\":\"SYNTHETIC-PASSWORD\",\"deviceId\":\"0123456789abcdef0123456789abcdef\",\"appType\":\"0\",\"pushToken\":null,\"country\":\"AU\",\"verifyCode\":\"SYNTHETIC-246810\",\"validCodeMode\":\"1\"}"
+      "body": "{\"account\":\"SYNTHETIC-owner+tag@example.invalid\",\"accountType\":\"2\",\"countryCode\":\"+61\",\"agreement\":[1,2],\"password\":\"SYNTHETICPASSWORD\",\"deviceId\":\"0123456789abcdef0123456789abcdef\",\"appType\":\"0\",\"pushToken\":null,\"country\":\"AU\",\"verifyCode\":\"SYNTHETIC-246810\",\"validCodeMode\":\"1\"}"
     },
     "request_verification": {
       "method": "POST",

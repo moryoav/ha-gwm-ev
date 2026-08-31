@@ -249,6 +249,29 @@ def test_current_credentials_match_app_account_space_normalization() -> None:
     assert credentials.account == "synthetic+owner@example.invalid"
 
 
+def test_current_credentials_match_app_password_input_formatters() -> None:
+    credentials = AnzCredentials(
+        "synthetic@example.invalid",
+        " S!YN-T_HETIC.password " + ("x" * 50),
+        "AU",
+        "0123456789abcdef0123456789abcdef",
+        authentication_method=AnzAuthenticationMethod.CURRENT,
+    )
+
+    assert credentials.password == ("SYNTHETICpassword" + ("x" * 50))[:40]
+
+
+def test_current_credentials_reject_password_removed_entirely_by_app_formatter() -> None:
+    with pytest.raises(ValueError, match="^credentials_invalid$"):
+        AnzCredentials(
+            "synthetic@example.invalid",
+            " !-_ ",
+            "AU",
+            "0123456789abcdef0123456789abcdef",
+            authentication_method=AnzAuthenticationMethod.CURRENT,
+        )
+
+
 def test_current_account_type_supports_email_and_phone_identifiers() -> None:
     assert anz_auth._current_account_type("synthetic@example.invalid") == "2"
     assert anz_auth._current_account_type("0412345678") == "1"

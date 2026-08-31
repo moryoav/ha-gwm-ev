@@ -6,6 +6,12 @@ This project follows semantic versioning. HACS uses the latest GitHub release ta
 
 ## [Unreleased]
 
+## [0.16.10] - 2026-08-31
+
+### Fixed
+
+- I matched the current GWM ANZ app's password input behavior before login. Current-app authentication now removes characters that the official app silently filters out and applies its 40-character limit, while the legacy ANZ method remains unchanged.
+
 ## [0.16.9] - 2026-08-31
 
 ### Fixed

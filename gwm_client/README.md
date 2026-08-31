@@ -4,7 +4,7 @@ I use this internal alpha package as the Home Assistant independent protocol bou
 
 The package requires Python 3.13 or newer plus `aiohttp`, `cryptography`, and `yarl`. It does not import Home Assistant. Home Assistant owns the client session and lifecycle when the integration uses it.
 
-The Australia and New Zealand strategy keeps the legacy v1 login contract and the current GWM ANZ app v2 password-login contract separate. Callers must choose one method explicitly. The client never sends an automatic password fallback request.
+The Australia and New Zealand strategy keeps the legacy v1 login contract and the current GWM ANZ app v2 password-login contract separate. Callers must choose one method explicitly. The client never sends an automatic password fallback request. The current method applies the same password input filtering and 40-character limit as the signed GWM ANZ 1.0.6 app before it creates a login request.
 
 Version `0.1.0` is installed by the custom integration from the same immutable repository release tag. I have not published this package through a public package index.
 

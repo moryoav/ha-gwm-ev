@@ -45,8 +45,10 @@ from .signing import SignedRequest, SigningProfile, sign_request
 _ACCOUNT_BINDING = re.compile(r"[0-9a-f]{64}")
 _DEVICE_ID = re.compile(r"[0-9a-f]{32}")
 _SIGNATURE = re.compile(r"[0-9a-f]{64}")
+_CURRENT_PASSWORD_ALLOWED = re.compile(r"[A-Za-z0-9\s]")
 _MAX_ACCOUNT_BYTES = 4 * 1024
 _MAX_PASSWORD_BYTES = 64 * 1024
+_CURRENT_PASSWORD_MAX_CHARACTERS = 40
 _MAX_TOKEN_LENGTH = 16 * 1024
 _MAX_VERIFICATION_CODE_LENGTH = 64
 _MAX_JSON_DEPTH = 64
@@ -104,6 +106,7 @@ class AnzCredentials:
         ):
             raise ValueError("credentials_invalid")
         account = self.account.strip()
+        password = self.password
         country = self.country.strip().upper()
         try:
             authentication_method = AnzAuthenticationMethod(self.authentication_method)
@@ -111,20 +114,22 @@ class AnzCredentials:
             raise ValueError("credentials_invalid") from None
         if authentication_method is AnzAuthenticationMethod.CURRENT:
             account = account.replace(" ", "")
+            password = _normalize_current_app_password(password)
         try:
             account_bytes = account.encode("utf-8", errors="strict")
-            password_bytes = self.password.encode("utf-8", errors="strict")
+            password_bytes = password.encode("utf-8", errors="strict")
         except UnicodeEncodeError:
             raise ValueError("credentials_invalid") from None
         if (
             not account
             or len(account_bytes) > _MAX_ACCOUNT_BYTES
-            or not self.password
+            or not password
             or len(password_bytes) > _MAX_PASSWORD_BYTES
             or country not in _ANZ_COUNTRIES
         ):
             raise ValueError("credentials_invalid")
         object.__setattr__(self, "account", account)
+        object.__setattr__(self, "password", password)
         object.__setattr__(self, "country", country)
         object.__setattr__(self, "device_id", _normalize_stable_device_id(self.device_id))
         object.__setattr__(self, "authentication_method", authentication_method)
@@ -1164,6 +1169,13 @@ def _current_account_type(account: str) -> str:
     """Select the current app's email or phone account type from the identifier."""
 
     return "2" if "@" in account else "1"
+
+
+def _normalize_current_app_password(value: str) -> str:
+    """Apply the password input formatters used by GWM ANZ 1.0.6."""
+
+    allowed = "".join(_CURRENT_PASSWORD_ALLOWED.findall(value))
+    return allowed.replace(" ", "")[:_CURRENT_PASSWORD_MAX_CHARACTERS]
 
 
 def _parse_token_pair(data: object, *, operation: str) -> tuple[str, str]:
