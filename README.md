@@ -14,9 +14,9 @@ If you would like to support my work, please consider visiting **[Yoav’s GWM G
 
 This is not a traditional online store. The website contains links to products sold on AliExpress. If you purchase something through one of these links, I may receive a small commission at no additional cost to you. This helps fund the continued development and maintenance of this integration.
 
-For more direct support, you can also **[support me on Ko-fi](https://ko-fi.com/Y5B124NZ2L)**.
+For more direct support, you can also **[☕ support me on Ko-fi](https://ko-fi.com/Y5B124NZ2L)**.
 
-### [Visit Yoav’s GWM Garage](https://garage.yoavmor.com) | [Support me on Ko-fi](https://ko-fi.com/Y5B124NZ2L)
+### [Visit Yoav’s GWM Garage](https://garage.yoavmor.com) | [☕ Support me on Ko-fi](https://ko-fi.com/Y5B124NZ2L)
 
 *I am not directly affiliated with AliExpress or GWM.*
 
