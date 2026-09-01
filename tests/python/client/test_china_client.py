@@ -1339,6 +1339,76 @@ async def test_beantech_lock_and_windows_use_timely_with_token() -> None:
 
 
 @pytest.mark.asyncio
+async def test_beantech_result_polling_parses_v3_message_list_when_password_configured() -> None:
+    transport = _FakeTransport(
+        acquire_vehicles=[FIXTURE["responses"]["discovery"]],
+        generate_security_token=[{"code": "000000", "data": "JWT"}],
+        send_lock_command=[{"code": "000000", "data": {}}],
+        get_remote_command_result=[
+            {
+                "code": "000000",
+                "data": {
+                    "messageList": [
+                        {
+                            "messageType": "remote",
+                            "messageData": {
+                                "resultCode": "0",
+                                "resultMessage": "闭锁成功",
+                            },
+                        }
+                    ]
+                },
+            }
+        ],
+    )
+    client = _client(transport, bean_tech_security_password="ENCRYPTED==")
+    assert isinstance(
+        await client.authenticate(_credentials(), state=_complete_state()),
+        ChinaAuthenticated,
+    )
+    identifier = VehicleIdentifier(BEAN_VIN)
+    locked = await client.send_lock_command(DoorLockCommand(identifier, True))
+    results = await client.get_remote_command_results(identifier, locked.command_id)
+
+    assert results == (
+        RemoteCommandResultItem(BEAN_COMMAND_ID, "remote", "0", "闭锁成功"),
+    )
+
+
+@pytest.mark.asyncio
+async def test_beantech_result_polling_normalises_pending_v3_result() -> None:
+    transport = _FakeTransport(
+        acquire_vehicles=[FIXTURE["responses"]["discovery"]],
+        generate_security_token=[{"code": "000000", "data": "JWT"}],
+        send_lock_command=[{"code": "000000", "data": {}}],
+        get_remote_command_result=[
+            {
+                "code": "000000",
+                "data": {
+                    "messageList": [
+                        {
+                            "messageType": "remote",
+                            "messageData": {"resultCode": "2"},
+                        }
+                    ]
+                },
+            }
+        ],
+    )
+    client = _client(transport, bean_tech_security_password="ENCRYPTED==")
+    assert isinstance(
+        await client.authenticate(_credentials(), state=_complete_state()),
+        ChinaAuthenticated,
+    )
+    identifier = VehicleIdentifier(BEAN_VIN)
+    locked = await client.send_lock_command(DoorLockCommand(identifier, True))
+    results = await client.get_remote_command_results(identifier, locked.command_id)
+
+    assert results[0].result_code == "2000"
+    assert results[0].result_message == "Command is still running"
+
+
+@pytest.mark.asyncio
 async def test_task18_commands_reject_unknown_china_platform_before_transport() -> None:
     transport = _FakeTransport(acquire_vehicles=[FIXTURE["responses"]["discovery"]])
     client = _client(transport)

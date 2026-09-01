@@ -2672,6 +2672,49 @@ def _parse_bean_tech_command_results(
     *,
     command_id: str,
 ) -> tuple[RemoteCommandResultItem, ...]:
+    # PIN-configured path hits the v3.0 result endpoint, which answers with
+    # messageList[].messageData = {resultCode, resultMessage, transactionId, ...}.
+    # resultCode "2"/"3" = still running, "0" = success. The seqNo query already
+    # scopes the list to one command, so no transactionId correlation is applied.
+    if isinstance(value, Mapping) and _property(value, "messageList") is not None:
+        messages = _property(value, "messageList")
+        if not isinstance(messages, list):
+            raise ValueError("command_result_invalid")
+        results: list[RemoteCommandResultItem] = []
+        for message in messages:
+            if not isinstance(message, Mapping):
+                continue
+            message_data = _property(message, "messageData")
+            if message_data is None:
+                message_data = message
+            if isinstance(message_data, str):
+                if not message_data.strip():
+                    continue
+                try:
+                    message_data = _decode_json_bytes(message_data.encode("utf-8"))
+                except (UnicodeError, json.JSONDecodeError, RecursionError, ValueError):
+                    continue
+            if not isinstance(message_data, Mapping):
+                continue
+            result_code = _scalar_text(_property(message_data, "resultCode"))
+            if not result_code:
+                continue
+            normalized_code = "2000" if result_code in {"2", "3"} else result_code
+            result_message = _scalar_text(_property(message_data, "resultMessage"))
+            if not result_message and normalized_code == "2000":
+                result_message = "Command is still running"
+            results.append(
+                RemoteCommandResultItem(
+                    command_id=command_id,
+                    remote_type=_scalar_text(_property(message, "messageType")),
+                    result_code=normalized_code,
+                    result_message=result_message,
+                )
+            )
+        return tuple(results)
+
+    # No-PIN path still hits the legacy T5 result endpoint: a flat list (or a
+    # resultList/list key) of {remoteType, resultCode, resultMsg}.
     candidates = value
     if isinstance(value, Mapping):
         candidates = _property(value, "resultList")
