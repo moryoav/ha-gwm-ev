@@ -1495,6 +1495,102 @@ async def test_beantech_security_token_rejects_non_string_data() -> None:
         )
 
 
+def test_beantech_timely_request_shape() -> None:
+    client = _client(_FakeTransport())
+    request = client._build_bean_tech_timely_request(
+        _complete_state(),
+        VehicleIdentifier(BEAN_VIN),
+        sequence_number="0" * 32 + "9359",
+        operation="send_lock_command",
+        control_type="VEHICLE_UNLOCK",
+        command_body=None,
+        security_token="JWT",
+    )
+    assert request.url.endswith("/app-api/api/v3.0/vehicle/remote-ctrl/timely")
+    assert request.headers["securityToken"] == "JWT"
+    assert json.loads(request.body or b"null") == {
+        "vin": BEAN_VIN,
+        "seqNo": "0" * 32 + "9359",
+        "sendType": 0,
+        "commands": [{"controlType": "VEHICLE_UNLOCK"}],
+    }
+
+
+def test_beantech_timely_request_omits_security_token_header_when_exempt() -> None:
+    client = _client(_FakeTransport())
+    request = client._build_bean_tech_timely_request(
+        _complete_state(),
+        VehicleIdentifier(BEAN_VIN),
+        sequence_number="0" * 32 + "9359",
+        operation="send_vehicle_control_command",
+        control_type="FLASH",
+        command_body=None,
+        security_token=None,
+    )
+    assert "securityToken" not in request.headers
+
+
+def test_beantech_timely_request_windows_close_shape() -> None:
+    client = _client(_FakeTransport())
+    request = client._build_bean_tech_timely_request(
+        _complete_state(),
+        VehicleIdentifier(BEAN_VIN),
+        sequence_number="0" * 32 + "9359",
+        operation="send_close_windows_command",
+        control_type="WINDOW_CLOSE",
+        command_body={"leftFront": 0, "leftBack": 0, "rightFront": 0, "rightBack": 0},
+        security_token="JWT",
+    )
+    assert request.url.endswith("/app-api/api/v3.0/vehicle/remote-ctrl/timely")
+    assert request.headers["securityToken"] == "JWT"
+    assert json.loads(request.body or b"null") == {
+        "vin": BEAN_VIN,
+        "seqNo": "0" * 32 + "9359",
+        "sendType": 0,
+        "commands": [
+            {
+                "controlType": "WINDOW_CLOSE",
+                "cmdBody": {"leftFront": 0, "leftBack": 0, "rightFront": 0, "rightBack": 0},
+            }
+        ],
+    }
+
+
+def test_beantech_timely_request_engine_start_shape() -> None:
+    client = _client(_FakeTransport())
+    request = client._build_bean_tech_timely_request(
+        _complete_state(),
+        VehicleIdentifier(BEAN_VIN),
+        sequence_number="0" * 32 + "9359",
+        operation="send_vehicle_control_command",
+        control_type="ENGINE_START",
+        command_body={"operationTime": 600},
+        security_token="JWT",
+    )
+    assert request.url.endswith("/app-api/api/v3.0/vehicle/remote-ctrl/timely")
+    assert request.headers["securityToken"] == "JWT"
+    assert json.loads(request.body or b"null") == {
+        "vin": BEAN_VIN,
+        "seqNo": "0" * 32 + "9359",
+        "sendType": 0,
+        "commands": [{"controlType": "ENGINE_START", "cmdBody": {"operationTime": 600}}],
+    }
+
+
+def test_beantech_timely_request_rejects_engine_start_without_body() -> None:
+    client = _client(_FakeTransport())
+    with pytest.raises(ValueError):
+        client._build_bean_tech_timely_request(
+            _complete_state(),
+            VehicleIdentifier(BEAN_VIN),
+            sequence_number="0" * 32 + "9359",
+            operation="send_vehicle_control_command",
+            control_type="ENGINE_START",
+            command_body=None,
+            security_token="JWT",
+        )
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("tank_capacity", ["not-a-number", -1, True, [], "NaN", 10**400])
 async def test_optional_tank_capacity_quirks_do_not_reject_discovery(tank_capacity: object) -> None:

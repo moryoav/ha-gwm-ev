@@ -1958,6 +1958,55 @@ class ChinaClient:
             body=body.encode("utf-8"),
         )
 
+    def _build_bean_tech_timely_request(
+        self,
+        state: ChinaAuthState,
+        identifier: VehicleIdentifier,
+        *,
+        sequence_number: str,
+        operation: Literal[
+            "send_lock_command",
+            "send_close_windows_command",
+            "send_vehicle_control_command",
+        ],
+        control_type: str,
+        command_body: Mapping[str, object] | None,
+        security_token: str | None,
+    ) -> _ChinaTransportRequest:
+        command: dict[str, object] = {"controlType": control_type}
+        if command_body is not None:
+            command["cmdBody"] = dict(command_body)
+        body = encode_dotnet_json(
+            {
+                "vin": identifier.value,
+                "seqNo": sequence_number,
+                "sendType": 0,
+                "commands": [command],
+            }
+        )
+        headers = self._bean_tech_authenticated_headers(
+            state,
+            identifier,
+            operation=operation,
+            method="POST",
+            path=_BEAN_TECH_TIMELY_PATH,
+            parameter="json=" + body,
+        )
+        headers["Content-Type"] = "application/json; charset=UTF-8"
+        if security_token is not None:
+            headers["securityToken"] = security_token
+        return _ChinaTransportRequest(
+            operation=operation,
+            service="bean_tech",
+            method="POST",
+            url=_BEAN_TECH_TIMELY_URL,
+            headers=headers,
+            body=body.encode("utf-8"),
+        )
+            headers=headers,
+            body=body.encode("utf-8"),
+        )
+
     def _build_bean_tech_result_request(
         self,
         state: ChinaAuthState,

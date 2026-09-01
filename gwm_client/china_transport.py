@@ -92,6 +92,10 @@ _BEAN_TECH_SEND_URL = (
     "https://gw-app-gateway.gwmapp-h.com/app-api/api/v1.0/vehicle/T5/sendCmd"
 )
 _BEAN_TECH_SEND_PATH = "/app-api/api/v1.0/vehicle/T5/sendCmd"
+_BEAN_TECH_TIMELY_URL = (
+    "https://gw-app-gateway.gwmapp-h.com/app-api/api/v3.0/vehicle/remote-ctrl/timely"
+)
+_BEAN_TECH_TIMELY_PATH = "/app-api/api/v3.0/vehicle/remote-ctrl/timely"
 _BEAN_TECH_RESULT_URL = (
     "https://gw-app-gateway.gwmapp-h.com/app-api/api/v1.0/vehicle/getRemoteCtrlResultT5"
 )
@@ -240,6 +244,7 @@ _BEAN_TECH_STATUS_HEADERS = frozenset(
     }
 )
 _BEAN_TECH_COMMAND_HEADERS = _BEAN_TECH_STATUS_HEADERS | frozenset({"Content-Type"})
+_BEAN_TECH_TIMELY_TOKEN_HEADERS = _BEAN_TECH_COMMAND_HEADERS | frozenset({"securityToken"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -1276,6 +1281,12 @@ def _valid_bean_tech_command_request(
     *,
     command_kind: Literal["lock", "windows", "vehicle_control"],
 ) -> bool:
+    if request.url == _BEAN_TECH_TIMELY_URL:
+        return _valid_bean_tech_timely_command_request(
+            request,
+            headers,
+            command_kind=command_kind,
+        )
     raw_body = _utf8_body(request.body)
     body = _decode_wire_object(raw_body) if raw_body is not None else None
     if not isinstance(body, Mapping):
@@ -1351,6 +1362,110 @@ def _valid_bean_tech_command_request(
         == bean_tech_sign(
             "POST",
             _BEAN_TECH_SEND_PATH,
+            headers["bt-auth-nonce"],
+            headers["bt-auth-timestamp"],
+            "json=" + raw_body,
+        )
+    )
+
+
+def _valid_bean_tech_timely_command_request(
+    request: _ChinaTransportRequest,
+    headers: Mapping[str, str],
+    *,
+    command_kind: Literal["lock", "windows", "vehicle_control"],
+) -> bool:
+    raw_body = _utf8_body(request.body)
+    body = _decode_wire_object(raw_body) if raw_body is not None else None
+    if not isinstance(body, Mapping):
+        return False
+    commands = body.get("commands")
+    if (
+        not isinstance(commands, list)
+        or len(commands) != 1
+        or not isinstance(commands[0], dict)
+    ):
+        return False
+    command = commands[0]
+    sequence = body.get("seqNo")
+    has_cmd_body = "cmdBody" in command
+    if command_kind == "lock":
+        valid_command = (
+            not has_cmd_body
+            and list(command) == ["controlType"]
+            and command.get("controlType") in {"VEHICLE_LOCK", "VEHICLE_UNLOCK"}
+        )
+    elif command_kind == "windows":
+        valid_command = (
+            has_cmd_body
+            and list(command) == ["controlType", "cmdBody"]
+            and command.get("controlType") == "WINDOW_CLOSE"
+            and command.get("cmdBody")
+            == {"leftFront": 0, "leftBack": 0, "rightFront": 0, "rightBack": 0}
+        )
+    else:
+        control_type = command.get("controlType")
+        if control_type == "ENGINE_START":
+            engine_body = command.get("cmdBody")
+            valid_command = (
+                has_cmd_body
+                and list(command) == ["controlType", "cmdBody"]
+                and isinstance(engine_body, Mapping)
+                and list(engine_body) == ["operationTime"]
+                and isinstance(engine_body.get("operationTime"), int)
+                and not isinstance(engine_body.get("operationTime"), bool)
+                and 300 <= int(engine_body["operationTime"]) <= 1800
+                and int(engine_body["operationTime"]) % 60 == 0
+            )
+        else:
+            expected_bodies: dict[str, object] = {
+                "ENGINE_STOP": None,
+                "WHISTLE": None,
+                "FLASH": None,
+                "WHISTLE_FLASH": None,
+                "SKYLIGNT_CLOSE": {"skyLight": 0},
+            }
+            if isinstance(control_type, str) and control_type in expected_bodies:
+                expected_body = expected_bodies[control_type]
+                valid_command = (
+                    has_cmd_body == (expected_body is not None)
+                    and list(command)
+                    == (
+                        ["controlType", "cmdBody"]
+                        if expected_body is not None
+                        else ["controlType"]
+                    )
+                    and command.get("cmdBody") == expected_body
+                )
+            else:
+                valid_command = False
+    security_token = headers.get("securityToken")
+    return (
+        valid_command
+        and request.service == "bean_tech"
+        and request.method == "POST"
+        and request.url == _BEAN_TECH_TIMELY_URL
+        and set(headers)
+        == (
+            _BEAN_TECH_TIMELY_TOKEN_HEADERS
+            if security_token is not None
+            else _BEAN_TECH_COMMAND_HEADERS
+        )
+        and (security_token is None or _safe_wire_text(security_token, maximum=4096))
+        and list(body) == ["vin", "seqNo", "sendType", "commands"]
+        and _VIN.fullmatch(str(body.get("vin", ""))) is not None
+        and body.get("vin") == headers.get("vin")
+        and isinstance(sequence, str)
+        and _BEAN_TECH_SEQUENCE.fullmatch(sequence) is not None
+        and body.get("sendType") == 0
+        and raw_body is not None
+        and encode_dotnet_json(body) == raw_body
+        and headers.get("Content-Type") == "application/json; charset=UTF-8"
+        and _valid_bean_tech_authenticated_headers(headers)
+        and headers.get("bt-auth-sign")
+        == bean_tech_sign(
+            "POST",
+            _BEAN_TECH_TIMELY_PATH,
             headers["bt-auth-nonce"],
             headers["bt-auth-timestamp"],
             "json=" + raw_body,
