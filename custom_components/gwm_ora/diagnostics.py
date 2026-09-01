@@ -10,12 +10,14 @@ from homeassistant.core import HomeAssistant
 from . import GwmConfigEntry
 from .const import (
     CONF_ACCOUNT,
+    CONF_BEANTECH_ENCRYPTED_SECURITY_PIN,
     CONF_PASSWORD,
     CONF_SECURITY_PIN,
 )
 
 TO_REDACT = {
     CONF_ACCOUNT,
+    CONF_BEANTECH_ENCRYPTED_SECURITY_PIN,
     CONF_PASSWORD,
     CONF_SECURITY_PIN,
     "access_token",
