@@ -200,7 +200,9 @@
       "wireless_level": { "name": "Wireless level" },
       "oil_segments": { "name": "Oil segments" },
       "aux_battery": { "name": "Auxiliary battery" },
-      "remaining_usable_charge": { "name": "Remaining usable charge" }
+      "remaining_usable_charge": { "name": "Remaining usable charge" },
+      "battery_pack_current": { "name": "Battery pack current" },
+      "battery_pack_voltage": { "name": "Battery pack voltage" }
     },
     "binary_sensor": {
       "charging_active": { "name": "Charging active" },

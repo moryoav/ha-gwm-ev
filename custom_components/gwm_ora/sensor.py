@@ -8,7 +8,17 @@ from datetime import datetime
 from typing import Any
 
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorEntityDescription, SensorStateClass
-from homeassistant.const import PERCENTAGE, UnitOfLength, UnitOfPressure, UnitOfTemperature, UnitOfTime, UnitOfVolume
+from homeassistant.const import (
+    PERCENTAGE,
+    UnitOfElectricCurrent,
+    UnitOfElectricPotential,
+    UnitOfLength,
+    UnitOfPower,
+    UnitOfPressure,
+    UnitOfTemperature,
+    UnitOfTime,
+    UnitOfVolume,
+)
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -41,6 +51,8 @@ BEANTECH_SENSOR_KEYS = {
     "oil_segments",
     "aux_battery_level",
     "remaining_usable_charge_percent",
+    "battery_pack_current",
+    "battery_pack_voltage",
 }
 
 
@@ -414,8 +426,9 @@ SENSORS: tuple[GwmSensorEntityDescription, ...] = (
     GwmSensorEntityDescription(
         key="power",
         translation_key="power",
-        entity_category=EntityCategory.DIAGNOSTIC,
-        entity_registry_enabled_default=False,
+        device_class=SensorDeviceClass.POWER,
+        native_unit_of_measurement=UnitOfPower.KILO_WATT,
+        state_class=SensorStateClass.MEASUREMENT,
         value_fn=_value("power"),
     ),
     GwmSensorEntityDescription(
@@ -472,6 +485,22 @@ SENSORS: tuple[GwmSensorEntityDescription, ...] = (
         state_class=SensorStateClass.MEASUREMENT,
         entity_registry_enabled_default=False,
         value_fn=_value("remaining_usable_charge_percent"),
+    ),
+    GwmSensorEntityDescription(
+        key="battery_pack_current",
+        translation_key="battery_pack_current",
+        device_class=SensorDeviceClass.CURRENT,
+        native_unit_of_measurement=UnitOfElectricCurrent.AMPERE,
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=_value("battery_pack_current"),
+    ),
+    GwmSensorEntityDescription(
+        key="battery_pack_voltage",
+        translation_key="battery_pack_voltage",
+        device_class=SensorDeviceClass.VOLTAGE,
+        native_unit_of_measurement=UnitOfElectricPotential.VOLT,
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=_value("battery_pack_voltage"),
     ),
 )
 

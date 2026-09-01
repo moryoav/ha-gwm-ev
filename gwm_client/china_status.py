@@ -287,6 +287,8 @@ def map_bean_tech_status(
         (status, "tboxstate", "9000017"),
         (status, "wirelesslevel", "9000018"),
         (status, "oilqty", "9000019"),
+        (status, "battpackcurr", "9000026"),
+        (status, "battpackvolt", "9000027"),
         (tire_press, "lftirepressindcrsts", "9000020"),
         (tire_press, "rftirepressindcrsts", "9000021"),
         (tire_press, "lbtirepressindcrsts", "9000022"),

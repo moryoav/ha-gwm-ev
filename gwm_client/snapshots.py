@@ -181,6 +181,8 @@ class VehicleValues:
     tire_pressure_indicator_rear_right: bool | None = None
     aux_battery_level: float | None = None
     remaining_usable_charge_percent: float | None = None
+    battery_pack_current: float | None = None
+    battery_pack_voltage: float | None = None
 
     def as_dict(self) -> SnapshotDictionary:
         """Return every released value key, including unknown values."""
@@ -271,6 +273,8 @@ class VehicleValues:
             "tire_pressure_indicator_rear_right": self.tire_pressure_indicator_rear_right,
             "aux_battery_level": self.aux_battery_level,
             "remaining_usable_charge_percent": self.remaining_usable_charge_percent,
+            "battery_pack_current": self.battery_pack_current,
+            "battery_pack_voltage": self.battery_pack_voltage,
         }
 
 
@@ -474,6 +478,8 @@ def map_vehicle_snapshot(
         tire_pressure_indicator_rear_right=_bool(raw_items, "9000023"),
         aux_battery_level=_number(raw_items, "9000024"),
         remaining_usable_charge_percent=_number(raw_items, "9000025"),
+        battery_pack_current=_number(raw_items, "9000026"),
+        battery_pack_voltage=_number(raw_items, "9000027"),
     )
     ac_on = values.ac_active is True
     climate_configuration = basics.climate

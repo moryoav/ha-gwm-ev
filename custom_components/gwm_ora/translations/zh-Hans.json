@@ -200,7 +200,9 @@
       "wireless_level": { "name": "无线信号格数" },
       "oil_segments": { "name": "油量分段" },
       "aux_battery": { "name": "蓄电池电量" },
-      "remaining_usable_charge": { "name": "剩余可用电量" }
+      "remaining_usable_charge": { "name": "剩余可用电量" },
+      "battery_pack_current": { "name": "电池包电流" },
+      "battery_pack_voltage": { "name": "电池包电压" }
     },
     "binary_sensor": {
       "charging_active": { "name": "充电中" },

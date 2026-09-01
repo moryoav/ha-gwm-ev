@@ -6,6 +6,16 @@ This project follows semantic versioning. HACS uses the latest GitHub release ta
 
 ## [Unreleased]
 
+## [0.16.17] - 2026-09-01
+
+### Added
+
+- I added BeanTech battery-pack current and voltage sensors using the read-only fields researched in the retired repository's PR #27. These values remain unknown when the vehicle does not report them, which is expected while some vehicles are parked and powered off.
+
+### Changed
+
+- I now expose the existing BeanTech power value as an enabled measurement sensor in kilowatts. Battery current, voltage, and power remain isolated to mainland-China BeanTech vehicles.
+
 ## [0.16.16] - 2026-08-31
 
 ### Added

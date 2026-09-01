@@ -75,6 +75,8 @@ def test_bean_tech_fixture_maps_released_and_platform_specific_signals() -> None
     assert items["2201001"] == ("235", None)
     assert items["9000001"] == ("1", None)
     assert items["9000011"] == ("82.5", "%")
+    assert items["9000026"] == ("23.4", None)
+    assert items["9000027"] == ("398.7", None)
     assert items["9000023"] == ("3", None)
     assert items["2310001"] == ("1", None)
     assert _BEAN_FIXTURE["vin"] not in repr(status)

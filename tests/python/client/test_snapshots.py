@@ -359,6 +359,8 @@ def test_bean_tech_fixture_reaches_platform_aware_snapshot_without_commands() ->
     assert snapshot.values.tire_pressure_indicator_rear_right is None
     assert snapshot.values.aux_battery_level == 90
     assert snapshot.values.remaining_usable_charge_percent == 68
+    assert snapshot.values.battery_pack_current == 23.4
+    assert snapshot.values.battery_pack_voltage == 398.7
     assert serialized["platform"] == "beantech"
     assert serialized["capabilities"] == {
         "remote_commands": False,

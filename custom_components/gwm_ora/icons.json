@@ -107,6 +107,15 @@
       "soce": {
         "default": "mdi:battery-heart-variant"
       },
+      "battery_pack_current": {
+        "default": "mdi:current-dc"
+      },
+      "battery_pack_voltage": {
+        "default": "mdi:flash"
+      },
+      "power": {
+        "default": "mdi:power"
+      },
       "tire_pressure_front_left": {
         "default": "mdi:car-tire-alert"
       },

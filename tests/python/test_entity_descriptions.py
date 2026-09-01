@@ -41,6 +41,8 @@ NEW_SENSOR_KEYS = {
     "oil_segments",
     "aux_battery_level",
     "remaining_usable_charge_percent",
+    "battery_pack_current",
+    "battery_pack_voltage",
 }
 
 NEW_BINARY_SENSOR_KEYS = {
@@ -72,7 +74,8 @@ NEW_BINARY_SENSOR_KEYS = {
 
 def test_sensor_description_keys_cover_v1_contract() -> None:
     pytest.importorskip("homeassistant")
-    from homeassistant.components.sensor import SensorDeviceClass
+    from homeassistant.components.sensor import SensorDeviceClass, SensorStateClass
+    from homeassistant.const import UnitOfElectricCurrent, UnitOfElectricPotential, UnitOfPower
     from homeassistant.helpers.entity import EntityCategory
 
     from custom_components.gwm_ora.sensor import SENSORS
@@ -115,6 +118,22 @@ def test_sensor_description_keys_cover_v1_contract() -> None:
         "waiting_for_power",
         "error",
     ]
+    assert descriptions["power"].device_class is SensorDeviceClass.POWER
+    assert descriptions["power"].native_unit_of_measurement is UnitOfPower.KILO_WATT
+    assert descriptions["power"].state_class is SensorStateClass.MEASUREMENT
+    assert descriptions["power"].entity_registry_enabled_default is not False
+    assert descriptions["battery_pack_current"].device_class is SensorDeviceClass.CURRENT
+    assert (
+        descriptions["battery_pack_current"].native_unit_of_measurement
+        is UnitOfElectricCurrent.AMPERE
+    )
+    assert descriptions["battery_pack_current"].state_class is SensorStateClass.MEASUREMENT
+    assert descriptions["battery_pack_voltage"].device_class is SensorDeviceClass.VOLTAGE
+    assert (
+        descriptions["battery_pack_voltage"].native_unit_of_measurement
+        is UnitOfElectricPotential.VOLT
+    )
+    assert descriptions["battery_pack_voltage"].state_class is SensorStateClass.MEASUREMENT
 
 
 def test_binary_sensor_description_keys_cover_v1_contract() -> None:
