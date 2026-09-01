@@ -32,6 +32,7 @@ BEANTECH_REMOTE_ACTIONS = {
     "remote_stop",
     "horn",
     "flash_lights",
+    "horn_and_lights",
     "sunroof_close",
 }
 
