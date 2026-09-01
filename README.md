@@ -10,13 +10,13 @@
 
 **Maintaining this integration requires a significant investment of time and money.** GWM operates different platforms across regions, and supporting its many vehicle brands and models requires continuous research, testing, and development.
 
-If you would like to support my work, please consider visiting **[Yoav’s GWM Garage](https://garage.yoavmor.com)**. I personally select useful products for GWM vehicles from AliExpress. I also try some of these products myself and recommend the ones I genuinely find useful. The website will be updated regularly, so please check back from time to time.
+If you would like to support my work, please consider visiting **[The GWM Garage](https://garage.yoavmor.com)**. I personally select useful products for GWM vehicles from AliExpress. I also try some of these products myself and recommend the ones I genuinely find useful. The website will be updated regularly, so please check back from time to time.
 
 This is not a traditional online store. The website contains links to products sold on AliExpress. If you purchase something through one of these links, I may receive a small commission at no additional cost to you. This helps fund the continued development and maintenance of this integration.
 
 For more direct support, you can also **[☕ support me on Ko-fi](https://ko-fi.com/Y5B124NZ2L)**.
 
-### [Visit Yoav’s GWM Garage](https://garage.yoavmor.com) | [☕ Support me on Ko-fi](https://ko-fi.com/Y5B124NZ2L)
+### [Visit The GWM Garage](https://garage.yoavmor.com) | [☕ Support me on Ko-fi](https://ko-fi.com/Y5B124NZ2L)
 
 *I am not directly affiliated with AliExpress or GWM.*
 
