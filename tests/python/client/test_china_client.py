@@ -1445,6 +1445,80 @@ async def test_beantech_extended_controls_are_exact_and_unsupported_actions_fail
 
 
 @pytest.mark.asyncio
+async def test_beantech_uses_t5_path_when_no_security_password() -> None:
+    transport = _FakeTransport(
+        acquire_vehicles=[FIXTURE["responses"]["discovery"]],
+        send_vehicle_control_command=[{"code": "000000", "data": {}}],
+    )
+    client = _client(transport)
+    assert isinstance(
+        await client.authenticate(_credentials(), state=_complete_state()),
+        ChinaAuthenticated,
+    )
+    await client.send_vehicle_control_command(
+        ChinaVehicleControlCommand(VehicleIdentifier(BEAN_VIN), "remote_stop")
+    )
+    sent = next(
+        call for call in transport.calls if call.operation == "send_vehicle_control_command"
+    )
+    assert sent.url.endswith("/app-api/api/v1.0/vehicle/T5/sendCmd")
+    assert not any(
+        call.operation == "generate_security_token" for call in transport.calls
+    )
+
+
+@pytest.mark.asyncio
+async def test_beantech_uses_timely_path_with_token_when_password_configured() -> None:
+    transport = _FakeTransport(
+        acquire_vehicles=[FIXTURE["responses"]["discovery"]],
+        generate_security_token=[{"code": "000000", "data": "JWT"}],
+        send_vehicle_control_command=[{"code": "000000", "data": {}}],
+    )
+    client = _client(transport, bean_tech_security_password="ENCRYPTED==")
+    assert isinstance(
+        await client.authenticate(_credentials(), state=_complete_state()),
+        ChinaAuthenticated,
+    )
+    await client.send_vehicle_control_command(
+        ChinaVehicleControlCommand(VehicleIdentifier(BEAN_VIN), "remote_stop")
+    )
+    sent = next(
+        call for call in transport.calls if call.operation == "send_vehicle_control_command"
+    )
+    assert sent.url.endswith("/app-api/api/v3.0/vehicle/remote-ctrl/timely")
+    assert sent.headers["securityToken"] == "JWT"
+    assert sum(
+        1 for call in transport.calls if call.operation == "generate_security_token"
+    ) == 1
+
+
+@pytest.mark.asyncio
+async def test_beantech_pin_exempt_commands_skip_token_generation() -> None:
+    transport = _FakeTransport(
+        acquire_vehicles=[FIXTURE["responses"]["discovery"]],
+        send_vehicle_control_command=[
+            {"code": "000000", "data": {}} for _ in range(3)
+        ],
+    )
+    client = _client(transport, bean_tech_security_password="ENCRYPTED==")
+    assert isinstance(
+        await client.authenticate(_credentials(), state=_complete_state()),
+        ChinaAuthenticated,
+    )
+    for action in ("horn", "flash_lights", "horn_and_lights"):
+        await client.send_vehicle_control_command(
+            ChinaVehicleControlCommand(VehicleIdentifier(BEAN_VIN), action)  # type: ignore[arg-type]
+        )
+    assert not any(
+        call.operation == "generate_security_token" for call in transport.calls
+    )
+    for call in transport.calls:
+        if call.operation == "send_vehicle_control_command":
+            assert call.url.endswith("/app-api/api/v3.0/vehicle/remote-ctrl/timely")
+            assert "securityToken" not in call.headers
+
+
+@pytest.mark.asyncio
 async def test_beantech_security_token_is_read_from_plain_data_string() -> None:
     token = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJhIjoxfQ.sig"
     transport = _FakeTransport(

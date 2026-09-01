@@ -1454,6 +1454,62 @@ class ChinaClient:
         except (RecursionError, OverflowError, TypeError, ValueError):
             raise GwmSchemaError(operation=operation) from None
 
+    async def _send_bean_tech_control(
+        self,
+        state: ChinaAuthState,
+        identifier: VehicleIdentifier,
+        *,
+        operation: Literal[
+            "send_lock_command",
+            "send_close_windows_command",
+            "send_vehicle_control_command",
+        ],
+        control_type: str,
+        command_body: Mapping[str, object] | None,
+        deadline: _Deadline,
+    ) -> RemoteCommandAcceptance:
+        try:
+            sequence_number = self._sequence_source()
+        except Exception:
+            raise GwmConfigurationError(operation=operation) from None
+        if (
+            not isinstance(sequence_number, str)
+            or _BEAN_TECH_SEQUENCE.fullmatch(sequence_number) is None
+        ):
+            raise GwmConfigurationError(operation=operation)
+
+        if self._bean_tech_security_password is None:
+            request = self._build_bean_tech_command_request(
+                state,
+                identifier,
+                sequence_number=sequence_number,
+                operation=operation,
+                control_type=control_type,
+                command_body=command_body,
+            )
+        else:
+            security_token: str | None = None
+            if control_type not in _BEAN_TECH_PIN_EXEMPT_CONTROL_TYPES:
+                security_token = await self._generate_bean_tech_security_token(
+                    state,
+                    identifier,
+                    operation=operation,
+                    deadline=deadline,
+                )
+            request = self._build_bean_tech_timely_request(
+                state,
+                identifier,
+                sequence_number=sequence_number,
+                operation=operation,
+                control_type=control_type,
+                command_body=command_body,
+                security_token=security_token,
+            )
+
+        response = await self._send_locked(request, deadline=deadline)
+        _decode_g_app_envelope(response, operation=operation)
+        return RemoteCommandAcceptance(sequence_number)
+
     async def _send_vehicle_control_command_locked(
         self,
         command: ChinaVehicleControlCommand,
@@ -1475,28 +1531,14 @@ class ChinaClient:
             if command.action not in BEANTECH_CHINA_VEHICLE_CONTROL_ACTIONS:
                 raise GwmRoutePolicyError(operation=operation)
             control_type, command_body = _bean_tech_vehicle_control(command)
-            try:
-                sequence_number = self._sequence_source()
-            except Exception:
-                raise GwmConfigurationError(operation=operation) from None
-            if (
-                not isinstance(sequence_number, str)
-                or _BEAN_TECH_SEQUENCE.fullmatch(sequence_number) is None
-            ):
-                raise GwmConfigurationError(operation=operation)
-            response = await self._send_locked(
-                self._build_bean_tech_command_request(
-                    state,
-                    command.identifier,
-                    sequence_number=sequence_number,
-                    operation=operation,
-                    control_type=control_type,
-                    command_body=command_body,
-                ),
+            return await self._send_bean_tech_control(
+                state,
+                command.identifier,
+                operation=operation,
+                control_type=control_type,
+                command_body=command_body,
                 deadline=deadline,
             )
-            _decode_g_app_envelope(response, operation=operation)
-            return RemoteCommandAcceptance(sequence_number)
 
         if state.auto_ai_token_id is None or state.auto_ai_user_id is None:
             raise GwmAuthenticationError(operation=operation)
