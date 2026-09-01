@@ -6,6 +6,13 @@ This project follows semantic versioning. HACS uses the latest GitHub release ta
 
 ## [Unreleased]
 
+## [0.16.18] - 2026-09-01
+
+### Fixed
+
+- I corrected the overseas air-circulation request so its confirmed cabin-clean fields are sent directly under command flag `0x11`. This removes the invalid extra wrapper that GWM rejected with API code `550002`.
+- I added privacy-safe service-call logging for the client error type, category, operation, API code, HTTP status, and retry delay. Request bodies, credentials, tokens, VINs, and provider descriptions remain excluded.
+
 ## [0.16.17] - 2026-09-01
 
 ### Added

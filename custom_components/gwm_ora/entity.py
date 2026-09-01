@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Iterable
 from typing import TYPE_CHECKING, Any
 
@@ -15,6 +16,8 @@ from gwm_client import GwmAuthenticationError, GwmClientError
 from .const import DOMAIN
 from .coordinator import GwmDataUpdateCoordinator
 from .errors import GwmCommandError, GwmCommandForbidden
+
+_LOGGER = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from . import GwmConfigEntry
@@ -164,6 +167,7 @@ async def async_call_gwm_api(
     try:
         return await call
     except GwmAuthenticationError as err:
+        _log_gwm_client_failure(err)
         raise HomeAssistantError(
             translation_domain=DOMAIN,
             translation_key="cloud_auth_failed",
@@ -174,7 +178,23 @@ async def async_call_gwm_api(
             translation_key=forbidden_translation_key,
         ) from err
     except (GwmCommandError, GwmClientError) as err:
+        if isinstance(err, GwmClientError):
+            _log_gwm_client_failure(err)
         raise HomeAssistantError(
             translation_domain=DOMAIN,
             translation_key="cloud_request_failed",
         ) from err
+
+
+def _log_gwm_client_failure(error: GwmClientError) -> None:
+    """Log only the client's bounded, sanitized failure metadata."""
+
+    _LOGGER.warning(
+        "GWM cloud call failed: type=%s category=%s operation=%s api_code=%s http_status=%s retry_after_seconds=%s",
+        type(error).__name__,
+        error.category,
+        error.operation,
+        getattr(error, "api_code", None),
+        getattr(error, "status", None),
+        getattr(error, "retry_after_seconds", None),
+    )

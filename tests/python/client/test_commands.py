@@ -362,10 +362,8 @@ async def test_regional_front_defrost_and_cabin_clean_contracts_are_exact(
     assert _body(sends[2]) == {
         "instructions": {
             "0x11": {
-                "cabinClean": {
-                    "operationTime": "60",
-                    "switchOrder": "1",
-                }
+                "operationTime": "60",
+                "switchOrder": "1",
             }
         },
         **common,

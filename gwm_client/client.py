@@ -1071,10 +1071,8 @@ class GwmClient:
             security_password_hash=security_password_hash,
             instructions={
                 "0x11": {
-                    "cabinClean": {
-                        "operationTime": "60",
-                        "switchOrder": "1",
-                    }
+                    "operationTime": "60",
+                    "switchOrder": "1",
                 }
             },
             timeout=timeout,
