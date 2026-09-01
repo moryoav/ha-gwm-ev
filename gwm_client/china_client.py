@@ -120,6 +120,13 @@ _BEAN_TECH_SEND_PATH = "/app-api/api/v1.0/vehicle/T5/sendCmd"
 _BEAN_TECH_SEND_URL = _BEAN_TECH_BASE.rstrip("/") + _BEAN_TECH_SEND_PATH
 _BEAN_TECH_RESULT_PATH = "/app-api/api/v1.0/vehicle/getRemoteCtrlResultT5"
 _BEAN_TECH_RESULT_URL = _BEAN_TECH_BASE.rstrip("/") + _BEAN_TECH_RESULT_PATH
+_BEAN_TECH_SECURITY_TOKEN_PATH = "/app-api/api/v3.0/vehicle/security/generate-token"
+_BEAN_TECH_SECURITY_TOKEN_URL = _BEAN_TECH_BASE.rstrip("/") + _BEAN_TECH_SECURITY_TOKEN_PATH
+_BEAN_TECH_TIMELY_PATH = "/app-api/api/v3.0/vehicle/remote-ctrl/timely"
+_BEAN_TECH_TIMELY_URL = _BEAN_TECH_BASE.rstrip("/") + _BEAN_TECH_TIMELY_PATH
+_BEAN_TECH_TIMELY_RESULT_PATH = "/app-api/api/v3.0/vehicle/remote-ctrl/result"
+_BEAN_TECH_TIMELY_RESULT_URL = _BEAN_TECH_BASE.rstrip("/") + _BEAN_TECH_TIMELY_RESULT_PATH
+_BEAN_TECH_PIN_EXEMPT_CONTROL_TYPES = frozenset({"FLASH", "WHISTLE", "WHISTLE_FLASH"})
 _AUTO_AI_LOGIN_URL = _G_APP_BASE + "tsp/v1/proxy/navinfo/GW.M.APP_LOGIN"
 _DISCOVERY_URL = _G_APP_BASE + "gcar/v1/app/android/vehicle/query-vehicle-list"
 _SOURCE_APP_VERSION = "2.1.5"
@@ -402,6 +409,7 @@ class ChinaClient:
         config: ChinaClientConfig,
         *,
         authenticated_state: ChinaAuthState | None = None,
+        bean_tech_security_password: str | None = None,
         transport: _ChinaAsyncTransport | None = None,
         clock: Callable[[], datetime] | None = None,
         salt_source: Callable[[], bytes] | None = None,
@@ -419,6 +427,12 @@ class ChinaClient:
             or not authenticated_state.complete
         ):
             raise GwmConfigurationError(operation="login")
+        if bean_tech_security_password is not None and (
+            not isinstance(bean_tech_security_password, str)
+            or not bean_tech_security_password.strip()
+        ):
+            raise GwmConfigurationError(operation="login")
+        self._bean_tech_security_password = bean_tech_security_password
         self._config = config
         self._clock = clock or _utc_now
         self._salt_source = salt_source or (lambda: secrets.token_bytes(8))
@@ -1971,6 +1985,69 @@ class ChinaClient:
             headers=headers,
             body=None,
         )
+
+    def _build_bean_tech_security_token_request(
+        self,
+        state: ChinaAuthState,
+        identifier: VehicleIdentifier,
+        *,
+        operation: str,
+        security_password: str,
+    ) -> _ChinaTransportRequest:
+        body = encode_dotnet_json(
+            {
+                "securityPwd": security_password,
+                "eventType": 2,
+                "version": 1,
+            }
+        )
+        headers = self._bean_tech_authenticated_headers(
+            state,
+            identifier,
+            operation=operation,
+            method="POST",
+            path=_BEAN_TECH_SECURITY_TOKEN_PATH,
+            parameter="json=" + body,
+        )
+        headers["Content-Type"] = "application/json; charset=UTF-8"
+        return _ChinaTransportRequest(
+            operation="generate_security_token",
+            service="bean_tech",
+            method="POST",
+            url=_BEAN_TECH_SECURITY_TOKEN_URL,
+            headers=headers,
+            body=body.encode("utf-8"),
+        )
+
+    async def _generate_bean_tech_security_token(
+        self,
+        state: ChinaAuthState,
+        identifier: VehicleIdentifier,
+        *,
+        operation: str,
+        deadline: _Deadline,
+    ) -> str:
+        password = self._bean_tech_security_password
+        if password is None:
+            raise GwmConfigurationError(operation=operation)
+        response = await self._send_locked(
+            self._build_bean_tech_security_token_request(
+                state,
+                identifier,
+                operation=operation,
+                security_password=password,
+            ),
+            deadline=deadline,
+        )
+        result = _decode_g_app_envelope(response, operation=operation)
+        # 服务器把 JWT 直接放在 data 上，不是 {"securityToken": ...} 对象。
+        try:
+            token = _scalar_text(result)
+        except (TypeError, ValueError):
+            raise GwmSchemaError(operation=operation) from None
+        if token is None or not token or len(token) > 4096:
+            raise GwmSchemaError(operation=operation)
+        return token
 
     def _bean_tech_authenticated_headers(
         self,

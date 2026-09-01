@@ -167,6 +167,7 @@ def _client(
     clock: Any = lambda: CLOCK,
     sleeper: Any = None,
     config: ChinaClientConfig | None = None,
+    bean_tech_security_password: str | None = None,
 ) -> ChinaClient:
     return ChinaClient(
         config or ChinaClientConfig(),
@@ -176,7 +177,12 @@ def _client(
         nonce_source=lambda: FIXTURE["nonce"],
         sequence_source=lambda: BEAN_COMMAND_ID,
         sleeper=sleeper,
+        bean_tech_security_password=bean_tech_security_password,
     )
+
+
+def _deadline() -> _Deadline:
+    return _Deadline(asyncio.get_running_loop().time() + 10)
 
 
 def _assert_request(request: _ChinaTransportRequest, expected_name: str) -> None:
@@ -1436,6 +1442,57 @@ async def test_beantech_extended_controls_are_exact_and_unsupported_actions_fail
             ChinaVehicleControlCommand(identifier, "tailgate_open")
         )
     assert len(transport.calls) == before
+
+
+@pytest.mark.asyncio
+async def test_beantech_security_token_is_read_from_plain_data_string() -> None:
+    token = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJhIjoxfQ.sig"
+    transport = _FakeTransport(
+        acquire_vehicles=[FIXTURE["responses"]["discovery"]],
+        generate_security_token=[{"code": "000000", "data": token}],
+    )
+    client = _client(transport, bean_tech_security_password="ENCRYPTED==")
+    assert isinstance(
+        await client.authenticate(_credentials(), state=_complete_state()),
+        ChinaAuthenticated,
+    )
+    resolved = await client._generate_bean_tech_security_token(
+        client._required_session(operation="send_lock_command"),
+        VehicleIdentifier(BEAN_VIN),
+        operation="send_lock_command",
+        deadline=_deadline(),
+    )
+    assert resolved == token
+
+    request = next(
+        call for call in transport.calls if call.operation == "generate_security_token"
+    )
+    assert request.url.endswith("/app-api/api/v3.0/vehicle/security/generate-token")
+    assert json.loads(request.body or b"null") == {
+        "securityPwd": "ENCRYPTED==",
+        "eventType": 2,
+        "version": 1,
+    }
+
+
+@pytest.mark.asyncio
+async def test_beantech_security_token_rejects_non_string_data() -> None:
+    transport = _FakeTransport(
+        acquire_vehicles=[FIXTURE["responses"]["discovery"]],
+        generate_security_token=[{"code": "000000", "data": {"securityToken": "x"}}],
+    )
+    client = _client(transport, bean_tech_security_password="ENCRYPTED==")
+    assert isinstance(
+        await client.authenticate(_credentials(), state=_complete_state()),
+        ChinaAuthenticated,
+    )
+    with pytest.raises(GwmSchemaError):
+        await client._generate_bean_tech_security_token(
+            client._required_session(operation="send_lock_command"),
+            VehicleIdentifier(BEAN_VIN),
+            operation="send_lock_command",
+            deadline=_deadline(),
+        )
 
 
 @pytest.mark.asyncio

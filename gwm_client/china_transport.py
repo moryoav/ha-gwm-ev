@@ -66,6 +66,7 @@ type _ChinaOperation = Literal[
     "send_close_windows_command",
     "send_vehicle_control_command",
     "get_remote_command_result",
+    "generate_security_token",
 ]
 
 _G_APP_ORIGIN = "https://gapp-api.gwmapp-h.com"
@@ -95,6 +96,10 @@ _BEAN_TECH_RESULT_URL = (
     "https://gw-app-gateway.gwmapp-h.com/app-api/api/v1.0/vehicle/getRemoteCtrlResultT5"
 )
 _BEAN_TECH_RESULT_PATH = "/app-api/api/v1.0/vehicle/getRemoteCtrlResultT5"
+_BEAN_TECH_SECURITY_TOKEN_URL = (
+    "https://gw-app-gateway.gwmapp-h.com/app-api/api/v3.0/vehicle/security/generate-token"
+)
+_BEAN_TECH_SECURITY_TOKEN_PATH = "/app-api/api/v3.0/vehicle/security/generate-token"
 _AUTO_AI_LOGIN_ORIGIN = _G_APP_ORIGIN
 _AUTO_AI_LOGIN_PATH = "/tsp/v1/proxy/navinfo/GW.M.APP_LOGIN"
 _DISCOVERY_URL = (
@@ -286,6 +291,8 @@ class _ChinaTransportRequest:
             _validate_vehicle_control_command_request(self, copied)
         elif self.operation == "get_remote_command_result":
             _validate_remote_command_result_request(self, copied)
+        elif self.operation == "generate_security_token":
+            _validate_bean_tech_security_token_request(self, copied)
         else:  # pragma: no cover - the Literal is still a runtime boundary
             raise ValueError("operation_invalid")
         object.__setattr__(self, "headers", MappingProxyType(copied))
@@ -1462,6 +1469,38 @@ def _validate_bean_tech_command_result_request(
             headers["bt-auth-nonce"],
             headers["bt-auth-timestamp"],
             "seqno=" + sequence,
+        )
+    ):
+        raise ValueError("route_invalid")
+
+
+def _validate_bean_tech_security_token_request(
+    request: _ChinaTransportRequest,
+    headers: Mapping[str, str],
+) -> None:
+    raw_body = _utf8_body(request.body)
+    body = _decode_wire_object(raw_body) if raw_body is not None else None
+    if (
+        request.service != "bean_tech"
+        or request.method != "POST"
+        or request.url != _BEAN_TECH_SECURITY_TOKEN_URL
+        or raw_body is None
+        or not isinstance(body, Mapping)
+        or set(headers) != _BEAN_TECH_COMMAND_HEADERS
+        or list(body) != ["securityPwd", "eventType", "version"]
+        or not _safe_wire_text(body.get("securityPwd"), maximum=16 * 1024)
+        or body.get("eventType") != 2
+        or body.get("version") != 1
+        or _VIN.fullmatch(headers.get("vin", "")) is None
+        or headers.get("Content-Type") != "application/json; charset=UTF-8"
+        or not _valid_bean_tech_authenticated_headers(headers)
+        or headers.get("bt-auth-sign")
+        != bean_tech_sign(
+            "POST",
+            _BEAN_TECH_SECURITY_TOKEN_PATH,
+            headers["bt-auth-nonce"],
+            headers["bt-auth-timestamp"],
+            "json=" + raw_body,
         )
     ):
         raise ValueError("route_invalid")
