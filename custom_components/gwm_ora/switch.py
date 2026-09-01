@@ -229,14 +229,16 @@ class GwmRemoteStartSwitch(_OptimisticRemoteSwitch):
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Start the engine."""
-        await async_call_gwm_api(
+        command = await async_call_gwm_api(
             self._api.async_vehicle_control(self.vin, "remote_start")
         )
+        self.coordinator.async_track_command(command)
         self._set_optimistic(True)
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Stop the engine."""
-        await async_call_gwm_api(
+        command = await async_call_gwm_api(
             self._api.async_vehicle_control(self.vin, "remote_stop")
         )
+        self.coordinator.async_track_command(command)
         self._set_optimistic(False)
