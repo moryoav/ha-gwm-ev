@@ -2063,13 +2063,17 @@ class ChinaClient:
 
         encoded_vin = quote(identifier.value, safe="", encoding="utf-8", errors="strict")
         query = "seqNo=" + encoded_sequence + "&vin=" + encoded_vin + "&msgType=remote"
+        # The bt-auth-sign canonical string sorts query keys, lowercases them and
+        # concatenates without separators (matches the retired add-on's
+        # SendBeanTechGetAsync and the NavInfo result request).
+        parameter = "msgtype=remote" + "seqno=" + command_id + "vin=" + identifier.value
         headers = self._bean_tech_authenticated_headers(
             state,
             identifier,
             operation=operation,
             method="GET",
             path=_BEAN_TECH_TIMELY_RESULT_PATH,
-            parameter=query,
+            parameter=parameter,
         )
         return _ChinaTransportRequest(
             operation=operation,

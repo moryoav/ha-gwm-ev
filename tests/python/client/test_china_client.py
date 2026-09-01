@@ -27,6 +27,7 @@ from gwm_client.china_client import (
     ChinaVehicleStatus,
     ChinaVerificationRequired,
 )
+from gwm_client.china_crypto import bean_tech_sign
 from gwm_client.china_transport import (
     _ChinaTransportRequest,
     _ChinaTransportResponse,
@@ -1780,14 +1781,24 @@ def test_beantech_timely_request_rejects_engine_start_without_body() -> None:
 
 def test_beantech_result_request_uses_v3_endpoint_when_password_configured() -> None:
     client = _client(_FakeTransport(), bean_tech_security_password="ENCRYPTED==")
+    command_id = "0" * 32 + "9359"
     request = client._build_bean_tech_result_request(
         _complete_state(),
         VehicleIdentifier(BEAN_VIN),
-        "0" * 32 + "9359",
+        command_id,
     )
     assert "/app-api/api/v3.0/vehicle/remote-ctrl/result" in request.url
     assert "msgType=remote" in request.url
     assert BEAN_VIN in request.url
+    # The sign must use the canonical parameter (sorted, lowercased keys, no
+    # separators) exactly as the retired add-on's SendBeanTechGetAsync did.
+    assert request.headers["bt-auth-sign"] == bean_tech_sign(
+        "GET",
+        "/app-api/api/v3.0/vehicle/remote-ctrl/result",
+        request.headers["bt-auth-nonce"],
+        request.headers["bt-auth-timestamp"],
+        "msgtype=remote" + "seqno=" + command_id + "vin=" + BEAN_VIN,
+    )
 
 
 def test_beantech_result_request_keeps_t5_endpoint_without_password() -> None:
