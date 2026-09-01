@@ -1296,6 +1296,49 @@ async def test_beantech_lock_close_windows_and_legacy_result_are_isolated() -> N
 
 
 @pytest.mark.asyncio
+async def test_beantech_lock_and_windows_use_timely_with_token() -> None:
+    transport = _FakeTransport(
+        acquire_vehicles=[FIXTURE["responses"]["discovery"]],
+        generate_security_token=[
+            {"code": "000000", "data": "JWT"} for _ in range(3)
+        ],
+        send_lock_command=[{"code": "000000", "data": {}} for _ in range(2)],
+        send_close_windows_command=[{"code": "000000", "data": {}}],
+    )
+    client = _client(transport, bean_tech_security_password="ENCRYPTED==")
+    assert isinstance(
+        await client.authenticate(_credentials(), state=_complete_state()),
+        ChinaAuthenticated,
+    )
+    identifier = VehicleIdentifier(BEAN_VIN)
+    await client.send_lock_command(DoorLockCommand(identifier, lock=False))
+    await client.send_lock_command(DoorLockCommand(identifier, lock=True))
+    await client.send_close_windows_command(CloseWindowsCommand(identifier))
+
+    bodies = [
+        json.loads(call.body or b"null")
+        for call in transport.calls
+        if call.operation in {"send_lock_command", "send_close_windows_command"}
+    ]
+    assert [body["commands"][0] for body in bodies] == [
+        {"controlType": "VEHICLE_UNLOCK"},
+        {"controlType": "VEHICLE_LOCK"},
+        {
+            "controlType": "WINDOW_CLOSE",
+            "cmdBody": {
+                "leftFront": 0,
+                "leftBack": 0,
+                "rightFront": 0,
+                "rightBack": 0,
+            },
+        },
+    ]
+    assert sum(
+        1 for call in transport.calls if call.operation == "generate_security_token"
+    ) == 3
+
+
+@pytest.mark.asyncio
 async def test_task18_commands_reject_unknown_china_platform_before_transport() -> None:
     transport = _FakeTransport(acquire_vehicles=[FIXTURE["responses"]["discovery"]])
     client = _client(transport)

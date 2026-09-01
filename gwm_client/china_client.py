@@ -1390,29 +1390,15 @@ class ChinaClient:
             raise GwmRoutePolicyError(operation=operation)
 
         if platform == "beantech":
-            try:
-                sequence_number = self._sequence_source()
-            except Exception:
-                raise GwmConfigurationError(operation=operation) from None
-            if (
-                not isinstance(sequence_number, str)
-                or _BEAN_TECH_SEQUENCE.fullmatch(sequence_number) is None
-            ):
-                raise GwmConfigurationError(operation=operation)
             control_type, command_body = _bean_tech_lock_window_control(command_code)
-            response = await self._send_locked(
-                self._build_bean_tech_command_request(
-                    state,
-                    command.identifier,
-                    sequence_number=sequence_number,
-                    operation=operation,
-                    control_type=control_type,
-                    command_body=command_body,
-                ),
+            return await self._send_bean_tech_control(
+                state,
+                command.identifier,
+                operation=operation,
+                control_type=control_type,
+                command_body=command_body,
                 deadline=deadline,
             )
-            _decode_g_app_envelope(response, operation=operation)
-            return RemoteCommandAcceptance(sequence_number)
 
         if state.auto_ai_token_id is None or state.auto_ai_user_id is None:
             raise GwmAuthenticationError(operation=operation)
