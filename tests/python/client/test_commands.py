@@ -443,6 +443,7 @@ def test_china_vehicle_control_contract_is_closed_and_platform_filtered() -> Non
         "remote_stop",
         "horn",
         "flash_lights",
+        "horn_and_lights",
         "sunroof_close",
     } == BEANTECH_CHINA_VEHICLE_CONTROL_ACTIONS
     assert (

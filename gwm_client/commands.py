@@ -51,6 +51,7 @@ BEANTECH_CHINA_VEHICLE_CONTROL_ACTIONS: frozenset[ChinaVehicleControlAction] = f
         "remote_stop",
         "horn",
         "flash_lights",
+        "horn_and_lights",
         "sunroof_close",
     }
 )

@@ -1608,3 +1608,30 @@ async def test_invalid_auth_timeout_and_code_fail_without_http() -> None:
             allow_sms_login="yes",  # type: ignore[arg-type]
         )
     assert transport.calls == []
+
+
+@pytest.mark.asyncio
+async def test_beantech_horn_and_lights_maps_to_whistle_flash() -> None:
+    transport = _FakeTransport(
+        acquire_vehicles=[FIXTURE["responses"]["discovery"]],
+        send_vehicle_control_command=[{"code": "000000", "data": {}}],
+    )
+    client = _client(transport)
+    assert isinstance(
+        await client.authenticate(_credentials(), state=_complete_state()),
+        ChinaAuthenticated,
+    )
+    accepted = await client.send_vehicle_control_command(
+        ChinaVehicleControlCommand(VehicleIdentifier(BEAN_VIN), "horn_and_lights")
+    )
+    assert accepted.command_id == BEAN_COMMAND_ID
+
+    sends = [
+        json.loads(request.body or b"null")
+        for request in transport.calls
+        if request.operation == "send_vehicle_control_command"
+    ]
+    assert sends[0]["commands"][0] == {
+        "controlType": "WHISTLE_FLASH",
+        "cmdBody": None,
+    }

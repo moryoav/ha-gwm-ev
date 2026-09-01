@@ -2588,6 +2588,8 @@ def _bean_tech_vehicle_control(
         return "WHISTLE", None
     if command.action == "flash_lights":
         return "FLASH", None
+    if command.action == "horn_and_lights":
+        return "WHISTLE_FLASH", None
     if command.action == "sunroof_close":
         return "SKYLIGNT_CLOSE", {"skyLight": 0}
     raise ValueError("vehicle_control_action_invalid")

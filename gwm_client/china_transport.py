@@ -1314,6 +1314,7 @@ def _valid_bean_tech_command_request(
                 "ENGINE_STOP": None,
                 "WHISTLE": None,
                 "FLASH": None,
+                "WHISTLE_FLASH": None,
                 "SKYLIGNT_CLOSE": {"skyLight": 0},
             }
             valid_command = (
