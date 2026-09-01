@@ -102,6 +102,7 @@
           "enable_remote_commands": "Enable remote commands",
           "enable_charging_control": "Enable charging control",
           "security_pin": "Vehicle security PIN",
+          "beantech_encrypted_security_pin": "BeanTech encrypted security PIN",
           "log_level": "Log level"
         },
         "data_description": {
@@ -109,6 +110,7 @@
           "enable_remote_commands": "Explicit opt-in for supported remote command controls.",
           "enable_charging_control": "Independent explicit opt-in for charging schedules.",
           "security_pin": "Required for remote commands outside mainland China. The stored value is shown in a masked password field and remains redacted from diagnostics.",
+          "beantech_encrypted_security_pin": "Mainland China BeanTech vehicles only. Paste the encrypted value produced by the app, not your PIN digits. Leave empty to keep the existing command path.",
           "log_level": "Integration-specific diagnostic verbosity."
         }
       }
