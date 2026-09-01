@@ -19,6 +19,10 @@ from .errors import GwmCommandError
 
 PARALLEL_UPDATES = 0
 
+# How long a switch keeps showing the requested state before falling back to
+# the value reported by the car.
+OPTIMISTIC_STATE_TIMEOUT = 120.0
+
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -44,6 +48,9 @@ async def async_setup_entry(
                 entry.runtime_data.api, entry.runtime_data.coordinator, vehicle["vin"]
             ),
             GwmFrontDefrosterSwitch(
+                entry.runtime_data.api, entry.runtime_data.coordinator, vehicle["vin"]
+            ),
+            GwmRemoteStartSwitch(
                 entry.runtime_data.api, entry.runtime_data.coordinator, vehicle["vin"]
             ),
         ),
@@ -149,3 +156,87 @@ class GwmChargingScheduleSwitch(GwmEntity, SwitchEntity):
             forbidden_translation_key="charging_control_unavailable",
         )
         self.coordinator.set_charging_plan_active(self.vin, False)
+
+
+class _OptimisticRemoteSwitch(GwmEntity, SwitchEntity):
+    """Switch that shows the requested state until the car reports back.
+
+    Remote commands take a while to land in the polled status snapshot, so a
+    plain switch snaps back to the old state right after being toggled. Setting
+    ``assumed_state`` would fix that, but it also makes Home Assistant render
+    the entity as a pair of on/off buttons instead of a single toggle, so the
+    requested state is tracked here with a timeout instead.
+    """
+
+    _optimistic_state: bool | None = None
+    _optimistic_until: float = 0.0
+
+    def _actual_is_on(self) -> bool | None:
+        """Return the state reported by the car."""
+        raise NotImplementedError
+
+    @property
+    def is_on(self) -> bool | None:
+        if (
+            self._optimistic_state is not None
+            and time.monotonic() < self._optimistic_until
+        ):
+            return self._optimistic_state
+        return self._actual_is_on()
+
+    def _set_optimistic(self, value: bool) -> None:
+        """Show ``value`` until the car confirms it or the timeout expires."""
+        self._optimistic_state = value
+        self._optimistic_until = time.monotonic() + OPTIMISTIC_STATE_TIMEOUT
+        self.async_write_ha_state()
+
+    def _handle_coordinator_update(self) -> None:
+        # Only stop overriding once the car confirms the requested state, or the
+        # timeout expires. Do not budget this by coordinator updates: command
+        # status is pushed every couple of seconds, which would clear an
+        # optimistic state far sooner than the intended timeout.
+        if self._optimistic_state is not None and (
+            self._actual_is_on() == self._optimistic_state
+            or time.monotonic() >= self._optimistic_until
+        ):
+            self._optimistic_state = None
+        super()._handle_coordinator_update()
+
+
+class GwmRemoteStartSwitch(_OptimisticRemoteSwitch):
+    """Remote engine start/stop for BeanTech vehicles."""
+
+    _attr_translation_key = "remote_start"
+
+    def __init__(self, api, coordinator, vin: str) -> None:
+        super().__init__(coordinator, vin)
+        self._api = api
+        self._attr_unique_id = f"{vin}_remote_start"
+
+    def _actual_is_on(self) -> bool | None:
+        """Return whether the engine is running."""
+        return vehicle_value(self.vehicle, "engine_state_code") == 1
+
+    @property
+    def available(self) -> bool:
+        """Return whether remote start is available."""
+        return (
+            super().available
+            and self.remote_commands_available
+            and self.is_china_beantech
+            and self.security_pin_configured
+        )
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        """Start the engine."""
+        await async_call_gwm_api(
+            self._api.async_vehicle_control(self.vin, "remote_start")
+        )
+        self._set_optimistic(True)
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        """Stop the engine."""
+        await async_call_gwm_api(
+            self._api.async_vehicle_control(self.vin, "remote_stop")
+        )
+        self._set_optimistic(False)

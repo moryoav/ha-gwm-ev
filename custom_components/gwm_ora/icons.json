@@ -159,6 +159,9 @@
       },
       "charging_schedule": {
         "default": "mdi:calendar-clock"
+      },
+      "remote_start": {
+        "default": "mdi:engine"
       }
     }
   }

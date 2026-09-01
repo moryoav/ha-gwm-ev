@@ -272,7 +272,8 @@
     },
     "switch": {
       "front_defroster": { "name": "Front defroster" },
-      "charging_schedule": { "name": "Scheduled charging" }
+      "charging_schedule": { "name": "Scheduled charging" },
+      "remote_start": { "name": "Remote start" }
     }
   },
   "services": {

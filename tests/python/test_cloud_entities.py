@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, call, patch
 
 import pytest
 
@@ -30,6 +30,7 @@ from custom_components.gwm_ora.sensor import (
 from custom_components.gwm_ora.switch import (
     GwmChargingScheduleSwitch,
     GwmFrontDefrosterSwitch,
+    GwmRemoteStartSwitch,
 )
 
 
@@ -318,7 +319,9 @@ async def test_task19_china_buttons_are_capability_and_platform_filtered() -> No
         "tailgate_open",
         "open_tailgate",
     ).available
-    assert GwmChinaRemoteButton(
+    # ``remote_start`` moved to a switch, so BeanTech no longer exposes it as a
+    # button (the NavInfo ``remote_start`` button above is unaffected).
+    assert not GwmChinaRemoteButton(
         api,
         coordinator,
         "SYNTHETIC-BEANTECH",
@@ -444,3 +447,68 @@ async def test_security_pin_configured_reflects_option() -> None:
 
     entity = _beantech_entity({"beantech_encrypted_security_pin": "   "})
     assert entity.security_pin_configured is False
+
+
+@pytest.mark.asyncio
+async def test_beantech_remote_start_switch_replaces_remote_start_buttons() -> None:
+    api = SimpleNamespace(
+        async_vehicle_control=AsyncMock(
+            side_effect=(
+                {"id": "remote-start", "state": "in_progress"},
+                {"id": "remote-stop", "state": "in_progress"},
+            )
+        )
+    )
+    config_entry = SimpleNamespace(
+        options={"beantech_encrypted_security_pin": "X=="},
+        async_on_unload=lambda callback: None,
+    )
+    coordinator = GwmDataUpdateCoordinator(
+        HomeAssistant("synthetic-config"),
+        api,
+        cloud_client=SimpleNamespace(),  # type: ignore[arg-type]
+        config_entry=config_entry,  # type: ignore[arg-type]
+    )
+
+    def china_vehicle(vin: str, platform: str, engine_state_code: int) -> dict[str, Any]:
+        return {
+            "vin": vin,
+            "platform": platform,
+            "name": f"Vehicle {vin[-1]}",
+            "manufacturer": "GWM",
+            "model": "Synthetic",
+            "serial_number": f"SERIAL-{vin[-1]}",
+            "capabilities": {"remote_commands": True},
+            "values": {"engine_state_code": engine_state_code},
+            "timestamps": {},
+            "climate": {},
+            "raw_items": {},
+        }
+
+    coordinator.async_set_updated_data(
+        {
+            "region": "cn",
+            "vehicles": [
+                china_vehicle("SYNTHETIC-BEANTECH", "beantech", 0),
+                china_vehicle("SYNTHETIC-NAVINFO", "navinfo", 0),
+            ],
+        }
+    )
+
+    switch = GwmRemoteStartSwitch(api, coordinator, "SYNTHETIC-BEANTECH")
+    assert switch.available
+    assert switch.is_on is False
+
+    # NavInfo vehicles must not expose the BeanTech remote-start switch.
+    assert not GwmRemoteStartSwitch(api, coordinator, "SYNTHETIC-NAVINFO").available
+
+    with patch.object(switch, "async_write_ha_state"):
+        await switch.async_turn_on()
+        assert switch.is_on is True
+        await switch.async_turn_off()
+        assert switch.is_on is False
+
+    assert api.async_vehicle_control.await_args_list == [
+        call("SYNTHETIC-BEANTECH", "remote_start"),
+        call("SYNTHETIC-BEANTECH", "remote_stop"),
+    ]

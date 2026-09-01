@@ -28,8 +28,6 @@ CHINA_REMOTE_BUTTONS: tuple[tuple[str, str], ...] = (
 )
 
 BEANTECH_REMOTE_ACTIONS = {
-    "remote_start",
-    "remote_stop",
     "horn",
     "flash_lights",
     "horn_and_lights",

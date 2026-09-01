@@ -272,7 +272,8 @@
     },
     "switch": {
       "front_defroster": { "name": "前除霜" },
-      "charging_schedule": { "name": "定时充电" }
+      "charging_schedule": { "name": "定时充电" },
+      "remote_start": { "name": "远程启动" }
     }
   },
   "services": {
