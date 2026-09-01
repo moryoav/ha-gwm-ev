@@ -9,11 +9,11 @@ from __future__ import annotations
 
 import asyncio
 import re
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Protocol, cast
+from typing import Any, Protocol, cast
 
 from homeassistant.core import HomeAssistant
 
@@ -71,6 +71,7 @@ from .cloud_auth import (
 from .const import (
     CONF_ACCOUNT,
     CONF_AUTHENTICATION_METHOD,
+    CONF_BEANTECH_ENCRYPTED_SECURITY_PIN,
     CONF_COUNTRY,
     CONF_PASSWORD,
     CONF_REGION,
@@ -84,6 +85,14 @@ from .const import (
 _HANDOFF_TTL_SECONDS = 5 * 60
 _HANDOFF_DATA_KEY = f"{DOMAIN}_cloud_handoffs"
 _ACCOUNT_BINDING = re.compile(r"[0-9a-f]{64}")
+
+
+def _optional_option_text(data: Mapping[str, Any], key: str) -> str | None:
+    value = data.get(key)
+    if not isinstance(value, str):
+        return None
+    stripped = value.strip()
+    return stripped or None
 
 
 class _OverseasReadClient(Protocol):
@@ -422,6 +431,7 @@ class GwmCloudClient:
         bootstrap: GwmCloudBootstrap,
         *,
         state_store: _AuthStateStore | None = None,
+        options: Mapping[str, Any] | None = None,
         climate_commands_enabled: bool = False,
         lock_window_commands_enabled: bool = False,
         charging_control_enabled: bool = False,
@@ -453,6 +463,9 @@ class GwmCloudClient:
             client = ChinaClient(
                 ChinaClientConfig(),
                 authenticated_state=bootstrap.state,
+                bean_tech_security_password=_optional_option_text(
+                    options or {}, CONF_BEANTECH_ENCRYPTED_SECURITY_PIN
+                ),
             )
             return cls(
                 credentials.region,

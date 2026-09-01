@@ -19,7 +19,7 @@ from custom_components.gwm_ora.button import (
 )
 from custom_components.gwm_ora.climate import GwmClimate
 from custom_components.gwm_ora.coordinator import GwmDataUpdateCoordinator
-from custom_components.gwm_ora.entity import setup_vehicle_entities
+from custom_components.gwm_ora.entity import GwmEntity, setup_vehicle_entities
 from custom_components.gwm_ora.lock import GwmDoorLock
 from custom_components.gwm_ora.number import GwmClimateRunTimeNumber
 from custom_components.gwm_ora.sensor import (
@@ -418,3 +418,29 @@ async def test_overseas_front_defroster_switch_and_air_circulation_button_are_ca
     assert api.async_set_front_defroster.await_args_list[1].kwargs == {"enabled": False}
     api.async_start_cabin_clean.assert_awaited_once_with("SYNTHETIC-A")
     assert coordinator.async_track_command.call_count == 3
+
+
+def _beantech_entity(options: dict[str, Any] | None = None) -> GwmEntity:
+    config_entry = SimpleNamespace(
+        options=options or {},
+        async_on_unload=lambda callback: None,
+    )
+    coordinator = GwmDataUpdateCoordinator(
+        HomeAssistant("synthetic-config"),
+        SimpleNamespace(),
+        cloud_client=SimpleNamespace(),  # type: ignore[arg-type]
+        config_entry=config_entry,  # type: ignore[arg-type]
+    )
+    return GwmEntity(coordinator, "SYNTHETIC-BEANTECH")
+
+
+@pytest.mark.asyncio
+async def test_security_pin_configured_reflects_option() -> None:
+    entity = _beantech_entity({})
+    assert entity.security_pin_configured is False
+
+    entity = _beantech_entity({"beantech_encrypted_security_pin": "X=="})
+    assert entity.security_pin_configured is True
+
+    entity = _beantech_entity({"beantech_encrypted_security_pin": "   "})
+    assert entity.security_pin_configured is False
