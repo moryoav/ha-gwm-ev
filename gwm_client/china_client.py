@@ -2042,23 +2042,40 @@ class ChinaClient:
         command_id: str,
     ) -> _ChinaTransportRequest:
         operation: Literal["get_remote_command_result"] = "get_remote_command_result"
+        encoded_sequence = quote(command_id, safe="", encoding="utf-8", errors="strict")
+        if self._bean_tech_security_password is None:
+            headers = self._bean_tech_authenticated_headers(
+                state,
+                identifier,
+                operation=operation,
+                method="GET",
+                path=_BEAN_TECH_RESULT_PATH,
+                parameter="seqno=" + command_id,
+            )
+            return _ChinaTransportRequest(
+                operation=operation,
+                service="bean_tech",
+                method="GET",
+                url=_BEAN_TECH_RESULT_URL + "?seqNo=" + encoded_sequence,
+                headers=headers,
+                body=None,
+            )
+
+        encoded_vin = quote(identifier.value, safe="", encoding="utf-8", errors="strict")
+        query = "seqNo=" + encoded_sequence + "&vin=" + encoded_vin + "&msgType=remote"
         headers = self._bean_tech_authenticated_headers(
             state,
             identifier,
             operation=operation,
             method="GET",
-            path=_BEAN_TECH_RESULT_PATH,
-            parameter="seqno=" + command_id,
+            path=_BEAN_TECH_TIMELY_RESULT_PATH,
+            parameter=query,
         )
         return _ChinaTransportRequest(
             operation=operation,
             service="bean_tech",
             method="GET",
-            url=(
-                _BEAN_TECH_RESULT_URL
-                + "?seqNo="
-                + quote(command_id, safe="", encoding="utf-8", errors="strict")
-            ),
+            url=_BEAN_TECH_TIMELY_RESULT_URL + "?" + query,
             headers=headers,
             body=None,
         )

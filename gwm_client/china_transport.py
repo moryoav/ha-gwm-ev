@@ -1532,13 +1532,26 @@ def _validate_remote_command_result_request(
         or headers.get("Accept-Encoding") != "gzip"
         or headers.get("User-Agent") != _OFFICIAL_USER_AGENT
         or headers.get("bt-auth-sign")
-        != bean_tech_sign(
-            "GET",
-            _NAVINFO_RESULT_PATH,
-            headers["bt-auth-nonce"],
-            headers["bt-auth-timestamp"],
-            "msgtype=remote" + "seqno=" + sequence + "vin=" + vin,
-        )
+        not in {
+            bean_tech_sign(
+                "GET",
+                _NAVINFO_RESULT_PATH,
+                headers["bt-auth-nonce"],
+                headers["bt-auth-timestamp"],
+                "msgtype=remote" + "seqno=" + sequence + "vin=" + vin,
+            ),
+            bean_tech_sign(
+                "GET",
+                _NAVINFO_RESULT_PATH,
+                headers["bt-auth-nonce"],
+                headers["bt-auth-timestamp"],
+                "seqNo="
+                + quote(sequence, safe="", encoding="utf-8", errors="strict")
+                + "&vin="
+                + quote(query_vin, safe="", encoding="utf-8", errors="strict")
+                + "&msgType=remote",
+            ),
+        }
     ):
         raise ValueError("route_invalid")
 

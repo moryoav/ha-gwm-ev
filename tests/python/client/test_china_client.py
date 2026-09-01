@@ -1708,6 +1708,30 @@ def test_beantech_timely_request_rejects_engine_start_without_body() -> None:
         )
 
 
+def test_beantech_result_request_uses_v3_endpoint_when_password_configured() -> None:
+    client = _client(_FakeTransport(), bean_tech_security_password="ENCRYPTED==")
+    request = client._build_bean_tech_result_request(
+        _complete_state(),
+        VehicleIdentifier(BEAN_VIN),
+        "0" * 32 + "9359",
+    )
+    assert "/app-api/api/v3.0/vehicle/remote-ctrl/result" in request.url
+    assert "msgType=remote" in request.url
+    assert BEAN_VIN in request.url
+
+
+def test_beantech_result_request_keeps_t5_endpoint_without_password() -> None:
+    client = _client(_FakeTransport())
+    request = client._build_bean_tech_result_request(
+        _complete_state(),
+        VehicleIdentifier(BEAN_VIN),
+        "0" * 32 + "9359",
+    )
+    assert request.url.startswith(
+        "https://gw-app-gateway.gwmapp-h.com/app-api/api/v1.0/vehicle/getRemoteCtrlResultT5"
+    )
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("tank_capacity", ["not-a-number", -1, True, [], "NaN", 10**400])
 async def test_optional_tank_capacity_quirks_do_not_reject_discovery(tank_capacity: object) -> None:
