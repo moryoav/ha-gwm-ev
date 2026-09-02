@@ -398,11 +398,36 @@ class GwmBatteryAppointmentHeatingSwitch(GwmEntity, SwitchEntity):
         )
 
     async def async_turn_on(self, **kwargs: Any) -> None:
-        """Arm appointment heating for a departure shortly from now."""
-        departure_ms = (
-            int(time.time() * 1000)
-            + DEFAULT_BATTERY_APPOINTMENT_OFFSET_MINUTES * 60 * 1000
-        )
+        """Arm appointment heating for the selected departure time.
+
+        Uses the departure time chosen in the companion ``select`` entity when
+        set; otherwise falls back to a short default offset.
+        """
+        selected = self.coordinator.local_flag(self.vin, "battery_appointment_time")
+        if isinstance(selected, str) and ":" in selected:
+            hour_text, minute_text = selected.split(":", 1)
+            now = time.localtime()
+            target = time.mktime(
+                (
+                    now.tm_year,
+                    now.tm_mon,
+                    now.tm_mday,
+                    int(hour_text),
+                    int(minute_text),
+                    0,
+                    0,
+                    0,
+                    -1,
+                )
+            )
+            if target < time.mktime(now):
+                target += 24 * 3600
+            departure_ms = int(target * 1000)
+        else:
+            departure_ms = (
+                int(time.time() * 1000)
+                + DEFAULT_BATTERY_APPOINTMENT_OFFSET_MINUTES * 60 * 1000
+            )
         command = await async_call_gwm_api(
             self._api.async_set_battery_heating_appointment(
                 self.vin, enable=True, use_car_time_ms=departure_ms
