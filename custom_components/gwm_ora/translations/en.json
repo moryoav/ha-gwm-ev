@@ -210,7 +210,8 @@
       "aux_battery": { "name": "Auxiliary battery" },
       "remaining_usable_charge": { "name": "Remaining usable charge" },
       "battery_pack_current": { "name": "Charging current" },
-      "battery_pack_voltage": { "name": "Charging voltage" }
+      "battery_pack_voltage": { "name": "Charging voltage" },
+      "latest_remote_record": { "name": "Latest remote-control record" }
     },
     "binary_sensor": {
       "charging_active": { "name": "Charging active" },

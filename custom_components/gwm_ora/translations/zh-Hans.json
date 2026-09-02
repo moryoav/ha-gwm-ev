@@ -210,7 +210,8 @@
       "aux_battery": { "name": "蓄电池电量" },
       "remaining_usable_charge": { "name": "剩余可用电量" },
       "battery_pack_current": { "name": "充电电流" },
-      "battery_pack_voltage": { "name": "充电电压" }
+      "battery_pack_voltage": { "name": "充电电压" },
+      "latest_remote_record": { "name": "最新远控记录" }
     },
     "binary_sensor": {
       "charging_active": { "name": "充电中" },

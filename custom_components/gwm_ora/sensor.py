@@ -24,8 +24,11 @@ from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.util import dt as dt_util
 
+from gwm_client import GwmClientError
+
 from . import GwmConfigEntry
 from .entity import GwmEntity, setup_vehicle_entities, vehicle_value
+from .errors import GwmCommandError
 
 PARALLEL_UPDATES = 0
 
@@ -524,12 +527,17 @@ async def async_setup_entry(
     setup_vehicle_entities(
         entry,
         async_add_entities,
-        lambda vehicle: (
-            GwmSensor(entry.runtime_data.coordinator, vehicle["vin"], description)
-            for description in _sensor_descriptions_for_vehicle(
-                vehicle, entry.runtime_data.coordinator.region
-            )
-        ),
+        lambda vehicle: [
+            *(
+                GwmSensor(entry.runtime_data.coordinator, vehicle["vin"], description)
+                for description in _sensor_descriptions_for_vehicle(
+                    vehicle, entry.runtime_data.coordinator.region
+                )
+            ),
+            GwmLatestRemoteRecordSensor(
+                entry.runtime_data.api, entry.runtime_data.coordinator, vehicle["vin"]
+            ),
+        ],
     )
 
 
@@ -552,3 +560,46 @@ class GwmSensor(GwmEntity, SensorEntity):
     def native_value(self) -> Any:
         """Return the sensor value."""
         return self.entity_description.value_fn(self.vehicle)
+
+
+class GwmLatestRemoteRecordSensor(GwmEntity, SensorEntity):
+    """The most recent BeanTech remote-control record's result message."""
+
+    _attr_translation_key = "latest_remote_record"
+
+    def __init__(self, api, coordinator, vin: str) -> None:
+        super().__init__(coordinator, vin)
+        self._api = api
+        self._attr_unique_id = f"{vin}_latest_remote_record"
+        self._result_msg: str | None = None
+        self._control_name: str | None = None
+
+    @property
+    def available(self) -> bool:
+        return super().available and self.is_china_beantech
+
+    @property
+    def native_value(self) -> str | None:
+        return self._result_msg
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return {"control_name": self._control_name}
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        if not self.available:
+            return
+        await self._async_refresh()
+
+    async def _async_refresh(self) -> None:
+        try:
+            record = await self._api.async_get_latest_remote_record(self.vin)
+        except (GwmCommandError, GwmClientError):
+            self._result_msg = None
+            self._control_name = None
+            self.async_write_ha_state()
+            return
+        self._result_msg = record.get("result_msg")
+        self._control_name = record.get("control_name")
+        self.async_write_ha_state()

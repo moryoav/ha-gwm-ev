@@ -464,6 +464,23 @@ class GwmCommandApi:
             "active_warm": switch_status.get("activeKeepWarm") in (1, "1"),
         }
 
+    async def async_get_latest_remote_record(self, vin: str) -> dict[str, Any]:
+        """Read the latest BeanTech remote-control record."""
+        self._ensure_china_vehicle_control_available()
+        identifier = _vehicle_identifier(vin, command_name="Latest remote record")
+        data = await self._cloud.async_get_remote_command_records(
+            identifier, page_num=1, page_size=1
+        )
+        records = data.get("list") if isinstance(data, dict) else None
+        if isinstance(records, list) and records and isinstance(records[0], dict):
+            first = records[0]
+            return {
+                "result_msg": first.get("resultMsg"),
+                "control_name": first.get("controlName"),
+                "send_time": first.get("sendTime"),
+            }
+        return {"result_msg": None, "control_name": None, "send_time": None}
+
     async def async_set_comfort_mode(
         self,
         vin: str,

@@ -237,6 +237,14 @@ class _ChinaReadClient(Protocol):
         identifier: VehicleIdentifier,
     ) -> int | None: ...
 
+    async def get_remote_command_records(
+        self,
+        identifier: VehicleIdentifier,
+        *,
+        page_num: int,
+        page_size: int,
+    ) -> Mapping[str, object]: ...
+
     async def get_bean_tech_switch_status(
         self,
         identifier: VehicleIdentifier,
@@ -893,6 +901,24 @@ class GwmCloudClient:
         return await self._async_with_session_renewal(
             lambda: cast(_ChinaReadClient, self._client).get_bean_tech_ac_temperature(
                 identifier
+            )
+        )
+
+    async def async_get_remote_command_records(
+        self,
+        identifier: VehicleIdentifier,
+        *,
+        page_num: int = 1,
+        page_size: int = 1,
+    ) -> Mapping[str, object]:
+        """Read the latest BeanTech remote-control record through the client."""
+        if self.region != REGION_CHINA:
+            raise GwmRoutePolicyError(operation="get_remote_command_records")
+        return await self._async_with_session_renewal(
+            lambda: cast(_ChinaReadClient, self._client).get_remote_command_records(
+                identifier,
+                page_num=page_num,
+                page_size=page_size,
             )
         )
 

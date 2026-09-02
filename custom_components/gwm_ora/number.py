@@ -159,6 +159,7 @@ class GwmRemoteStartRunTimeNumber(GwmEntity, NumberEntity):
     _attr_native_min_value = 5
     _attr_native_max_value = 30
     _attr_native_step = 5
+    _attr_native_unit_of_measurement = "分钟"
 
     def __init__(self, api, coordinator, vin: str) -> None:
         super().__init__(coordinator, vin)
