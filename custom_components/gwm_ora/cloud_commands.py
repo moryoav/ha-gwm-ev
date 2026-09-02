@@ -464,6 +464,22 @@ class GwmCommandApi:
             "active_warm": switch_status.get("activeKeepWarm") in (1, "1"),
         }
 
+    async def async_set_comfort_mode(
+        self,
+        vin: str,
+        *,
+        mode_type: str,
+    ) -> dict[str, object]:
+        """Execute a BeanTech one-touch comfort mode (warm/cool/common)."""
+        self._ensure_china_vehicle_control_available()
+        if mode_type not in {"warm", "cool", "common"}:
+            raise GwmCommandError("Unsupported comfort mode")
+        identifier = _vehicle_identifier(vin, command_name="Comfort mode")
+        seq_no = await self._cloud.async_set_bean_tech_comfort_mode(
+            identifier, mode_type=mode_type
+        )
+        return await self._record_acceptance(identifier, "Comfort mode", seq_no)
+
     async def async_set_battery_heating_appointment(
         self,
         vin: str,

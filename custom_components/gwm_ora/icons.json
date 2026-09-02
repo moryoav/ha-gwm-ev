@@ -81,6 +81,9 @@
       "comfort_cool": {
         "default": "mdi:snowflake"
       },
+      "comfort_last": {
+        "default": "mdi:history"
+      },
       "comfort_off": {
         "default": "mdi:power"
       }

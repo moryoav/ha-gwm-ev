@@ -98,6 +98,7 @@ async def async_setup_entry(
                     ("cabin_clean", "cabin_clean"),
                     ("comfort_warm", "comfort_warm"),
                     ("comfort_cool", "comfort_cool"),
+                    ("comfort_last", "comfort_last"),
                     ("comfort_off", "comfort_off"),
                 )
             )
@@ -219,7 +220,17 @@ class GwmBeanTechComfortButton(GwmEntity, ButtonEntity):
 
     async def async_press(self) -> None:
         """Queue the configured BeanTech comfort command."""
-        command = await async_call_gwm_api(
-            self._api.async_vehicle_control(self.vin, self._action)
-        )
+        if self._action in {"comfort_warm", "comfort_cool", "comfort_last"}:
+            mode_type = {
+                "comfort_warm": "warm",
+                "comfort_cool": "cool",
+                "comfort_last": "common",
+            }[self._action]
+            command = await async_call_gwm_api(
+                self._api.async_set_comfort_mode(self.vin, mode_type=mode_type)
+            )
+        else:
+            command = await async_call_gwm_api(
+                self._api.async_vehicle_control(self.vin, self._action)
+            )
         self.coordinator.async_track_command(command)

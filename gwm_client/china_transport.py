@@ -75,6 +75,7 @@ type _ChinaOperation = Literal[
     "get_bean_tech_switch_status",
     "get_bean_tech_comfort_modes",
     "set_bean_tech_battery_heating_appointment",
+    "set_bean_tech_comfort_mode",
     "set_bean_tech_charge_soc",
     "set_bean_tech_cabin_clean_appointment",
     "set_bean_tech_charge_window",
@@ -351,6 +352,8 @@ class _ChinaTransportRequest:
             _validate_bean_tech_simple_get_request(self, copied)
         elif self.operation == "set_bean_tech_battery_heating_appointment":
             _validate_bean_tech_battery_heating_appointment_request(self, copied)
+        elif self.operation == "set_bean_tech_comfort_mode":
+            _validate_bean_tech_comfort_mode_request(self, copied)
         elif self.operation == "set_bean_tech_charge_soc":
             _validate_bean_tech_charge_soc_request(self, copied)
         elif self.operation == "set_bean_tech_cabin_clean_appointment":
@@ -1399,6 +1402,21 @@ _BEAN_TECH_COMFORT_MODE_BODIES: tuple[dict[str, object], ...] = (
 )
 
 
+def _valid_bean_tech_comfort_mode_body(cmd_body: object) -> bool:
+    """Return whether ``cmd_body`` is a COMFORT_MODE_CTRL body with a dynamic modeId."""
+    if not isinstance(cmd_body, Mapping):
+        return False
+    mode_id = cmd_body.get("modeId")
+    mode_type = cmd_body.get("type")
+    return (
+        list(cmd_body) == ["action", "modeId", "type"]
+        and cmd_body.get("action") == 1
+        and isinstance(mode_id, str)
+        and bool(mode_id.strip())
+        and mode_type in ("1", "2")
+    )
+
+
 def _bean_tech_vehicle_control_expects_body(control_type: str) -> bool:
     """Return whether ``control_type`` carries a non-null ``cmdBody``."""
     expected = _BEAN_TECH_VEHICLE_CONTROL_BODIES[control_type]
@@ -1507,7 +1525,7 @@ def _valid_bean_tech_command_request(
             elif control_type == "COMFORT_MODE_CTRL":
                 valid_command = (
                     valid_command_shape
-                    and command.get("cmdBody") in _BEAN_TECH_COMFORT_MODE_BODIES
+                    and _valid_bean_tech_comfort_mode_body(command.get("cmdBody"))
                 )
             else:
                 valid_command = False
@@ -1634,7 +1652,7 @@ def _valid_bean_tech_timely_command_request(
                 valid_command = (
                     has_cmd_body
                     and list(command) == ["controlType", "cmdBody"]
-                    and command.get("cmdBody") in _BEAN_TECH_COMFORT_MODE_BODIES
+                    and _valid_bean_tech_comfort_mode_body(command.get("cmdBody"))
                 )
             else:
                 valid_command = False
@@ -2089,6 +2107,36 @@ def _validate_bean_tech_subscribe_request(
             headers["bt-auth-timestamp"],
             "json=" + raw_body,
         )
+    ):
+        raise ValueError("route_invalid")
+
+
+def _validate_bean_tech_comfort_mode_request(
+    request: _ChinaTransportRequest,
+    headers: Mapping[str, str],
+) -> None:
+    raw_body = _utf8_body(request.body)
+    body = _decode_wire_object(raw_body) if raw_body is not None else None
+    if not isinstance(body, Mapping):
+        raise ValueError("route_invalid")
+    commands = body.get("commands")
+    if not isinstance(commands, list) or len(commands) != 1:
+        raise ValueError("route_invalid")
+    command = commands[0]
+    if not isinstance(command, Mapping):
+        raise ValueError("route_invalid")
+    valid_command = (
+        command.get("controlType") == "COMFORT_MODE_CTRL"
+        and list(command) == ["controlType", "cmdBody"]
+        and _valid_bean_tech_comfort_mode_body(command.get("cmdBody"))
+    )
+    if not valid_command or not _valid_bean_tech_timely_envelope(
+        request,
+        headers,
+        body=body,
+        sequence=body.get("seqNo"),
+        raw_body=raw_body,
+        send_type=0,
     ):
         raise ValueError("route_invalid")
 

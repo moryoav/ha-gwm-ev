@@ -286,6 +286,7 @@
       "cabin_clean": { "name": "座舱清洁" },
       "comfort_warm": { "name": "一键舒适（温暖）" },
       "comfort_cool": { "name": "一键舒适（凉爽）" },
+      "comfort_last": { "name": "一键舒适（常用）" },
       "comfort_off": { "name": "一键舒适关闭" }
     },
     "switch": {

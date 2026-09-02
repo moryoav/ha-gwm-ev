@@ -286,6 +286,7 @@
       "cabin_clean": { "name": "Cabin clean" },
       "comfort_warm": { "name": "Comfort warm" },
       "comfort_cool": { "name": "Comfort cool" },
+      "comfort_last": { "name": "Comfort (last used)" },
       "comfort_off": { "name": "Comfort off" }
     },
     "switch": {

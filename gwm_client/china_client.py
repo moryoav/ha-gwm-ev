@@ -931,6 +931,28 @@ class ChinaClient:
             ),
         )
 
+    async def set_bean_tech_comfort_mode(
+        self,
+        identifier: VehicleIdentifier,
+        *,
+        mode_type: Literal["warm", "cool", "common"],
+        timeout: float | None = None,
+    ) -> str:
+        """Execute a BeanTech one-touch comfort mode, resolving its dynamic modeId."""
+
+        operation = "set_bean_tech_comfort_mode"
+        if type(identifier) is not VehicleIdentifier:
+            raise GwmConfigurationError(operation=operation)
+        return await self._run_read(
+            operation,
+            timeout=timeout,
+            action=lambda deadline: self._set_bean_tech_comfort_mode_locked(
+                identifier,
+                mode_type=mode_type,
+                deadline=deadline,
+            ),
+        )
+
     async def set_bean_tech_battery_heating_appointment(
         self,
         identifier: VehicleIdentifier,
@@ -1778,6 +1800,7 @@ class ChinaClient:
             "send_vehicle_control_command",
             "send_climate_command",
             "set_bean_tech_battery_heating_appointment",
+            "set_bean_tech_comfort_mode",
             "set_bean_tech_charge_soc",
         ],
         commands: Sequence[tuple[str, Mapping[str, object] | None]],
@@ -2189,6 +2212,57 @@ class ChinaClient:
         if not isinstance(data, list):
             raise GwmSchemaError(operation=operation)
         return tuple(mode for mode in data if isinstance(mode, Mapping))
+
+    async def _set_bean_tech_comfort_mode_locked(
+        self,
+        identifier: VehicleIdentifier,
+        *,
+        mode_type: Literal["warm", "cool", "common"],
+        deadline: _Deadline,
+    ) -> str:
+        operation: Literal["set_bean_tech_comfort_mode"] = "set_bean_tech_comfort_mode"
+        state = self._required_session(operation=operation)
+        vehicle = self._vehicles.get(identifier.value.casefold())
+        if vehicle is None or (vehicle.platform or "").strip().casefold() != "beantech":
+            raise GwmRoutePolicyError(operation=operation)
+        modes = await self._get_bean_tech_comfort_modes_locked(
+            identifier, deadline=deadline
+        )
+        if mode_type == "common":
+            mode = next(
+                (m for m in modes if m.get("commonUseMode") in (1, "1")), None
+            )
+        else:
+            want_type = "1" if mode_type == "warm" else "2"
+            mode = next((m for m in modes if str(m.get("type")) == want_type), None)
+        mode_id = None if mode is None else mode.get("modeId")
+        mode_type_str = None if mode is None else mode.get("type")
+        if mode_id is None or mode_type_str is None:
+            raise GwmSchemaError(operation=operation)
+        sequence_number = self._bean_tech_sequence(operation=operation)
+        response = await self._send_locked(
+            self._build_bean_tech_timely_request_for_commands(
+                state,
+                identifier,
+                sequence_number=sequence_number,
+                operation=operation,
+                commands=[
+                    (
+                        "COMFORT_MODE_CTRL",
+                        {
+                            "action": 1,
+                            "modeId": str(mode_id),
+                            "type": str(mode_type_str),
+                        },
+                    )
+                ],
+                send_type=0,
+                security_token=None,
+            ),
+            deadline=deadline,
+        )
+        _decode_g_app_envelope(response, operation=operation)
+        return sequence_number
 
     async def _set_bean_tech_battery_heating_appointment_locked(
         self,
@@ -2630,6 +2704,7 @@ class ChinaClient:
             "send_vehicle_control_command",
             "send_climate_command",
             "set_bean_tech_battery_heating_appointment",
+            "set_bean_tech_comfort_mode",
             "set_bean_tech_charge_soc",
         ],
         control_type: str,
@@ -2719,6 +2794,7 @@ class ChinaClient:
             "send_vehicle_control_command",
             "send_climate_command",
             "set_bean_tech_battery_heating_appointment",
+            "set_bean_tech_comfort_mode",
             "set_bean_tech_charge_soc",
         ],
         control_type: str,
@@ -2747,6 +2823,7 @@ class ChinaClient:
             "send_vehicle_control_command",
             "send_climate_command",
             "set_bean_tech_battery_heating_appointment",
+            "set_bean_tech_comfort_mode",
             "set_bean_tech_charge_soc",
         ],
         commands: Sequence[tuple[str, Mapping[str, object] | None]],

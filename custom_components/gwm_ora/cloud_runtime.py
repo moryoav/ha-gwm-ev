@@ -247,6 +247,13 @@ class _ChinaReadClient(Protocol):
         identifier: VehicleIdentifier,
     ) -> tuple[Mapping[str, object], ...]: ...
 
+    async def set_bean_tech_comfort_mode(
+        self,
+        identifier: VehicleIdentifier,
+        *,
+        mode_type: str,
+    ) -> str: ...
+
     async def get_bean_tech_battery_heating_appointment(
         self,
         identifier: VehicleIdentifier,
@@ -912,6 +919,22 @@ class GwmCloudClient:
         return await self._async_with_session_renewal(
             lambda: cast(_ChinaReadClient, self._client).get_bean_tech_comfort_modes(
                 identifier
+            )
+        )
+
+    async def async_set_bean_tech_comfort_mode(
+        self,
+        identifier: VehicleIdentifier,
+        *,
+        mode_type: str,
+    ) -> str:
+        """Execute a BeanTech one-touch comfort mode through the client."""
+        if self.region != REGION_CHINA:
+            raise GwmRoutePolicyError(operation="set_bean_tech_comfort_mode")
+        return await self._async_with_session_renewal(
+            lambda: cast(_ChinaReadClient, self._client).set_bean_tech_comfort_mode(
+                identifier,
+                mode_type=cast(Any, mode_type),
             )
         )
 
