@@ -196,6 +196,9 @@ class GwmBatteryAppointmentSelect(_BeanTechTimeSelect):
     async def async_select_option(self, option: str) -> None:
         use_car_time_ms = _clock_to_today_ms(option)
         self.coordinator.set_local_flag(self.vin, "battery_appointment_time", option)
+        # Selecting a departure time also arms the appointment, so keep the
+        # companion switch in sync with that request.
+        self.coordinator.set_local_flag(self.vin, "battery_appointment_heating", True)
         command = await async_call_gwm_api(
             self._api.async_set_battery_heating_appointment(
                 self.vin, enable=True, use_car_time_ms=use_car_time_ms
