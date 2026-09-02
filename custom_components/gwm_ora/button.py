@@ -81,6 +81,21 @@ async def async_setup_entry(
                 )
                 for action, translation_key in _china_remote_buttons_for_vehicle(vehicle)
             )
+            entities.extend(
+                GwmBeanTechComfortButton(
+                    entry.runtime_data.api,
+                    entry.runtime_data.coordinator,
+                    vin,
+                    action,
+                    translation_key,
+                )
+                for action, translation_key in (
+                    ("cabin_clean", "cabin_clean"),
+                    ("comfort_warm", "comfort_warm"),
+                    ("comfort_cool", "comfort_cool"),
+                    ("comfort_off", "comfort_off"),
+                )
+            )
         return entities
 
     setup_vehicle_entities(
@@ -162,6 +177,41 @@ class GwmChinaRemoteButton(GwmEntity, ButtonEntity):
 
     async def async_press(self) -> None:
         """Queue the configured China remote command."""
+        command = await async_call_gwm_api(
+            self._api.async_vehicle_control(self.vin, self._action)
+        )
+        self.coordinator.async_track_command(command)
+
+
+class GwmBeanTechComfortButton(GwmEntity, ButtonEntity):
+    """PIN-gated BeanTech comfort action button.
+
+    Covers the fixed-duration cabin clean and the one-touch comfort modes
+    (warm, cool, and all-off). Each action maps to a single ``controlType`` in
+    the BeanTech timely path, except ``comfort_off`` which sends a multi-command
+    ``sendType=1`` sequence.
+    """
+
+    def __init__(
+        self, api, coordinator, vin: str, action: str, translation_key: str
+    ) -> None:
+        super().__init__(coordinator, vin)
+        self._api = api
+        self._action = action
+        self._attr_translation_key = translation_key
+        self._attr_unique_id = f"{vin}_{translation_key}"
+
+    @property
+    def available(self) -> bool:
+        return (
+            super().available
+            and self.china_vehicle_commands_available
+            and self.is_china_beantech
+            and self.security_pin_configured
+        )
+
+    async def async_press(self) -> None:
+        """Queue the configured BeanTech comfort command."""
         command = await async_call_gwm_api(
             self._api.async_vehicle_control(self.vin, self._action)
         )

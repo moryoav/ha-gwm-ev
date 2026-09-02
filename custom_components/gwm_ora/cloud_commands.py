@@ -835,6 +835,20 @@ _CHINA_VEHICLE_CONTROL_NAMES = {
     "sunroof_full": "Sunroof fully open",
     "cabin_purge": "Cabin purge",
     "force_refresh": "Force refresh",
+    "seat_heating_start": "Seat heating",
+    "seat_heating_stop": "Seat heating off",
+    "seat_ventilation_start": "Seat ventilation",
+    "seat_ventilation_stop": "Seat ventilation off",
+    "steering_wheel_heating": "Steering wheel heating",
+    "steering_wheel_heatless": "Steering wheel heating off",
+    "defrost_front_start": "Front defrost",
+    "defrost_front_stop": "Front defrost off",
+    "defrost_back_start": "Rear defrost",
+    "defrost_back_stop": "Rear defrost off",
+    "cabin_clean": "Cabin clean",
+    "comfort_warm": "Comfort warm",
+    "comfort_cool": "Comfort cool",
+    "comfort_off": "Comfort off",
 }
 
 

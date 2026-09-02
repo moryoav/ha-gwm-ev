@@ -445,6 +445,20 @@ def test_china_vehicle_control_contract_is_closed_and_platform_filtered() -> Non
         "flash_lights",
         "horn_and_lights",
         "sunroof_close",
+        "seat_heating_start",
+        "seat_heating_stop",
+        "seat_ventilation_start",
+        "seat_ventilation_stop",
+        "steering_wheel_heating",
+        "steering_wheel_heatless",
+        "defrost_front_start",
+        "defrost_front_stop",
+        "defrost_back_start",
+        "defrost_back_stop",
+        "cabin_clean",
+        "comfort_warm",
+        "comfort_cool",
+        "comfort_off",
     } == BEANTECH_CHINA_VEHICLE_CONTROL_ACTIONS
     assert (
         ChinaVehicleControlCommand(

@@ -1306,6 +1306,47 @@ def _valid_air_conditioner_start_body(cmd_body: object) -> bool:
     )
 
 
+_BEAN_TECH_VEHICLE_CONTROL_BODIES: dict[str, object] = {
+    "ENGINE_STOP": None,
+    "WHISTLE": None,
+    "FLASH": None,
+    "WHISTLE_FLASH": None,
+    "SKYLIGNT_CLOSE": {"skyLight": 0},
+    "SEAT_HEATING_START": {"leftFront": 3, "rightFront": 3, "operationTime": 600},
+    "SEAT_HEATING_STOP": {"leftFront": 0, "rightFront": 0, "operationMode": 1},
+    "SEAT_VENTILATION_START": {"leftFront": 3, "rightFront": 3, "operationTime": 600},
+    "SEAT_VENTILATION_STOP": {"leftFront": 0, "rightFront": 0, "operationMode": 2},
+    "STEERING_WHEEL_HEATING": {"operationTime": 600},
+    "STEERING_WHEEL_HEATLESS": None,
+    "DEFROST_FRONT_START": {"operationTime": 900},
+    "DEFROST_FRONT_STOP": None,
+    "DEFROST_BACK_START": {"operationTime": 900},
+    "DEFROST_BACK_STOP": None,
+    "CABIN_CLEANING_START": {"operationTime": 60},
+}
+
+_BEAN_TECH_COMFORT_MODE_BODIES: tuple[dict[str, object], ...] = (
+    {"action": 1, "modeId": "4982234", "type": "1"},
+    {"action": 1, "modeId": "4982235", "type": "2"},
+)
+
+
+def _valid_bean_tech_comfort_off_commands(commands: object) -> bool:
+    """Return whether ``commands`` is the exact one-touch comfort-off sequence."""
+    return commands == [
+        {"controlType": "AIR_CONDITIONER_STOP"},
+        {
+            "controlType": "SEAT_HEATING_STOP",
+            "cmdBody": {"leftFront": 0, "operationMode": 1, "rightFront": 0},
+        },
+        {
+            "controlType": "SEAT_VENTILATION_STOP",
+            "cmdBody": {"leftFront": 0, "operationMode": 2, "rightFront": 0},
+        },
+        {"controlType": "STEERING_WHEEL_HEATLESS"},
+    ]
+
+
 def _valid_bean_tech_command_request(
     request: _ChinaTransportRequest,
     headers: Mapping[str, str],
@@ -1370,19 +1411,19 @@ def _valid_bean_tech_command_request(
                 and int(engine_body["operationTime"]) % 60 == 0
             )
         else:
-            expected_bodies: dict[str, object] = {
-                "ENGINE_STOP": None,
-                "WHISTLE": None,
-                "FLASH": None,
-                "WHISTLE_FLASH": None,
-                "SKYLIGNT_CLOSE": {"skyLight": 0},
-            }
-            valid_command = (
-                valid_command_shape
-                and isinstance(control_type, str)
-                and control_type in expected_bodies
-                and command.get("cmdBody") == expected_bodies[control_type]
-            )
+            if isinstance(control_type, str) and control_type in _BEAN_TECH_VEHICLE_CONTROL_BODIES:
+                valid_command = (
+                    valid_command_shape
+                    and command.get("cmdBody")
+                    == _BEAN_TECH_VEHICLE_CONTROL_BODIES[control_type]
+                )
+            elif control_type == "COMFORT_MODE_CTRL":
+                valid_command = (
+                    valid_command_shape
+                    and command.get("cmdBody") in _BEAN_TECH_COMFORT_MODE_BODIES
+                )
+            else:
+                valid_command = False
     return (
         valid_command
         and request.service == "bean_tech"
@@ -1422,6 +1463,19 @@ def _valid_bean_tech_timely_command_request(
     if not isinstance(body, Mapping):
         return False
     commands = body.get("commands")
+    if isinstance(commands, list) and body.get("sendType") == 1:
+        return (
+            command_kind == "vehicle_control"
+            and _valid_bean_tech_comfort_off_commands(commands)
+            and _valid_bean_tech_timely_envelope(
+                request,
+                headers,
+                body=body,
+                sequence=body.get("seqNo"),
+                raw_body=raw_body,
+                send_type=1,
+            )
+        )
     if (
         not isinstance(commands, list)
         or len(commands) != 1
@@ -1475,15 +1529,8 @@ def _valid_bean_tech_timely_command_request(
                 and int(engine_body["operationTime"]) % 60 == 0
             )
         else:
-            expected_bodies: dict[str, object] = {
-                "ENGINE_STOP": None,
-                "WHISTLE": None,
-                "FLASH": None,
-                "WHISTLE_FLASH": None,
-                "SKYLIGNT_CLOSE": {"skyLight": 0},
-            }
-            if isinstance(control_type, str) and control_type in expected_bodies:
-                expected_body = expected_bodies[control_type]
+            if isinstance(control_type, str) and control_type in _BEAN_TECH_VEHICLE_CONTROL_BODIES:
+                expected_body = _BEAN_TECH_VEHICLE_CONTROL_BODIES[control_type]
                 valid_command = (
                     has_cmd_body == (expected_body is not None)
                     and list(command)
@@ -1494,12 +1541,36 @@ def _valid_bean_tech_timely_command_request(
                     )
                     and command.get("cmdBody") == expected_body
                 )
+            elif control_type == "COMFORT_MODE_CTRL":
+                valid_command = (
+                    has_cmd_body
+                    and list(command) == ["controlType", "cmdBody"]
+                    and command.get("cmdBody") in _BEAN_TECH_COMFORT_MODE_BODIES
+                )
             else:
                 valid_command = False
+    return valid_command and _valid_bean_tech_timely_envelope(
+        request,
+        headers,
+        body=body,
+        sequence=sequence,
+        raw_body=raw_body,
+        send_type=0,
+    )
+
+
+def _valid_bean_tech_timely_envelope(
+    request: _ChinaTransportRequest,
+    headers: Mapping[str, str],
+    *,
+    body: Mapping[str, object],
+    sequence: object,
+    raw_body: str | None,
+    send_type: object,
+) -> bool:
     security_token = headers.get("securityToken")
     return (
-        valid_command
-        and request.service == "bean_tech"
+        request.service == "bean_tech"
         and request.method == "POST"
         and request.url == _BEAN_TECH_TIMELY_URL
         and set(headers)
@@ -1514,7 +1585,7 @@ def _valid_bean_tech_timely_command_request(
         and body.get("vin") == headers.get("vin")
         and isinstance(sequence, str)
         and _BEAN_TECH_SEQUENCE.fullmatch(sequence) is not None
-        and body.get("sendType") == 0
+        and body.get("sendType") == send_type
         and raw_body is not None
         and encode_dotnet_json(body) == raw_body
         and headers.get("Content-Type") == "application/json; charset=UTF-8"

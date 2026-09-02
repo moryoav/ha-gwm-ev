@@ -14,6 +14,7 @@ from homeassistant.components.climate import HVACMode
 from homeassistant.core import HomeAssistant
 
 from custom_components.gwm_ora.button import (
+    GwmBeanTechComfortButton,
     GwmCabinCleanButton,
     GwmChinaRemoteButton,
     GwmCloseWindowsButton,
@@ -30,7 +31,9 @@ from custom_components.gwm_ora.sensor import (
 )
 from custom_components.gwm_ora.switch import (
     GwmChargingScheduleSwitch,
+    GwmClimatePresetSwitch,
     GwmFrontDefrosterSwitch,
+    GwmRemoteControlSwitch,
     GwmRemoteStartSwitch,
 )
 
@@ -566,3 +569,109 @@ async def test_beantech_remote_start_switch_replaces_remote_start_buttons() -> N
         call("SYNTHETIC-BEANTECH", "remote_start"),
         call("SYNTHETIC-BEANTECH", "remote_stop"),
     ]
+
+
+@pytest.mark.asyncio
+async def test_beantech_comfort_switches_and_buttons_are_pin_gated_and_dispatch() -> None:
+    api = SimpleNamespace(
+        async_vehicle_control=AsyncMock(
+            return_value={"id": "comfort", "state": "in_progress"}
+        ),
+        async_set_climate=AsyncMock(
+            return_value={"id": "climate", "state": "in_progress"}
+        ),
+    )
+    config_entry = SimpleNamespace(
+        options={"beantech_encrypted_security_pin": "X=="},
+        async_on_unload=lambda callback: None,
+    )
+    coordinator = GwmDataUpdateCoordinator(
+        HomeAssistant("synthetic-config"),
+        api,
+        cloud_client=SimpleNamespace(),  # type: ignore[arg-type]
+        config_entry=config_entry,  # type: ignore[arg-type]
+    )
+
+    def china_vehicle(vin: str, platform: str) -> dict[str, Any]:
+        return {
+            "vin": vin,
+            "platform": platform,
+            "name": f"Vehicle {vin[-1]}",
+            "manufacturer": "GWM",
+            "model": "Synthetic",
+            "serial_number": f"SERIAL-{vin[-1]}",
+            "capabilities": {
+                "remote_commands": True,
+                "climate_commands": True,
+                "china_vehicle_commands": True,
+            },
+            "values": {
+                "front_driver_seat_heater_level": 3,
+                "front_driver_seat_vent_level": 0,
+                "steering_wheel_heater_active": False,
+                "front_defroster": False,
+                "rear_defroster": False,
+            },
+            "timestamps": {},
+            "climate": {"mode": "auto", "target_temperature_c": 17},
+            "raw_items": {},
+        }
+
+    coordinator.async_set_updated_data(
+        {
+            "region": "cn",
+            "vehicles": [
+                china_vehicle("SYNTHETIC-BEANTECH", "beantech"),
+                china_vehicle("SYNTHETIC-NAVINFO", "navinfo"),
+            ],
+        }
+    )
+    coordinator.async_track_command = Mock()  # type: ignore[method-assign]
+
+    seat = GwmRemoteControlSwitch(
+        api,
+        coordinator,
+        "SYNTHETIC-BEANTECH",
+        turn_on_action="seat_heating_start",
+        turn_off_action="seat_heating_stop",
+        state_key="front_driver_seat_heater_level",
+        translation_key="seat_heating",
+    )
+    assert seat.available
+    assert seat.is_on is True
+    # NavInfo vehicles must not expose BeanTech comfort switches.
+    assert not GwmRemoteControlSwitch(
+        api,
+        coordinator,
+        "SYNTHETIC-NAVINFO",
+        turn_on_action="seat_heating_start",
+        turn_off_action="seat_heating_stop",
+        state_key="front_driver_seat_heater_level",
+        translation_key="seat_heating",
+    ).available
+
+    fast_cool = GwmClimatePresetSwitch(
+        api, coordinator, "SYNTHETIC-BEANTECH", temperature=17, translation_key="fast_cool"
+    )
+    assert fast_cool.available
+    assert fast_cool.is_on is True
+
+    comfort_off = GwmBeanTechComfortButton(
+        api, coordinator, "SYNTHETIC-BEANTECH", "comfort_off", "comfort_off"
+    )
+    assert comfort_off.available
+
+    with patch.object(seat, "async_write_ha_state"):
+        await seat.async_turn_off()
+        assert seat.is_on is False
+    with patch.object(fast_cool, "async_write_ha_state"):
+        await fast_cool.async_turn_on()
+    await comfort_off.async_press()
+
+    assert api.async_vehicle_control.await_args_list == [
+        call("SYNTHETIC-BEANTECH", "seat_heating_stop"),
+        call("SYNTHETIC-BEANTECH", "comfort_off"),
+    ]
+    api.async_set_climate.assert_awaited_once_with(
+        "SYNTHETIC-BEANTECH", mode="auto", temperature=17
+    )

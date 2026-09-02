@@ -15,7 +15,7 @@ import logging
 import math
 import re
 import secrets
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta, timezone
 from typing import Literal, Self, cast
@@ -45,6 +45,7 @@ from .china_transport import (
 )
 from .commands import (
     BEANTECH_CHINA_VEHICLE_CONTROL_ACTIONS,
+    NAVINFO_CHINA_VEHICLE_CONTROL_ACTIONS,
     ChinaVehicleControlCommand,
     ClimateCommand,
     CloseWindowsCommand,
@@ -1342,8 +1343,7 @@ class ChinaClient:
                 state,
                 command.identifier,
                 operation=operation,
-                control_type=control_type,
-                command_body=command_body,
+                commands=[(control_type, command_body)],
                 deadline=deadline,
             )
         if platform != "navinfo":
@@ -1443,8 +1443,7 @@ class ChinaClient:
                 state,
                 command.identifier,
                 operation=operation,
-                control_type=control_type,
-                command_body=command_body,
+                commands=[(control_type, command_body)],
                 deadline=deadline,
             )
 
@@ -1499,8 +1498,8 @@ class ChinaClient:
             "send_vehicle_control_command",
             "send_climate_command",
         ],
-        control_type: str,
-        command_body: Mapping[str, object] | None,
+        commands: Sequence[tuple[str, Mapping[str, object] | None]],
+        send_type: int = 0,
         deadline: _Deadline,
     ) -> RemoteCommandAcceptance:
         try:
@@ -1514,6 +1513,12 @@ class ChinaClient:
             raise GwmConfigurationError(operation=operation)
 
         if self._bean_tech_security_password is None:
+            # The legacy T5 path carries exactly one command with sendType 0.
+            # Multi-command requests (e.g. one-touch comfort off) require the
+            # PIN-gated timely path, so fail closed when no PIN is configured.
+            if send_type != 0 or len(commands) != 1:
+                raise GwmConfigurationError(operation=operation)
+            control_type, command_body = commands[0]
             request = self._build_bean_tech_command_request(
                 state,
                 identifier,
@@ -1524,20 +1529,23 @@ class ChinaClient:
             )
         else:
             security_token: str | None = None
-            if control_type not in _BEAN_TECH_PIN_EXEMPT_CONTROL_TYPES:
+            if any(
+                control_type not in _BEAN_TECH_PIN_EXEMPT_CONTROL_TYPES
+                for control_type, _command_body in commands
+            ):
                 security_token = await self._generate_bean_tech_security_token(
                     state,
                     identifier,
                     operation=operation,
                     deadline=deadline,
                 )
-            request = self._build_bean_tech_timely_request(
+            request = self._build_bean_tech_timely_request_for_commands(
                 state,
                 identifier,
                 sequence_number=sequence_number,
                 operation=operation,
-                control_type=control_type,
-                command_body=command_body,
+                commands=commands,
+                send_type=send_type,
                 security_token=security_token,
             )
 
@@ -1565,15 +1573,26 @@ class ChinaClient:
         if platform == "beantech":
             if command.action not in BEANTECH_CHINA_VEHICLE_CONTROL_ACTIONS:
                 raise GwmRoutePolicyError(operation=operation)
+            if command.action == "comfort_off":
+                return await self._send_bean_tech_control(
+                    state,
+                    command.identifier,
+                    operation=operation,
+                    commands=_bean_tech_comfort_off_commands(),
+                    send_type=1,
+                    deadline=deadline,
+                )
             control_type, command_body = _bean_tech_vehicle_control(command)
             return await self._send_bean_tech_control(
                 state,
                 command.identifier,
                 operation=operation,
-                control_type=control_type,
-                command_body=command_body,
+                commands=[(control_type, command_body)],
                 deadline=deadline,
             )
+
+        if command.action not in NAVINFO_CHINA_VEHICLE_CONTROL_ACTIONS:
+            raise GwmRoutePolicyError(operation=operation)
 
         if state.auto_ai_token_id is None or state.auto_ai_user_id is None:
             raise GwmAuthenticationError(operation=operation)
@@ -2079,15 +2098,44 @@ class ChinaClient:
         command_body: Mapping[str, object] | None,
         security_token: str | None,
     ) -> _ChinaTransportRequest:
-        command: dict[str, object] = {"controlType": control_type}
-        if command_body is not None:
-            command["cmdBody"] = dict(command_body)
+        return self._build_bean_tech_timely_request_for_commands(
+            state,
+            identifier,
+            sequence_number=sequence_number,
+            operation=operation,
+            commands=[(control_type, command_body)],
+            send_type=0,
+            security_token=security_token,
+        )
+
+    def _build_bean_tech_timely_request_for_commands(
+        self,
+        state: ChinaAuthState,
+        identifier: VehicleIdentifier,
+        *,
+        sequence_number: str,
+        operation: Literal[
+            "send_lock_command",
+            "send_close_windows_command",
+            "send_vehicle_control_command",
+            "send_climate_command",
+        ],
+        commands: Sequence[tuple[str, Mapping[str, object] | None]],
+        send_type: int,
+        security_token: str | None,
+    ) -> _ChinaTransportRequest:
+        command_list: list[dict[str, object]] = []
+        for control_type, command_body in commands:
+            command: dict[str, object] = {"controlType": control_type}
+            if command_body is not None:
+                command["cmdBody"] = dict(command_body)
+            command_list.append(command)
         body = encode_dotnet_json(
             {
                 "vin": identifier.value,
                 "seqNo": sequence_number,
-                "sendType": 0,
-                "commands": [command],
+                "sendType": send_type,
+                "commands": command_list,
             }
         )
         headers = self._bean_tech_authenticated_headers(
@@ -2920,7 +2968,69 @@ def _bean_tech_vehicle_control(
         return "WHISTLE_FLASH", None
     if command.action == "sunroof_close":
         return "SKYLIGNT_CLOSE", {"skyLight": 0}
+    if command.action == "seat_heating_start":
+        return (
+            "SEAT_HEATING_START",
+            {"leftFront": 3, "rightFront": 3, "operationTime": 600},
+        )
+    if command.action == "seat_heating_stop":
+        return (
+            "SEAT_HEATING_STOP",
+            {"leftFront": 0, "rightFront": 0, "operationMode": 1},
+        )
+    if command.action == "seat_ventilation_start":
+        return (
+            "SEAT_VENTILATION_START",
+            {"leftFront": 3, "rightFront": 3, "operationTime": 600},
+        )
+    if command.action == "seat_ventilation_stop":
+        return (
+            "SEAT_VENTILATION_STOP",
+            {"leftFront": 0, "rightFront": 0, "operationMode": 2},
+        )
+    if command.action == "steering_wheel_heating":
+        return "STEERING_WHEEL_HEATING", {"operationTime": 600}
+    if command.action == "steering_wheel_heatless":
+        return "STEERING_WHEEL_HEATLESS", None
+    if command.action == "defrost_front_start":
+        return "DEFROST_FRONT_START", {"operationTime": 900}
+    if command.action == "defrost_front_stop":
+        return "DEFROST_FRONT_STOP", None
+    if command.action == "defrost_back_start":
+        return "DEFROST_BACK_START", {"operationTime": 900}
+    if command.action == "defrost_back_stop":
+        return "DEFROST_BACK_STOP", None
+    if command.action == "cabin_clean":
+        return "CABIN_CLEANING_START", {"operationTime": 60}
+    if command.action == "comfort_warm":
+        return "COMFORT_MODE_CTRL", {"action": 1, "modeId": "4982234", "type": "1"}
+    if command.action == "comfort_cool":
+        return "COMFORT_MODE_CTRL", {"action": 1, "modeId": "4982235", "type": "2"}
     raise ValueError("vehicle_control_action_invalid")
+
+
+def _bean_tech_comfort_off_commands() -> tuple[
+    tuple[str, Mapping[str, object] | None], ...
+]:
+    """The multi-command BeanTech one-touch comfort off sequence.
+
+    ``sendType=1`` tells the vehicle to treat the commands as one atomic
+    operation. The retired add-on's ``SendBeanTechComfortOffAsync`` sent these
+    exact four commands: air conditioning off, seat heating off, seat
+    ventilation off, and steering-wheel heating off.
+    """
+    return (
+        ("AIR_CONDITIONER_STOP", None),
+        (
+            "SEAT_HEATING_STOP",
+            {"leftFront": 0, "operationMode": 1, "rightFront": 0},
+        ),
+        (
+            "SEAT_VENTILATION_STOP",
+            {"leftFront": 0, "operationMode": 2, "rightFront": 0},
+        ),
+        ("STEERING_WHEEL_HEATLESS", None),
+    )
 
 
 def _bean_tech_climate_control(

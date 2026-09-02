@@ -25,6 +25,20 @@ type ChinaVehicleControlAction = Literal[
     "sunroof_full",
     "cabin_purge",
     "force_refresh",
+    "seat_heating_start",
+    "seat_heating_stop",
+    "seat_ventilation_start",
+    "seat_ventilation_stop",
+    "steering_wheel_heating",
+    "steering_wheel_heatless",
+    "defrost_front_start",
+    "defrost_front_stop",
+    "defrost_back_start",
+    "defrost_back_stop",
+    "cabin_clean",
+    "comfort_warm",
+    "comfort_cool",
+    "comfort_off",
 ]
 type RemoteCommandState = Literal["pending", "completed", "failed"]
 
@@ -53,6 +67,20 @@ BEANTECH_CHINA_VEHICLE_CONTROL_ACTIONS: frozenset[ChinaVehicleControlAction] = f
         "flash_lights",
         "horn_and_lights",
         "sunroof_close",
+        "seat_heating_start",
+        "seat_heating_stop",
+        "seat_ventilation_start",
+        "seat_ventilation_stop",
+        "steering_wheel_heating",
+        "steering_wheel_heatless",
+        "defrost_front_start",
+        "defrost_front_stop",
+        "defrost_back_start",
+        "defrost_back_stop",
+        "cabin_clean",
+        "comfort_warm",
+        "comfort_cool",
+        "comfort_off",
     }
 )
 
@@ -148,7 +176,10 @@ class ChinaVehicleControlCommand:
         )
         if (
             type(self.identifier) is not VehicleIdentifier
-            or self.action not in NAVINFO_CHINA_VEHICLE_CONTROL_ACTIONS
+            or (
+                self.action not in NAVINFO_CHINA_VEHICLE_CONTROL_ACTIONS
+                and self.action not in BEANTECH_CHINA_VEHICLE_CONTROL_ACTIONS
+            )
             or not valid_run_time
             or (self.action != "remote_start" and self.run_time_minutes is not None)
         ):

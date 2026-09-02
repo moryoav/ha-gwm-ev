@@ -71,6 +71,18 @@
       },
       "force_refresh": {
         "default": "mdi:refresh"
+      },
+      "cabin_clean": {
+        "default": "mdi:air-purifier"
+      },
+      "comfort_warm": {
+        "default": "mdi:weather-sunny"
+      },
+      "comfort_cool": {
+        "default": "mdi:snowflake"
+      },
+      "comfort_off": {
+        "default": "mdi:power"
       }
     },
     "climate": {
@@ -162,6 +174,27 @@
       },
       "remote_start": {
         "default": "mdi:engine"
+      },
+      "seat_heating": {
+        "default": "mdi:car-seat-heater"
+      },
+      "seat_ventilation": {
+        "default": "mdi:car-seat-cooler"
+      },
+      "steering_wheel_heating": {
+        "default": "mdi:steering"
+      },
+      "defrost_front": {
+        "default": "mdi:car-defrost-front"
+      },
+      "defrost_back": {
+        "default": "mdi:car-defrost-rear"
+      },
+      "fast_cool": {
+        "default": "mdi:thermometer-chevron-down"
+      },
+      "fast_heat": {
+        "default": "mdi:thermometer-chevron-up"
       }
     }
   }

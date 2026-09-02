@@ -268,12 +268,23 @@
       "half_open_sunroof": { "name": "Half open sunroof" },
       "fully_open_sunroof": { "name": "Fully open sunroof" },
       "cabin_purge": { "name": "Cabin purge" },
-      "force_refresh": { "name": "Force refresh" }
+      "force_refresh": { "name": "Force refresh" },
+      "cabin_clean": { "name": "Cabin clean" },
+      "comfort_warm": { "name": "Comfort warm" },
+      "comfort_cool": { "name": "Comfort cool" },
+      "comfort_off": { "name": "Comfort off" }
     },
     "switch": {
       "front_defroster": { "name": "Front defroster" },
       "charging_schedule": { "name": "Scheduled charging" },
-      "remote_start": { "name": "Remote start" }
+      "remote_start": { "name": "Remote start" },
+      "seat_heating": { "name": "Seat heating" },
+      "seat_ventilation": { "name": "Seat ventilation" },
+      "steering_wheel_heating": { "name": "Steering wheel heating" },
+      "defrost_front": { "name": "Front defrost" },
+      "defrost_back": { "name": "Rear defrost" },
+      "fast_cool": { "name": "Fast cool" },
+      "fast_heat": { "name": "Fast heat" }
     }
   },
   "services": {

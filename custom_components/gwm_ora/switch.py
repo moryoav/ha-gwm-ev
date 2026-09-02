@@ -53,6 +53,65 @@ async def async_setup_entry(
             GwmRemoteStartSwitch(
                 entry.runtime_data.api, entry.runtime_data.coordinator, vehicle["vin"]
             ),
+            GwmRemoteControlSwitch(
+                entry.runtime_data.api,
+                entry.runtime_data.coordinator,
+                vehicle["vin"],
+                turn_on_action="seat_heating_start",
+                turn_off_action="seat_heating_stop",
+                state_key="front_driver_seat_heater_level",
+                translation_key="seat_heating",
+            ),
+            GwmRemoteControlSwitch(
+                entry.runtime_data.api,
+                entry.runtime_data.coordinator,
+                vehicle["vin"],
+                turn_on_action="seat_ventilation_start",
+                turn_off_action="seat_ventilation_stop",
+                state_key="front_driver_seat_vent_level",
+                translation_key="seat_ventilation",
+            ),
+            GwmRemoteControlSwitch(
+                entry.runtime_data.api,
+                entry.runtime_data.coordinator,
+                vehicle["vin"],
+                turn_on_action="steering_wheel_heating",
+                turn_off_action="steering_wheel_heatless",
+                state_key="steering_wheel_heater_active",
+                translation_key="steering_wheel_heating",
+            ),
+            GwmRemoteControlSwitch(
+                entry.runtime_data.api,
+                entry.runtime_data.coordinator,
+                vehicle["vin"],
+                turn_on_action="defrost_front_start",
+                turn_off_action="defrost_front_stop",
+                state_key="front_defroster",
+                translation_key="defrost_front",
+            ),
+            GwmRemoteControlSwitch(
+                entry.runtime_data.api,
+                entry.runtime_data.coordinator,
+                vehicle["vin"],
+                turn_on_action="defrost_back_start",
+                turn_off_action="defrost_back_stop",
+                state_key="rear_defroster",
+                translation_key="defrost_back",
+            ),
+            GwmClimatePresetSwitch(
+                entry.runtime_data.api,
+                entry.runtime_data.coordinator,
+                vehicle["vin"],
+                temperature=17,
+                translation_key="fast_cool",
+            ),
+            GwmClimatePresetSwitch(
+                entry.runtime_data.api,
+                entry.runtime_data.coordinator,
+                vehicle["vin"],
+                temperature=31,
+                translation_key="fast_heat",
+            ),
         ),
     )
 
@@ -239,6 +298,126 @@ class GwmRemoteStartSwitch(_OptimisticRemoteSwitch):
         """Stop the engine."""
         command = await async_call_gwm_api(
             self._api.async_vehicle_control(self.vin, "remote_stop")
+        )
+        self.coordinator.async_track_command(command)
+        self._set_optimistic(False)
+
+
+class GwmRemoteControlSwitch(_OptimisticRemoteSwitch):
+    """Generic BeanTech remote-control on/off switch.
+
+    Maps a paired ``turn_on_action``/``turn_off_action`` to the vehicle and
+    reads the polled status snapshot for its real state. Seat heating and
+    ventilation use the driver-side level as the representative "front" state,
+    matching the retired add-on's ``front_driver_seat_heater_level`` reading.
+    """
+
+    def __init__(
+        self,
+        api,
+        coordinator,
+        vin: str,
+        *,
+        turn_on_action: str,
+        turn_off_action: str,
+        state_key: str,
+        translation_key: str,
+    ) -> None:
+        super().__init__(coordinator, vin)
+        self._api = api
+        self._turn_on_action = turn_on_action
+        self._turn_off_action = turn_off_action
+        self._state_key = state_key
+        self._attr_translation_key = translation_key
+        self._attr_unique_id = f"{vin}_{translation_key}"
+
+    def _actual_is_on(self) -> bool | None:
+        value = vehicle_value(self.vehicle, self._state_key)
+        if value is None:
+            return None
+        return bool(value)
+
+    @property
+    def available(self) -> bool:
+        return (
+            super().available
+            and self.remote_commands_available
+            and self.is_china_beantech
+            and self.security_pin_configured
+        )
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        command = await async_call_gwm_api(
+            self._api.async_vehicle_control(self.vin, self._turn_on_action)
+        )
+        self.coordinator.async_track_command(command)
+        self._set_optimistic(True)
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        command = await async_call_gwm_api(
+            self._api.async_vehicle_control(self.vin, self._turn_off_action)
+        )
+        self.coordinator.async_track_command(command)
+        self._set_optimistic(False)
+
+
+class GwmClimatePresetSwitch(_OptimisticRemoteSwitch):
+    """Fast cool / fast heat, driven by the A/C command at a fixed temperature.
+
+    The car has no dedicated fast cool/heat command: both are the normal A/C
+    start with the temperature pinned to one end of its 17-31 range.
+    """
+
+    def __init__(
+        self,
+        api,
+        coordinator,
+        vin: str,
+        *,
+        temperature: int,
+        translation_key: str,
+    ) -> None:
+        super().__init__(coordinator, vin)
+        self._api = api
+        self._temperature = temperature
+        self._attr_translation_key = translation_key
+        self._attr_unique_id = f"{vin}_{translation_key}"
+
+    @property
+    def climate(self) -> dict[str, Any]:
+        """Return the vehicle's climate block."""
+        vehicle = self.vehicle or {}
+        return vehicle.get("climate") or {}
+
+    def _actual_is_on(self) -> bool | None:
+        """Return whether the A/C is running at this preset's temperature."""
+        if self.climate.get("mode") == "off":
+            return False
+        return self.climate.get("target_temperature_c") == self._temperature
+
+    @property
+    def available(self) -> bool:
+        return (
+            super().available
+            and self.climate_commands_available
+            and self.is_china_beantech
+            and self.security_pin_configured
+        )
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        """Start the A/C pinned to this preset's temperature."""
+        command = await async_call_gwm_api(
+            self._api.async_set_climate(
+                self.vin, mode="auto", temperature=self._temperature
+            )
+        )
+        self.coordinator.async_track_command(command)
+        self._set_optimistic(True)
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        """Stop the A/C."""
+        command = await async_call_gwm_api(
+            self._api.async_set_climate(self.vin, mode="off")
         )
         self.coordinator.async_track_command(command)
         self._set_optimistic(False)
