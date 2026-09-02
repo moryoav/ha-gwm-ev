@@ -304,7 +304,8 @@
       "battery_gun_heat": { "name": "电池包插枪保温" },
       "battery_initiative_heat": { "name": "电池包主动保温" },
       "smart_charge": { "name": "智能预约充电" },
-      "battery_appointment_heating": { "name": "电池预约加热" }
+      "battery_appointment_heating": { "name": "电池预约加热" },
+      "cabin_clean": { "name": "座舱清洁" }
     }
   },
   "services": {

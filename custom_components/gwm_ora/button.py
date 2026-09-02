@@ -95,7 +95,6 @@ async def async_setup_entry(
                     translation_key,
                 )
                 for action, translation_key in (
-                    ("cabin_clean", "cabin_clean"),
                     ("comfort_warm", "comfort_warm"),
                     ("comfort_cool", "comfort_cool"),
                     ("comfort_off", "comfort_off"),

@@ -195,7 +195,7 @@ class GwmBatteryAppointmentSelect(_BeanTechTimeSelect):
     @property
     def current_option(self) -> str | None:
         value = self.coordinator.local_flag(self.vin, "battery_appointment_time")
-        return value if value in self._attr_options else None
+        return value if value in self._attr_options else "08:00"
 
     async def async_select_option(self, option: str) -> None:
         use_car_time_ms = _clock_to_today_ms(option)
@@ -219,7 +219,7 @@ class GwmCabinCleanAppointmentSelect(_BeanTechTimeSelect):
     @property
     def current_option(self) -> str | None:
         value = self.coordinator.local_flag(self.vin, "cabin_clean_appointment_time")
-        return value if value in self._attr_options else None
+        return value if value in self._attr_options else "08:00"
 
     async def async_select_option(self, option: str) -> None:
         time_ms = _clock_to_today_ms(option)
