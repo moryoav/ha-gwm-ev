@@ -127,9 +127,13 @@ class GwmChargeSocNumber(GwmEntity, NumberEntity):
 
     @property
     def native_value(self) -> float | None:
-        """Return the last charge limit sent from Home Assistant."""
+        """Return the last charge limit sent from Home Assistant.
+
+        The car does not report the current limit, so fall back to 100 % until
+        the user sets one.
+        """
         value = self.coordinator.local_flag(self.vin, "charge_soc_limit")
-        return float(value) if value is not None else None
+        return float(value) if value is not None else 100.0
 
     async def async_set_native_value(self, value: float) -> None:
         """Send a new charge limit to the vehicle."""

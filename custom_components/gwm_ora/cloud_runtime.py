@@ -45,7 +45,6 @@ from gwm_client import (
     GwmAuthenticationError,
     GwmClient,
     GwmClientConfig,
-    GwmClientError,
     GwmConfigurationError,
     GwmNetworkError,
     GwmOptionalEndpointError,
@@ -1199,14 +1198,6 @@ class GwmCloudClient:
         cached = self._china_climate_defaults.get(identifier.value)
         temperature = cached.temperature if cached is not None else "22"
         operation_time = cached.operation_time if cached is not None else "900"
-        try:
-            read_temp = await cast(
-                _ChinaReadClient, self._client
-            ).get_bean_tech_ac_temperature(identifier)
-            if read_temp is not None:
-                temperature = str(read_temp)
-        except GwmClientError:
-            pass
         climate = CloudClimateConfiguration(
             temperature=temperature,
             operation_time=operation_time,

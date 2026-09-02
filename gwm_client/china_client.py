@@ -2122,7 +2122,8 @@ class ChinaClient:
         switch_type = cmd_content.get("switchType")
         if switch_type not in {0, 1} and switch_type not in {"0", "1"}:
             raise GwmSchemaError(operation=operation)
-        return int(switch_type) == 1
+        # switchType=0 means the appointment is armed; switchType=1 means off.
+        return int(switch_type) == 0
 
     async def _get_bean_tech_ac_temperature_locked(
         self,

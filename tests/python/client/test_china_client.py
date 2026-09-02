@@ -2728,7 +2728,7 @@ async def test_beantech_battery_heating_appointment_read_parses_switch_type() ->
                     {
                         "type": "BATTERY_HEATING_APPOINTMENT",
                         "cmd": "BATTERY_HEATING_APPOINTMENT",
-                        "cmdContent": {"switchType": 1},
+                        "cmdContent": {"switchType": 0},
                     }
                 ],
             }
