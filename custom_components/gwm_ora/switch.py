@@ -142,7 +142,6 @@ async def async_setup_entry(
             ),
             GwmSmartChargeSwitch(api, coordinator, vin),
             GwmBatteryAppointmentHeatingSwitch(api, coordinator, vin),
-            GwmCabinCleanSwitch(api, coordinator, vin),
         ]
         if not is_beantech:
             # The overseas charging-schedule and front-defroster switches have no
@@ -466,43 +465,6 @@ class _OptimisticRemoteSwitch(GwmEntity, SwitchEntity):
         ):
             self._optimistic_state = None
         super()._handle_coordinator_update()
-
-
-class GwmCabinCleanSwitch(_OptimisticRemoteSwitch):
-    """BeanTech cabin-clean run trigger.
-
-    Turning on starts the fixed-duration cabin clean immediately; the scheduled
-    variant is exposed as a separate ``select`` entity. The command is one-shot,
-    so the switch snaps back off once the optimistic timeout elapses.
-    """
-
-    _attr_translation_key = "cabin_clean"
-
-    def __init__(self, api, coordinator, vin: str) -> None:
-        super().__init__(coordinator, vin)
-        self._api = api
-        self._attr_unique_id = f"{vin}_cabin_clean_switch"
-
-    def _actual_is_on(self) -> bool | None:
-        return None
-
-    @property
-    def available(self) -> bool:
-        return (
-            super().available
-            and self.remote_commands_available
-            and self.is_china_beantech
-        )
-
-    async def async_turn_on(self, **kwargs: Any) -> None:
-        command = await async_call_gwm_api(
-            self._api.async_vehicle_control(self.vin, "cabin_clean")
-        )
-        self.coordinator.async_track_command(command)
-        self._set_optimistic(True)
-
-    async def async_turn_off(self, **kwargs: Any) -> None:
-        self._set_optimistic(False)
 
 
 class GwmRemoteStartSwitch(_OptimisticRemoteSwitch):

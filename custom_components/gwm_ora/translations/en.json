@@ -304,8 +304,7 @@
       "battery_gun_heat": { "name": "Battery pack heating while plugged in" },
       "battery_initiative_heat": { "name": "Battery pack active heating" },
       "smart_charge": { "name": "Smart scheduled charging" },
-      "battery_appointment_heating": { "name": "Battery appointment heating" },
-      "cabin_clean": { "name": "Cabin clean" }
+      "battery_appointment_heating": { "name": "Battery appointment heating" }
     }
   },
   "services": {
