@@ -14,6 +14,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from types import MappingProxyType
+from typing import Literal
 
 from .models import (
     CloudStatusItem,
@@ -282,8 +283,8 @@ class VehicleValues:
 class ClimateSnapshot:
     """Normalized climate state and supported bounds."""
 
-    mode: str = "off"
-    action: str = "off"
+    mode: Literal["auto", "off"] = "off"
+    action: str | None = "off"
     target_temperature_c: int = DEFAULT_TEMPERATURE_C
     operation_time_minutes: int = DEFAULT_OPERATION_TIME_MINUTES
     current_temperature_c: float | None = None
@@ -516,8 +517,8 @@ def map_vehicle_snapshot(
         ),
         values=values,
         climate=ClimateSnapshot(
-            mode="cool" if ac_on else "off",
-            action="cooling" if ac_on else "off",
+            mode="auto" if ac_on else "off",
+            action=None if ac_on else "off",
             target_temperature_c=target_temperature,
             operation_time_minutes=operation_time,
             current_temperature_c=interior_temperature,

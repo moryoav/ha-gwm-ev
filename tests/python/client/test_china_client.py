@@ -980,8 +980,8 @@ async def test_beantech_charging_is_rejected_before_transport() -> None:
 
 
 @pytest.mark.asyncio
-async def test_navinfo_climate_start_heat_update_stop_and_result_contracts() -> None:
-    transaction_ids = ("TX-START-1", "TX-HEAT-2", "TX-STOP-3")
+async def test_navinfo_climate_start_update_stop_and_result_contracts() -> None:
+    transaction_ids = ("TX-START-1", "TX-UPDATE-2", "TX-STOP-3")
     transport = _FakeTransport(
         acquire_vehicles=[FIXTURE["responses"]["discovery"]],
         send_climate_command=[
@@ -1018,21 +1018,21 @@ async def test_navinfo_climate_start_heat_update_stop_and_result_contracts() -> 
     identifier = VehicleIdentifier(VIN)
 
     started = await client.send_climate_command(
-        ClimateCommand(identifier, "cool", 21, 10, currently_on=False)
+        ClimateCommand(identifier, "auto", 21, 10, currently_on=False)
     )
-    heated = await client.send_climate_command(
-        ClimateCommand(identifier, "heat", 26, 20, currently_on=True)
+    updated = await client.send_climate_command(
+        ClimateCommand(identifier, "auto", 26, 20, currently_on=True)
     )
     stopped = await client.send_climate_command(
         ClimateCommand(identifier, "off", 22, 15, currently_on=True)
     )
-    results = await client.get_remote_command_results(identifier, heated.command_id)
+    results = await client.get_remote_command_results(identifier, updated.command_id)
 
-    assert (started.command_id, heated.command_id, stopped.command_id) == transaction_ids
+    assert (started.command_id, updated.command_id, stopped.command_id) == transaction_ids
     command_requests = [
         request for request in transport.calls if request.operation == "send_climate_command"
     ]
-    start_payload, heat_payload, stop_payload = map(_auto_ai_payload, command_requests)
+    start_payload, update_payload, stop_payload = map(_auto_ai_payload, command_requests)
     assert start_payload["header"]["fn"] == "GW.M.SET_AND_OPEN_COMMAND"
     assert start_payload["body"]["cmdCode"] == 6
     assert start_payload["body"]["airParams"] == {
@@ -1040,9 +1040,9 @@ async def test_navinfo_climate_start_heat_update_stop_and_result_contracts() -> 
         "runTime": 10,
         "temperature": 21,
     }
-    assert heat_payload["header"]["fn"] == "GW.M.SET_AND_OPEN_COMMAND"
-    assert heat_payload["body"]["cmdCode"] == 6
-    assert heat_payload["body"]["airParams"] == {
+    assert update_payload["header"]["fn"] == "GW.M.SET_AND_OPEN_COMMAND"
+    assert update_payload["body"]["cmdCode"] == 6
+    assert update_payload["body"]["airParams"] == {
         "engineControl": 1,
         "runTime": 20,
         "temperature": 26,
@@ -1098,7 +1098,7 @@ async def test_navinfo_climate_start_heat_update_stop_and_result_contracts() -> 
     assert result_request.service == "bean_tech"
     assert urlsplit(result_request.url).path == "/app-api/api/v3.0/vehicle/remote-ctrl/result"
     assert urlsplit(result_request.url).query == (
-        "seqNo=TX-HEAT-2&vin=" + VIN + "&msgType=remote"
+        "seqNo=TX-UPDATE-2&vin=" + VIN + "&msgType=remote"
     )
     assert results[0].command_id == transaction_ids[1]
     assert results[0].result_code == "2000"
@@ -1123,7 +1123,7 @@ async def test_navinfo_climate_config_failure_preserves_accepted_command(
     )
 
     accepted = await client.send_climate_command(
-        ClimateCommand(VehicleIdentifier(VIN), "cool", 22, 10)
+        ClimateCommand(VehicleIdentifier(VIN), "auto", 22, 10)
     )
 
     assert accepted.command_id == "TX-ACCEPTED"
@@ -1143,7 +1143,7 @@ async def test_navinfo_climate_rejects_temperatures_outside_captured_range() -> 
     for temperature in (16, 32):
         with pytest.raises(GwmConfigurationError):
             await client.send_climate_command(
-                ClimateCommand(VehicleIdentifier(VIN), "cool", temperature, 10)
+                ClimateCommand(VehicleIdentifier(VIN), "auto", temperature, 10)
             )
 
     assert len(transport.calls) == before
@@ -1159,7 +1159,7 @@ async def test_beantech_climate_is_rejected_before_command_transport() -> None:
 
     with pytest.raises(GwmRoutePolicyError):
         await client.send_climate_command(
-            ClimateCommand(VehicleIdentifier("LGWTEST0000000003"), "cool", 22, 15)
+            ClimateCommand(VehicleIdentifier("LGWTEST0000000003"), "auto", 22, 15)
         )
 
     assert len(transport.calls) == before

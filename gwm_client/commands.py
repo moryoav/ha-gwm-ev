@@ -10,7 +10,7 @@ from typing import Literal
 from .models import VehicleIdentifier
 from .regions import Region
 
-type ClimateMode = Literal["cool", "heat", "off"]
+type ClimateMode = Literal["auto", "off"]
 type ChinaVehicleControlAction = Literal[
     "remote_start",
     "remote_stop",
@@ -73,7 +73,7 @@ class ClimateCommand:
     def __post_init__(self) -> None:
         if (
             type(self.identifier) is not VehicleIdentifier
-            or self.mode not in {"cool", "heat", "off"}
+            or self.mode not in {"auto", "off"}
             or isinstance(self.temperature, bool)
             or not isinstance(self.temperature, int)
             or not 16 <= self.temperature <= 32
@@ -230,7 +230,6 @@ def validate_overseas_command_inputs(
         }
         or type(region) is not Region
         or region not in {Region.EU, Region.ANZ, Region.RUSSIA}
-        or (type(command) is ClimateCommand and command.mode == "heat")
         or not isinstance(security_password_hash, str)
         or _MD5_HASH.fullmatch(security_password_hash) is None
         or not isinstance(sequence_number, str)

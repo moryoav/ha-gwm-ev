@@ -8,6 +8,13 @@ This project follows semantic versioning. HACS uses the latest GitHub release ta
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-09-02
+
+### Changed
+
+- **Breaking:** Replaced the climate entity's `cool` mode and mainland-China `heat` mode with `auto`. The vehicle determines heating or cooling from the selected target temperature. Existing automations using `cool` or `heat` must use `auto`.
+- Stopped reporting every active climate session as `cooling` when GWM provides only an on/off state and no reliable heating-or-cooling action signal.
+
 ## [0.16.19] - 2026-09-02
 
 ### Added
