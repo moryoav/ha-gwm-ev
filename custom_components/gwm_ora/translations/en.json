@@ -206,8 +206,8 @@
       "oil_segments": { "name": "Oil segments" },
       "aux_battery": { "name": "Auxiliary battery" },
       "remaining_usable_charge": { "name": "Remaining usable charge" },
-      "battery_pack_current": { "name": "Battery pack current" },
-      "battery_pack_voltage": { "name": "Battery pack voltage" }
+      "battery_pack_current": { "name": "Charging current" },
+      "battery_pack_voltage": { "name": "Charging voltage" }
     },
     "binary_sensor": {
       "charging_active": { "name": "Charging active" },
@@ -254,11 +254,10 @@
       "climate_run_time": { "name": "Climate run time" },
       "charge_soc_limit": { "name": "Charge limit" }
     },
-    "time": {
+    "select": {
       "charge_window_start": { "name": "Charge window start" },
       "charge_window_end": { "name": "Charge window end" },
-      "battery_appointment_time": { "name": "Battery appointment departure" },
-      "cabin_clean_appointment_time": { "name": "Cabin clean appointment" }
+      "battery_appointment_time": { "name": "Battery appointment departure" }
     },
     "lock": {
       "door_lock": { "name": "Door lock" }

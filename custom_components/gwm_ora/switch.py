@@ -44,120 +44,116 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up GWM switches."""
-    setup_vehicle_entities(
-        entry,
-        async_add_entities,
-        lambda vehicle: (
-            GwmChargingScheduleSwitch(
-                entry.runtime_data.api, entry.runtime_data.coordinator, vehicle["vin"]
-            ),
-            GwmFrontDefrosterSwitch(
-                entry.runtime_data.api, entry.runtime_data.coordinator, vehicle["vin"]
-            ),
-            GwmRemoteStartSwitch(
-                entry.runtime_data.api, entry.runtime_data.coordinator, vehicle["vin"]
-            ),
+
+    def switches_for_vehicle(vehicle: dict) -> list[GwmEntity]:
+        vin = vehicle["vin"]
+        api = entry.runtime_data.api
+        coordinator = entry.runtime_data.coordinator
+        is_beantech = (
+            coordinator.region == "cn"
+            and str(vehicle.get("platform") or "").lower() == "beantech"
+        )
+        switches: list[GwmEntity] = [
+            GwmRemoteStartSwitch(api, coordinator, vin),
             GwmRemoteControlSwitch(
-                entry.runtime_data.api,
-                entry.runtime_data.coordinator,
-                vehicle["vin"],
+                api,
+                coordinator,
+                vin,
                 turn_on_action="seat_heating_start",
                 turn_off_action="seat_heating_stop",
                 state_key="front_driver_seat_heater_level",
                 translation_key="seat_heating",
             ),
             GwmRemoteControlSwitch(
-                entry.runtime_data.api,
-                entry.runtime_data.coordinator,
-                vehicle["vin"],
+                api,
+                coordinator,
+                vin,
                 turn_on_action="seat_heating_start_passenger",
                 turn_off_action="seat_heating_stop_passenger",
                 state_key="front_passenger_seat_heater_level",
                 translation_key="seat_heating_passenger",
             ),
             GwmRemoteControlSwitch(
-                entry.runtime_data.api,
-                entry.runtime_data.coordinator,
-                vehicle["vin"],
+                api,
+                coordinator,
+                vin,
                 turn_on_action="seat_ventilation_start",
                 turn_off_action="seat_ventilation_stop",
                 state_key="front_driver_seat_vent_level",
                 translation_key="seat_ventilation",
             ),
             GwmRemoteControlSwitch(
-                entry.runtime_data.api,
-                entry.runtime_data.coordinator,
-                vehicle["vin"],
+                api,
+                coordinator,
+                vin,
                 turn_on_action="seat_ventilation_start_passenger",
                 turn_off_action="seat_ventilation_stop_passenger",
                 state_key="front_passenger_seat_vent_level",
                 translation_key="seat_ventilation_passenger",
             ),
             GwmRemoteControlSwitch(
-                entry.runtime_data.api,
-                entry.runtime_data.coordinator,
-                vehicle["vin"],
+                api,
+                coordinator,
+                vin,
                 turn_on_action="steering_wheel_heating",
                 turn_off_action="steering_wheel_heatless",
                 state_key="steering_wheel_heater_active",
                 translation_key="steering_wheel_heating",
             ),
             GwmRemoteControlSwitch(
-                entry.runtime_data.api,
-                entry.runtime_data.coordinator,
-                vehicle["vin"],
+                api,
+                coordinator,
+                vin,
                 turn_on_action="defrost_front_start",
                 turn_off_action="defrost_front_stop",
                 state_key="front_defroster",
                 translation_key="defrost_front",
             ),
             GwmRemoteControlSwitch(
-                entry.runtime_data.api,
-                entry.runtime_data.coordinator,
-                vehicle["vin"],
+                api,
+                coordinator,
+                vin,
                 turn_on_action="defrost_back_start",
                 turn_off_action="defrost_back_stop",
                 state_key="rear_defroster",
                 translation_key="defrost_back",
             ),
             GwmClimatePresetSwitch(
-                entry.runtime_data.api,
-                entry.runtime_data.coordinator,
-                vehicle["vin"],
-                temperature=17,
-                translation_key="fast_cool",
+                api, coordinator, vin, temperature=17, translation_key="fast_cool"
             ),
             GwmClimatePresetSwitch(
-                entry.runtime_data.api,
-                entry.runtime_data.coordinator,
-                vehicle["vin"],
-                temperature=31,
-                translation_key="fast_heat",
+                api, coordinator, vin, temperature=31, translation_key="fast_heat"
             ),
             GwmBatteryHeatSwitch(
-                entry.runtime_data.api,
-                entry.runtime_data.coordinator,
-                vehicle["vin"],
+                api,
+                coordinator,
+                vin,
                 turn_on_action="battery_gun_heat",
                 turn_off_action="battery_gun_heat_stop",
                 translation_key="battery_gun_heat",
             ),
             GwmBatteryHeatSwitch(
-                entry.runtime_data.api,
-                entry.runtime_data.coordinator,
-                vehicle["vin"],
+                api,
+                coordinator,
+                vin,
                 turn_on_action="battery_initiative_heat",
                 turn_off_action="battery_initiative_heat_stop",
                 translation_key="battery_initiative_heat",
             ),
-            GwmSmartChargeSwitch(
-                entry.runtime_data.api, entry.runtime_data.coordinator, vehicle["vin"]
-            ),
-            GwmBatteryAppointmentHeatingSwitch(
-                entry.runtime_data.api, entry.runtime_data.coordinator, vehicle["vin"]
-            ),
-        ),
-    )
+            GwmSmartChargeSwitch(api, coordinator, vin),
+            GwmBatteryAppointmentHeatingSwitch(api, coordinator, vin),
+        ]
+        if not is_beantech:
+            # The overseas charging-schedule and front-defroster switches have no
+            # BeanTech equivalent, so they are only created for non-BeanTech cars.
+            switches = [
+                GwmChargingScheduleSwitch(api, coordinator, vin),
+                GwmFrontDefrosterSwitch(api, coordinator, vin),
+                *switches,
+            ]
+        return switches
+
+    setup_vehicle_entities(entry, async_add_entities, switches_for_vehicle)
 
 
 class GwmFrontDefrosterSwitch(GwmEntity, SwitchEntity):

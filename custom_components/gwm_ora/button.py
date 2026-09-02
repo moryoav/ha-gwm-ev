@@ -64,12 +64,17 @@ async def async_setup_entry(
                 entry.runtime_data.coordinator,
                 vin,
             ),
-            GwmCabinCleanButton(
-                entry.runtime_data.api,
-                entry.runtime_data.coordinator,
-                vin,
-            ),
         ]
+        if entry.runtime_data.coordinator.region != "cn":
+            # The overseas air-circulation button has no BeanTech equivalent: the
+            # BeanTech cabin clean is exposed as a comfort button instead.
+            entities.append(
+                GwmCabinCleanButton(
+                    entry.runtime_data.api,
+                    entry.runtime_data.coordinator,
+                    vin,
+                )
+            )
         if entry.runtime_data.coordinator.region == "cn":
             entities.extend(
                 GwmChinaRemoteButton(

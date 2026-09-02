@@ -206,8 +206,8 @@
       "oil_segments": { "name": "油量分段" },
       "aux_battery": { "name": "蓄电池电量" },
       "remaining_usable_charge": { "name": "剩余可用电量" },
-      "battery_pack_current": { "name": "电池包电流" },
-      "battery_pack_voltage": { "name": "电池包电压" }
+      "battery_pack_current": { "name": "充电电流" },
+      "battery_pack_voltage": { "name": "充电电压" }
     },
     "binary_sensor": {
       "charging_active": { "name": "充电中" },
@@ -254,11 +254,10 @@
       "climate_run_time": { "name": "空调运行时长" },
       "charge_soc_limit": { "name": "充电上限" }
     },
-    "time": {
+    "select": {
       "charge_window_start": { "name": "充电开始时间" },
       "charge_window_end": { "name": "充电结束时间" },
-      "battery_appointment_time": { "name": "电池预约加热出发时间" },
-      "cabin_clean_appointment_time": { "name": "车内清洁预约时间" }
+      "battery_appointment_time": { "name": "电池预约加热出发时间" }
     },
     "lock": {
       "door_lock": { "name": "门锁" }

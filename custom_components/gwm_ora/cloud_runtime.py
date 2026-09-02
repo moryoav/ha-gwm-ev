@@ -45,6 +45,7 @@ from gwm_client import (
     GwmAuthenticationError,
     GwmClient,
     GwmClientConfig,
+    GwmClientError,
     GwmConfigurationError,
     GwmNetworkError,
     GwmOptionalEndpointError,
@@ -230,6 +231,11 @@ class _ChinaReadClient(Protocol):
         self,
         identifier: VehicleIdentifier,
     ) -> Mapping[str, object]: ...
+
+    async def get_bean_tech_ac_temperature(
+        self,
+        identifier: VehicleIdentifier,
+    ) -> int | None: ...
 
     async def set_bean_tech_charging_mode(
         self,
@@ -539,7 +545,7 @@ class GwmCloudClient:
         for vehicle in vehicles:
             status = await self._client.get_last_status(vehicle.identifier)
             if self.region == REGION_CHINA:
-                basics = self._china_vehicle_basics(vehicle.identifier)
+                basics = await self._china_vehicle_basics(vehicle.identifier)
             else:
                 overseas_client = cast(_OverseasReadClient, self._client)
                 try:
@@ -638,7 +644,7 @@ class GwmCloudClient:
         if self.region == REGION_CHINA:
             if (vehicle.platform or "").strip().casefold() not in {"navinfo", "beantech"}:
                 raise GwmRoutePolicyError(operation="send_climate_command")
-            basics = self._china_vehicle_basics(identifier)
+            basics = await self._china_vehicle_basics(identifier)
         else:
             overseas_client = cast(_OverseasReadClient, self._client)
             try:
@@ -997,17 +1003,26 @@ class GwmCloudClient:
         if self._state_store is not None:
             await self._state_store.async_clear_auth_state(self._entry_data)
 
-    def _china_vehicle_basics(
+    async def _china_vehicle_basics(
         self,
         identifier: VehicleIdentifier,
     ) -> CloudVehicleBasics:
-        climate = self._china_climate_defaults.setdefault(
-            identifier.value,
-            CloudClimateConfiguration(
-                temperature="22",
-                operation_time="900",
-            ),
+        cached = self._china_climate_defaults.get(identifier.value)
+        temperature = cached.temperature if cached is not None else "22"
+        operation_time = cached.operation_time if cached is not None else "900"
+        try:
+            read_temp = await cast(
+                _ChinaReadClient, self._client
+            ).get_bean_tech_ac_temperature(identifier)
+            if read_temp is not None:
+                temperature = str(read_temp)
+        except GwmClientError:
+            pass
+        climate = CloudClimateConfiguration(
+            temperature=temperature,
+            operation_time=operation_time,
         )
+        self._china_climate_defaults[identifier.value] = climate
         return CloudVehicleBasics(climate=climate)
 
 

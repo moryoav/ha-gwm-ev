@@ -867,6 +867,26 @@ class ChinaClient:
             ),
         )
 
+    async def get_bean_tech_ac_temperature(
+        self,
+        identifier: VehicleIdentifier,
+        *,
+        timeout: float | None = None,
+    ) -> int | None:
+        """Read the BeanTech A/C set temperature the car remembers."""
+
+        operation = "get_bean_tech_ac_temperature"
+        if type(identifier) is not VehicleIdentifier:
+            raise GwmConfigurationError(operation=operation)
+        return await self._run_read(
+            operation,
+            timeout=timeout,
+            action=lambda deadline: self._get_bean_tech_ac_temperature_locked(
+                identifier,
+                deadline=deadline,
+            ),
+        )
+
     async def set_bean_tech_battery_heating_appointment(
         self,
         identifier: VehicleIdentifier,
@@ -2016,7 +2036,12 @@ class ChinaClient:
         if vehicle is None or (vehicle.platform or "").strip().casefold() != "beantech":
             raise GwmRoutePolicyError(operation=operation)
         response = await self._send_locked(
-            self._build_bean_tech_config_query_request(state, identifier),
+            self._build_bean_tech_config_query_request(
+                state,
+                identifier,
+                types=["BATTERY_HEATING_APPOINTMENT"],
+                operation=operation,
+            ),
             deadline=deadline,
         )
         data = _decode_g_app_envelope(response, operation=operation)
@@ -2029,6 +2054,42 @@ class ChinaClient:
         if switch_type not in {0, 1} and switch_type not in {"0", "1"}:
             raise GwmSchemaError(operation=operation)
         return int(switch_type) == 1
+
+    async def _get_bean_tech_ac_temperature_locked(
+        self,
+        identifier: VehicleIdentifier,
+        *,
+        deadline: _Deadline,
+    ) -> int | None:
+        operation = "get_bean_tech_ac_temperature"
+        state = self._required_session(operation=operation)
+        vehicle = self._vehicles.get(identifier.value.casefold())
+        if vehicle is None or (vehicle.platform or "").strip().casefold() != "beantech":
+            raise GwmRoutePolicyError(operation=operation)
+        response = await self._send_locked(
+            self._build_bean_tech_config_query_request(
+                state,
+                identifier,
+                types=["AIR_CONDITIONER_START"],
+                operation=operation,
+            ),
+            deadline=deadline,
+        )
+        data = _decode_g_app_envelope(response, operation=operation)
+        if not isinstance(data, list) or not data or not isinstance(data[0], Mapping):
+            raise GwmSchemaError(operation=operation)
+        cmd_content = data[0].get("cmdContent")
+        if not isinstance(cmd_content, Mapping):
+            raise GwmSchemaError(operation=operation)
+        temperature = cmd_content.get("temperature")
+        if temperature is None:
+            return None
+        if isinstance(temperature, bool):
+            raise GwmSchemaError(operation=operation)
+        try:
+            return int(temperature)
+        except (TypeError, ValueError):
+            raise GwmSchemaError(operation=operation) from None
 
     async def _set_bean_tech_battery_heating_appointment_locked(
         self,
@@ -2817,16 +2878,19 @@ class ChinaClient:
         self,
         state: ChinaAuthState,
         identifier: VehicleIdentifier,
+        *,
+        types: Sequence[str],
+        operation: Literal[
+            "get_bean_tech_battery_heating_appointment",
+            "get_bean_tech_ac_temperature",
+        ],
     ) -> _ChinaTransportRequest:
-        operation: Literal["get_bean_tech_battery_heating_appointment"] = (
-            "get_bean_tech_battery_heating_appointment"
-        )
         if state.auto_ai_user_id is None:
             raise GwmAuthenticationError(operation=operation)
         body = encode_dotnet_json(
             {
                 "sendType": 0,
-                "types": ["BATTERY_HEATING_APPOINTMENT"],
+                "types": list(types),
                 "userId": state.auto_ai_user_id,
                 "vin": identifier.value,
             }

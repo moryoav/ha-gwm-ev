@@ -1,13 +1,13 @@
-"""Time platform for BeanTech time-of-day controls."""
+"""Select platform for BeanTech time-of-day dropdowns."""
 
 from __future__ import annotations
 
 import logging
-from datetime import time as clock_time
 from typing import Any
 
-from homeassistant.components.time import TimeEntity
+from homeassistant.components.select import SelectEntity
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from gwm_client import GwmClientError
@@ -20,21 +20,25 @@ PARALLEL_UPDATES = 0
 
 _LOGGER = logging.getLogger(__name__)
 
-
-def _parse_clock(value: str | None) -> clock_time | None:
-    """Parse a ``HH:MM`` string into a ``datetime.time``."""
-    if not isinstance(value, str):
-        return None
-    try:
-        hour_text, minute_text = value.split(":", 1)
-        return clock_time(int(hour_text), int(minute_text))
-    except (ValueError, AttributeError):
-        return None
+# The app offers 5-minute granularity over a full day for these time settings.
+_FIVE_MINUTE_TIMES = [
+    f"{hour:02d}:{minute:02d}" for hour in range(24) for minute in range(0, 60, 5)
+]
 
 
-def _format_clock(value: clock_time) -> str:
-    """Format a ``datetime.time`` as ``HH:MM``."""
-    return f"{value.hour:02d}:{value.minute:02d}"
+def _clock_to_today_ms(value: str) -> int:
+    """Convert an ``HH:MM`` selection into today's epoch ms (tomorrow if passed)."""
+    import time as _time
+
+    hour, minute = value.split(":", 1)
+    now = _time.localtime()
+    target = _time.mktime(
+        (now.tm_year, now.tm_mon, now.tm_mday, int(hour), int(minute), 0, 0, 0, -1)
+    )
+    now_seconds = _time.mktime(now)
+    if target < now_seconds:
+        target += 24 * 3600
+    return int(target * 1000)
 
 
 async def async_setup_entry(
@@ -42,29 +46,29 @@ async def async_setup_entry(
     entry: GwmConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up GWM time entities."""
+    """Set up GWM select entities."""
     setup_vehicle_entities(
         entry,
         async_add_entities,
         lambda vehicle: (
-            GwmChargeWindowStartTime(
+            GwmChargeWindowStartSelect(
                 entry.runtime_data.api, entry.runtime_data.coordinator, vehicle["vin"]
             ),
-            GwmChargeWindowEndTime(
+            GwmChargeWindowEndSelect(
                 entry.runtime_data.api, entry.runtime_data.coordinator, vehicle["vin"]
             ),
-            GwmBatteryAppointmentTime(
-                entry.runtime_data.api, entry.runtime_data.coordinator, vehicle["vin"]
-            ),
-            GwmCabinCleanAppointmentTime(
+            GwmBatteryAppointmentSelect(
                 entry.runtime_data.api, entry.runtime_data.coordinator, vehicle["vin"]
             ),
         ),
     )
 
 
-class _BeanTechTimeEntity(GwmEntity, TimeEntity):
-    """Shared BeanTech time-of-day entity base."""
+class _BeanTechTimeSelect(GwmEntity, SelectEntity):
+    """Shared BeanTech time-of-day dropdown entity."""
+
+    _attr_entity_category = EntityCategory.CONFIG
+    _attr_options = _FIVE_MINUTE_TIMES
 
     def __init__(self, api, coordinator, vin: str, *, translation_key: str) -> None:
         super().__init__(coordinator, vin)
@@ -81,17 +85,16 @@ class _BeanTechTimeEntity(GwmEntity, TimeEntity):
         )
 
 
-class GwmChargeWindowStartTime(_BeanTechTimeEntity):
+class GwmChargeWindowStartSelect(_BeanTechTimeSelect):
     """Start of the BeanTech smart-charge window (HH:MM)."""
 
     def __init__(self, api, coordinator, vin: str) -> None:
         super().__init__(api, coordinator, vin, translation_key="charge_window_start")
 
     @property
-    def native_value(self) -> clock_time | None:
-        return _parse_clock(
-            self.coordinator.local_flag(self.vin, "charge_window_start")
-        )
+    def current_option(self) -> str | None:
+        value = self.coordinator.local_flag(self.vin, "charge_window_start")
+        return value if value in self._attr_options else None
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
@@ -113,7 +116,7 @@ class GwmChargeWindowStartTime(_BeanTechTimeEntity):
         )
         return response
 
-    async def async_set_value(self, value: clock_time) -> None:
+    async def async_select_option(self, option: str) -> None:
         current = await self._async_read_window()
         end_time = (
             current.get("end_time")
@@ -124,21 +127,22 @@ class GwmChargeWindowStartTime(_BeanTechTimeEntity):
             end_time = "07:00"
         command = await async_call_gwm_api(
             self._api.async_set_charge_window(
-                self.vin, start_time=_format_clock(value), end_time=end_time
+                self.vin, start_time=option, end_time=end_time
             )
         )
         self.coordinator.async_track_command(command, on_terminal=self._async_read_window)
 
 
-class GwmChargeWindowEndTime(_BeanTechTimeEntity):
+class GwmChargeWindowEndSelect(_BeanTechTimeSelect):
     """End of the BeanTech smart-charge window (HH:MM)."""
 
     def __init__(self, api, coordinator, vin: str) -> None:
         super().__init__(api, coordinator, vin, translation_key="charge_window_end")
 
     @property
-    def native_value(self) -> clock_time | None:
-        return _parse_clock(self.coordinator.local_flag(self.vin, "charge_window_end"))
+    def current_option(self) -> str | None:
+        value = self.coordinator.local_flag(self.vin, "charge_window_end")
+        return value if value in self._attr_options else None
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
@@ -160,7 +164,7 @@ class GwmChargeWindowEndTime(_BeanTechTimeEntity):
         )
         return response
 
-    async def async_set_value(self, value: clock_time) -> None:
+    async def async_select_option(self, option: str) -> None:
         current = await self._async_read_window()
         start_time = (
             current.get("start_time")
@@ -171,70 +175,31 @@ class GwmChargeWindowEndTime(_BeanTechTimeEntity):
             start_time = "23:00"
         command = await async_call_gwm_api(
             self._api.async_set_charge_window(
-                self.vin, start_time=start_time, end_time=_format_clock(value)
+                self.vin, start_time=start_time, end_time=option
             )
         )
         self.coordinator.async_track_command(command, on_terminal=self._async_read_window)
 
 
-class GwmBatteryAppointmentTime(_BeanTechTimeEntity):
+class GwmBatteryAppointmentSelect(_BeanTechTimeSelect):
     """Battery appointment heating departure time (HH:MM, within 24 h)."""
 
     def __init__(self, api, coordinator, vin: str) -> None:
-        super().__init__(api, coordinator, vin, translation_key="battery_appointment_time")
+        super().__init__(
+            api, coordinator, vin, translation_key="battery_appointment_time"
+        )
 
     @property
-    def native_value(self) -> clock_time | None:
-        return _parse_clock(
-            self.coordinator.local_flag(self.vin, "battery_appointment_time")
-        )
+    def current_option(self) -> str | None:
+        value = self.coordinator.local_flag(self.vin, "battery_appointment_time")
+        return value if value in self._attr_options else None
 
-    async def async_set_value(self, value: clock_time) -> None:
-        import time as _time
-
-        now = _time.localtime()
-        target = _time.mktime(
-            (now.tm_year, now.tm_mon, now.tm_mday, value.hour, value.minute, 0, 0, 0, -1)
-        )
-        now_seconds = _time.mktime(now)
-        # A departure earlier today means tomorrow.
-        if target < now_seconds:
-            target += 24 * 3600
-        use_car_time_ms = int(target * 1000)
-        self.coordinator.set_local_flag(
-            self.vin, "battery_appointment_time", _format_clock(value)
-        )
+    async def async_select_option(self, option: str) -> None:
+        use_car_time_ms = _clock_to_today_ms(option)
+        self.coordinator.set_local_flag(self.vin, "battery_appointment_time", option)
         command = await async_call_gwm_api(
             self._api.async_set_battery_heating_appointment(
                 self.vin, enable=True, use_car_time_ms=use_car_time_ms
             )
         )
         self.coordinator.async_track_command(command)
-
-
-class GwmCabinCleanAppointmentTime(_BeanTechTimeEntity):
-    """Cabin-clean appointment time (HH:MM, within 24 h)."""
-
-    def __init__(self, api, coordinator, vin: str) -> None:
-        super().__init__(
-            api, coordinator, vin, translation_key="cabin_clean_appointment_time"
-        )
-
-    @property
-    def native_value(self) -> clock_time | None:
-        return None
-
-    async def async_set_value(self, value: clock_time) -> None:
-        import time as _time
-
-        now = _time.localtime()
-        target = _time.mktime(
-            (now.tm_year, now.tm_mon, now.tm_mday, value.hour, value.minute, 0, 0, 0, -1)
-        )
-        now_seconds = _time.mktime(now)
-        if target < now_seconds:
-            target += 24 * 3600
-        time_ms = int(target * 1000)
-        await async_call_gwm_api(
-            self._api.async_set_cabin_clean_appointment(self.vin, time_ms=time_ms)
-        )

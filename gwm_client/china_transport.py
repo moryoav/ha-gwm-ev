@@ -71,6 +71,7 @@ type _ChinaOperation = Literal[
     "get_bean_tech_charge_setting",
     "set_bean_tech_charging_mode",
     "get_bean_tech_battery_heating_appointment",
+    "get_bean_tech_ac_temperature",
     "set_bean_tech_battery_heating_appointment",
     "set_bean_tech_charge_soc",
     "set_bean_tech_cabin_clean_appointment",
@@ -328,7 +329,10 @@ class _ChinaTransportRequest:
             _validate_bean_tech_charge_setting_request(self, copied)
         elif self.operation == "set_bean_tech_charging_mode":
             _validate_bean_tech_charge_setting_write_request(self, copied)
-        elif self.operation == "get_bean_tech_battery_heating_appointment":
+        elif self.operation in {
+            "get_bean_tech_battery_heating_appointment",
+            "get_bean_tech_ac_temperature",
+        }:
             _validate_bean_tech_config_query_request(self, copied)
         elif self.operation == "set_bean_tech_battery_heating_appointment":
             _validate_bean_tech_battery_heating_appointment_request(self, copied)
@@ -1976,7 +1980,7 @@ def _validate_bean_tech_config_query_request(
         or set(headers) != _BEAN_TECH_COMMAND_HEADERS
         or list(body) != ["sendType", "types", "userId", "vin"]
         or body.get("sendType") != 0
-        or types != ["BATTERY_HEATING_APPOINTMENT"]
+        or types not in (["BATTERY_HEATING_APPOINTMENT"], ["AIR_CONDITIONER_START"])
         or not isinstance(user_id, str)
         or not user_id
         or _VIN.fullmatch(str(body.get("vin", ""))) is None

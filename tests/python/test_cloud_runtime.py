@@ -808,6 +808,13 @@ async def test_china_runtime_handoff_maps_platform_capabilities_and_no_pin_write
             assert identifier == navinfo.identifier
             return ChargingPlanInfo()
 
+        async def get_bean_tech_ac_temperature(
+            self,
+            identifier: VehicleIdentifier,
+        ) -> int | None:
+            del identifier
+            return None
+
         async def set_charging_plan(self, command: ChargingPlanCommand) -> None:
             self.charging.append(command)
 
