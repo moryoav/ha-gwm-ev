@@ -1003,6 +1003,10 @@ _CHINA_VEHICLE_CONTROL_NAMES = {
     "comfort_warm": "Comfort warm",
     "comfort_cool": "Comfort cool",
     "comfort_off": "Comfort off",
+    "battery_gun_heat": "Battery heating while plugged in",
+    "battery_gun_heat_stop": "Battery heating while plugged in off",
+    "battery_initiative_heat": "Battery active heating",
+    "battery_initiative_heat_stop": "Battery active heating off",
 }
 
 
