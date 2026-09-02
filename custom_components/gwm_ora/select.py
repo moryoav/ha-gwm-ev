@@ -120,12 +120,10 @@ class GwmChargeWindowStartSelect(_BeanTechTimeSelect):
         return response
 
     async def async_select_option(self, option: str) -> None:
-        current = await self._async_read_window()
-        end_time = (
-            current.get("end_time")
-            if current
-            else self.coordinator.local_flag(self.vin, "charge_window_end")
-        )
+        # Optimistically show the new start time, then write it alongside the
+        # current end time (read from the last known value, not a fresh read).
+        self.coordinator.set_local_flag(self.vin, "charge_window_start", option)
+        end_time = self.coordinator.local_flag(self.vin, "charge_window_end")
         if not isinstance(end_time, str):
             end_time = "07:00"
         command = await async_call_gwm_api(
@@ -168,12 +166,10 @@ class GwmChargeWindowEndSelect(_BeanTechTimeSelect):
         return response
 
     async def async_select_option(self, option: str) -> None:
-        current = await self._async_read_window()
-        start_time = (
-            current.get("start_time")
-            if current
-            else self.coordinator.local_flag(self.vin, "charge_window_start")
-        )
+        # Optimistically show the new end time, then write it alongside the
+        # current start time (read from the last known value, not a fresh read).
+        self.coordinator.set_local_flag(self.vin, "charge_window_end", option)
+        start_time = self.coordinator.local_flag(self.vin, "charge_window_start")
         if not isinstance(start_time, str):
             start_time = "23:00"
         command = await async_call_gwm_api(
