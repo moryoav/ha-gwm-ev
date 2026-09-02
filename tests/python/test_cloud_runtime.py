@@ -55,7 +55,6 @@ from gwm_client import (
     GwmConfigurationError,
     GwmNetworkError,
     GwmOptionalEndpointError,
-    GwmRoutePolicyError,
     GwmSession,
     RemoteCommandAcceptance,
     VehicleIdentifier,
@@ -883,7 +882,7 @@ async def test_china_runtime_handoff_maps_platform_capabilities_and_no_pin_write
     assert snapshots[1]["capabilities"] == {
         "remote_commands": True,
         "charging_control": False,
-        "climate_commands": False,
+        "climate_commands": True,
         "lock_window_commands": True,
         "china_vehicle_commands": True,
         "front_defroster_commands": False,
@@ -922,11 +921,21 @@ async def test_china_runtime_handoff_maps_platform_capabilities_and_no_pin_write
     assert client.windows == [windows]
     assert client.controls == [control]
     assert client.charging == [charging]
-    with pytest.raises(GwmRoutePolicyError):
-        await runtime.async_get_climate_context(
-            beantech.identifier,
-            include_status=False,
-        )
+    beantech_context = await runtime.async_get_climate_context(
+        beantech.identifier,
+        include_status=False,
+    )
+    assert beantech_context.basics.climate == CloudClimateConfiguration("22", "900")
+    await runtime.async_update_climate_defaults(
+        beantech.identifier,
+        temperature=25,
+        operation_time_minutes=20,
+    )
+    beantech_updated = await runtime.async_get_climate_context(
+        beantech.identifier,
+        include_status=False,
+    )
+    assert beantech_updated.basics.climate == CloudClimateConfiguration("25", "1200")
     await runtime.aclose()
     assert client.closed
 

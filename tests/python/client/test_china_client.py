@@ -1157,17 +1157,96 @@ async def test_navinfo_climate_rejects_temperatures_outside_captured_range() -> 
 
 
 @pytest.mark.asyncio
-async def test_beantech_climate_is_rejected_before_command_transport() -> None:
-    transport = _FakeTransport(acquire_vehicles=[FIXTURE["responses"]["discovery"]])
+async def test_beantech_climate_start_and_stop_use_timely_with_token() -> None:
+    transport = _FakeTransport(
+        acquire_vehicles=[FIXTURE["responses"]["discovery"]],
+        generate_security_token=[
+            {"code": "000000", "data": "JWT"},
+            {"code": "000000", "data": "JWT"},
+        ],
+        send_climate_command=[
+            {"code": "000000", "data": {}},
+            {"code": "000000", "data": {}},
+        ],
+    )
+    client = _client(transport, bean_tech_security_password="ENCRYPTED==")
+    assert isinstance(
+        await client.authenticate(_credentials(), state=_complete_state()),
+        ChinaAuthenticated,
+    )
+    identifier = VehicleIdentifier(BEAN_VIN)
+
+    started = await client.send_climate_command(
+        ClimateCommand(identifier, "auto", 22, 15)
+    )
+    stopped = await client.send_climate_command(
+        ClimateCommand(identifier, "off", 22, 15)
+    )
+
+    assert started.command_id == stopped.command_id == BEAN_COMMAND_ID
+    sends = [
+        json.loads(request.body or b"null")
+        for request in transport.calls
+        if request.operation == "send_climate_command"
+    ]
+    assert sends[0]["commands"] == [
+        {
+            "controlType": "AIR_CONDITIONER_START",
+            "cmdBody": {
+                "allowStartEng": 1,
+                "operationTime": 900,
+                "temperature": 22,
+            },
+        }
+    ]
+    assert sends[1]["commands"] == [{"controlType": "AIR_CONDITIONER_STOP"}]
+    for request in transport.calls:
+        if request.operation == "send_climate_command":
+            assert request.url.endswith("/app-api/api/v3.0/vehicle/remote-ctrl/timely")
+            assert request.headers["securityToken"] == "JWT"
+    assert sum(
+        1 for call in transport.calls if call.operation == "generate_security_token"
+    ) == 2
+
+
+@pytest.mark.asyncio
+async def test_beantech_climate_uses_t5_path_when_no_security_password() -> None:
+    transport = _FakeTransport(
+        acquire_vehicles=[FIXTURE["responses"]["discovery"]],
+        send_climate_command=[{"code": "000000", "data": {}}],
+    )
     client = _client(transport)
-    authenticated = await client.authenticate(_credentials(), state=_complete_state())
-    assert isinstance(authenticated, ChinaAuthenticated)
+    assert isinstance(
+        await client.authenticate(_credentials(), state=_complete_state()),
+        ChinaAuthenticated,
+    )
+    await client.send_climate_command(
+        ClimateCommand(VehicleIdentifier(BEAN_VIN), "off", 22, 15)
+    )
+    sent = next(
+        call for call in transport.calls if call.operation == "send_climate_command"
+    )
+    assert sent.url.endswith("/app-api/api/v1.0/vehicle/T5/sendCmd")
+    assert not any(
+        call.operation == "generate_security_token" for call in transport.calls
+    )
+
+
+@pytest.mark.asyncio
+async def test_beantech_climate_rejects_temperatures_outside_captured_range() -> None:
+    transport = _FakeTransport(acquire_vehicles=[FIXTURE["responses"]["discovery"]])
+    client = _client(transport, bean_tech_security_password="ENCRYPTED==")
+    assert isinstance(
+        await client.authenticate(_credentials(), state=_complete_state()),
+        ChinaAuthenticated,
+    )
     before = len(transport.calls)
 
-    with pytest.raises(GwmRoutePolicyError):
-        await client.send_climate_command(
-            ClimateCommand(VehicleIdentifier("LGWTEST0000000003"), "cool", 22, 15)
-        )
+    for temperature in (16, 32):
+        with pytest.raises(GwmConfigurationError):
+            await client.send_climate_command(
+                ClimateCommand(VehicleIdentifier(BEAN_VIN), "auto", temperature, 15)
+            )
 
     assert len(transport.calls) == before
 
@@ -1777,6 +1856,52 @@ def test_beantech_timely_request_rejects_engine_start_without_body() -> None:
             command_body=None,
             security_token="JWT",
         )
+
+
+def test_beantech_timely_request_climate_start_shape() -> None:
+    client = _client(_FakeTransport())
+    request = client._build_bean_tech_timely_request(
+        _complete_state(),
+        VehicleIdentifier(BEAN_VIN),
+        sequence_number="0" * 32 + "9359",
+        operation="send_climate_command",
+        control_type="AIR_CONDITIONER_START",
+        command_body={"allowStartEng": 1, "operationTime": 900, "temperature": 22},
+        security_token="JWT",
+    )
+    assert request.url.endswith("/app-api/api/v3.0/vehicle/remote-ctrl/timely")
+    assert request.headers["securityToken"] == "JWT"
+    assert json.loads(request.body or b"null") == {
+        "vin": BEAN_VIN,
+        "seqNo": "0" * 32 + "9359",
+        "sendType": 0,
+        "commands": [
+            {
+                "controlType": "AIR_CONDITIONER_START",
+                "cmdBody": {"allowStartEng": 1, "operationTime": 900, "temperature": 22},
+            }
+        ],
+    }
+
+
+def test_beantech_timely_request_climate_stop_shape() -> None:
+    client = _client(_FakeTransport())
+    request = client._build_bean_tech_timely_request(
+        _complete_state(),
+        VehicleIdentifier(BEAN_VIN),
+        sequence_number="0" * 32 + "9359",
+        operation="send_climate_command",
+        control_type="AIR_CONDITIONER_STOP",
+        command_body=None,
+        security_token="JWT",
+    )
+    assert request.url.endswith("/app-api/api/v3.0/vehicle/remote-ctrl/timely")
+    assert json.loads(request.body or b"null") == {
+        "vin": BEAN_VIN,
+        "seqNo": "0" * 32 + "9359",
+        "sendType": 0,
+        "commands": [{"controlType": "AIR_CONDITIONER_STOP"}],
+    }
 
 
 def test_beantech_result_request_uses_v3_endpoint_when_password_configured() -> None:

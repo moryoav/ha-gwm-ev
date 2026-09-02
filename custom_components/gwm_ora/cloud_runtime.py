@@ -563,7 +563,7 @@ class GwmCloudClient:
                     raise TypeError("capabilities_invalid")
                 capabilities = dict(capability_data)
                 capabilities["climate_commands"] = self._climate_commands_enabled and (
-                    self.region != REGION_CHINA or china_navinfo
+                    self.region != REGION_CHINA or china_supported
                 )
                 capabilities["lock_window_commands"] = self._lock_window_commands_enabled and (
                     self.region != REGION_CHINA or china_supported
@@ -623,7 +623,7 @@ class GwmCloudClient:
         if vehicle is None:
             raise GwmRoutePolicyError(operation="send_climate_command")
         if self.region == REGION_CHINA:
-            if (vehicle.platform or "").strip().casefold() != "navinfo":
+            if (vehicle.platform or "").strip().casefold() not in {"navinfo", "beantech"}:
                 raise GwmRoutePolicyError(operation="send_climate_command")
             basics = self._china_vehicle_basics(identifier)
         else:
@@ -646,7 +646,7 @@ class GwmCloudClient:
     ) -> None:
         if self.region == REGION_CHINA:
             vehicle = self._vehicles.get(identifier.value)
-            if vehicle is None or (vehicle.platform or "").strip().casefold() != "navinfo":
+            if vehicle is None or (vehicle.platform or "").strip().casefold() not in {"navinfo", "beantech"}:
                 raise GwmRoutePolicyError(operation="send_climate_command")
             self._china_climate_defaults[identifier.value] = CloudClimateConfiguration(
                 temperature=str(temperature),

@@ -610,7 +610,7 @@ class ChinaClient:
         *,
         timeout: float | None = None,
     ) -> RemoteCommandAcceptance:
-        """Send a NavInfo climate command; BeanTech remains deliberately unsupported."""
+        """Send a platform-routed China climate command."""
 
         operation: Literal["send_climate_command"] = "send_climate_command"
         if type(command) is not ClimateCommand:
@@ -1334,8 +1334,18 @@ class ChinaClient:
         if vehicle is None:
             raise GwmRoutePolicyError(operation=operation)
         platform = None if vehicle.platform is None else vehicle.platform.strip().casefold()
-        # Climate payloads for BeanTech have not been verified and must never fall
-        # through to the NavInfo route merely because a vehicle was discovered.
+        if platform == "beantech":
+            if command.mode != "off" and not 17 <= command.temperature <= 31:
+                raise GwmConfigurationError(operation=operation)
+            control_type, command_body = _bean_tech_climate_control(command)
+            return await self._send_bean_tech_control(
+                state,
+                command.identifier,
+                operation=operation,
+                control_type=control_type,
+                command_body=command_body,
+                deadline=deadline,
+            )
         if platform != "navinfo":
             raise GwmRoutePolicyError(operation=operation)
         if state.auto_ai_token_id is None or state.auto_ai_user_id is None:
@@ -1487,6 +1497,7 @@ class ChinaClient:
             "send_lock_command",
             "send_close_windows_command",
             "send_vehicle_control_command",
+            "send_climate_command",
         ],
         control_type: str,
         command_body: Mapping[str, object] | None,
@@ -1975,6 +1986,7 @@ class ChinaClient:
             "send_lock_command",
             "send_close_windows_command",
             "send_vehicle_control_command",
+            "send_climate_command",
         ],
         control_type: str,
         command_body: Mapping[str, object] | None,
@@ -2061,6 +2073,7 @@ class ChinaClient:
             "send_lock_command",
             "send_close_windows_command",
             "send_vehicle_control_command",
+            "send_climate_command",
         ],
         control_type: str,
         command_body: Mapping[str, object] | None,
@@ -2908,6 +2921,25 @@ def _bean_tech_vehicle_control(
     if command.action == "sunroof_close":
         return "SKYLIGNT_CLOSE", {"skyLight": 0}
     raise ValueError("vehicle_control_action_invalid")
+
+
+def _bean_tech_climate_control(
+    command: ClimateCommand,
+) -> tuple[str, Mapping[str, object] | None]:
+    if command.mode == "off":
+        return "AIR_CONDITIONER_STOP", None
+    # BeanTech has no separate heat/cool distinction: "cool", "heat" and "auto"
+    # all map to the automatic AIR_CONDITIONER_START command. ``allowStartEng``
+    # is always 1 for BeanTech because its "auto" mode doubles as the app's
+    # linked hybrid-engine-heating switch (the retired add-on's ``heatSwitch``).
+    return (
+        "AIR_CONDITIONER_START",
+        {
+            "allowStartEng": 1,
+            "operationTime": command.operation_time_minutes * 60,
+            "temperature": command.temperature,
+        },
+    )
 
 
 def _optional_bool(value: object, *, default: bool) -> bool:

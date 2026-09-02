@@ -1008,14 +1008,20 @@ def _validate_climate_command_request(
             ("GW.M.SET_AND_OPEN_COMMAND", "start"),
         )
     )
-    if (
-        request.service != "auto_ai"
-        or request.method != "GET"
-        or request.body is not None
-        or set(headers) != _STATUS_HEADERS
-        or not _valid_auto_ai_headers(headers, token_required=True)
-        or not valid_route
-    ):
+    valid_auto_ai = (
+        request.service == "auto_ai"
+        and request.method == "GET"
+        and request.body is None
+        and set(headers) == _STATUS_HEADERS
+        and _valid_auto_ai_headers(headers, token_required=True)
+        and valid_route
+    )
+    valid_bean_tech = _valid_bean_tech_command_request(
+        request,
+        headers,
+        command_kind="climate",
+    )
+    if not valid_auto_ai and not valid_bean_tech:
         raise ValueError("route_invalid")
 
 
@@ -1282,11 +1288,29 @@ def _valid_lock_window_body(
     )
 
 
+def _valid_air_conditioner_start_body(cmd_body: object) -> bool:
+    if not isinstance(cmd_body, Mapping):
+        return False
+    operation_time = cmd_body.get("operationTime")
+    temperature = cmd_body.get("temperature")
+    return (
+        list(cmd_body) == ["allowStartEng", "operationTime", "temperature"]
+        and cmd_body.get("allowStartEng") == 1
+        and isinstance(operation_time, int)
+        and not isinstance(operation_time, bool)
+        and 300 <= operation_time <= 1800
+        and operation_time % 60 == 0
+        and isinstance(temperature, int)
+        and not isinstance(temperature, bool)
+        and 17 <= temperature <= 31
+    )
+
+
 def _valid_bean_tech_command_request(
     request: _ChinaTransportRequest,
     headers: Mapping[str, str],
     *,
-    command_kind: Literal["lock", "windows", "vehicle_control"],
+    command_kind: Literal["lock", "windows", "vehicle_control", "climate"],
 ) -> bool:
     if request.url == _BEAN_TECH_TIMELY_URL:
         return _valid_bean_tech_timely_command_request(
@@ -1321,6 +1345,17 @@ def _valid_bean_tech_command_request(
             and command.get("cmdBody")
             == {"leftFront": 0, "leftBack": 0, "rightFront": 0, "rightBack": 0}
         )
+    elif command_kind == "climate":
+        control_type = command.get("controlType")
+        if control_type == "AIR_CONDITIONER_START":
+            valid_command = (
+                valid_command_shape
+                and _valid_air_conditioner_start_body(command.get("cmdBody"))
+            )
+        elif control_type == "AIR_CONDITIONER_STOP":
+            valid_command = valid_command_shape and command.get("cmdBody") is None
+        else:
+            valid_command = False
     else:
         control_type = command.get("controlType")
         if control_type == "ENGINE_START":
@@ -1380,7 +1415,7 @@ def _valid_bean_tech_timely_command_request(
     request: _ChinaTransportRequest,
     headers: Mapping[str, str],
     *,
-    command_kind: Literal["lock", "windows", "vehicle_control"],
+    command_kind: Literal["lock", "windows", "vehicle_control", "climate"],
 ) -> bool:
     raw_body = _utf8_body(request.body)
     body = _decode_wire_object(raw_body) if raw_body is not None else None
@@ -1410,6 +1445,21 @@ def _valid_bean_tech_timely_command_request(
             and command.get("cmdBody")
             == {"leftFront": 0, "leftBack": 0, "rightFront": 0, "rightBack": 0}
         )
+    elif command_kind == "climate":
+        control_type = command.get("controlType")
+        if control_type == "AIR_CONDITIONER_START":
+            valid_command = (
+                has_cmd_body
+                and list(command) == ["controlType", "cmdBody"]
+                and _valid_air_conditioner_start_body(command.get("cmdBody"))
+            )
+        elif control_type == "AIR_CONDITIONER_STOP":
+            valid_command = (
+                not has_cmd_body
+                and list(command) == ["controlType"]
+            )
+        else:
+            valid_command = False
     else:
         control_type = command.get("controlType")
         if control_type == "ENGINE_START":

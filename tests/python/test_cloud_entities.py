@@ -10,6 +10,7 @@ import pytest
 
 pytest.importorskip("homeassistant")
 
+from homeassistant.components.climate import HVACMode
 from homeassistant.core import HomeAssistant
 
 from custom_components.gwm_ora.button import (
@@ -188,7 +189,7 @@ async def test_cloud_coordinator_keeps_mixed_china_platform_entities_isolated() 
 
 
 @pytest.mark.asyncio
-async def test_task17_capability_exposes_only_climate_and_keeps_beantech_hidden() -> None:
+async def test_task17_capability_exposes_climate_and_pin_gates_beantech() -> None:
     coordinator = GwmDataUpdateCoordinator(
         HomeAssistant("synthetic-config"),
         SimpleNamespace(),
@@ -206,6 +207,58 @@ async def test_task17_capability_exposes_only_climate_and_keeps_beantech_hidden(
     ).available
     assert not GwmDoorLock(SimpleNamespace(), coordinator, "SYNTHETIC-A").available
 
+    config_entry = SimpleNamespace(
+        options={},
+        async_on_unload=lambda callback: None,
+    )
+    pin_coordinator = GwmDataUpdateCoordinator(
+        HomeAssistant("synthetic-config"),
+        SimpleNamespace(),
+        cloud_client=SimpleNamespace(),  # type: ignore[arg-type]
+        config_entry=config_entry,  # type: ignore[arg-type]
+    )
+    pin_coordinator.async_set_updated_data(
+        {
+            "region": "cn",
+            "vehicles": [
+                _vehicle(
+                    "SYNTHETIC-BEANTECH",
+                    70,
+                    platform="beantech",
+                    climate_commands=True,
+                )
+            ],
+        }
+    )
+    # BeanTech requires a configured security PIN before exposing climate control.
+    assert not GwmClimate(
+        SimpleNamespace(), pin_coordinator, "SYNTHETIC-BEANTECH"
+    ).available
+    assert not GwmClimateRunTimeNumber(
+        SimpleNamespace(), pin_coordinator, "SYNTHETIC-BEANTECH"
+    ).available
+
+    config_entry.options = {"beantech_encrypted_security_pin": "X=="}
+    assert GwmClimate(
+        SimpleNamespace(), pin_coordinator, "SYNTHETIC-BEANTECH"
+    ).available
+    assert GwmClimateRunTimeNumber(
+        SimpleNamespace(), pin_coordinator, "SYNTHETIC-BEANTECH"
+    ).available
+
+
+@pytest.mark.asyncio
+async def test_beantech_climate_entity_uses_auto_mode_and_17_to_31_range() -> None:
+    config_entry = SimpleNamespace(
+        options={"beantech_encrypted_security_pin": "X=="},
+        async_on_unload=lambda callback: None,
+    )
+    coordinator = GwmDataUpdateCoordinator(
+        HomeAssistant("synthetic-config"),
+        SimpleNamespace(),
+        cloud_client=SimpleNamespace(),  # type: ignore[arg-type]
+        config_entry=config_entry,  # type: ignore[arg-type]
+    )
     coordinator.async_set_updated_data(
         {
             "region": "cn",
@@ -219,12 +272,13 @@ async def test_task17_capability_exposes_only_climate_and_keeps_beantech_hidden(
             ],
         }
     )
-    assert not GwmClimate(
-        SimpleNamespace(), coordinator, "SYNTHETIC-BEANTECH"
-    ).available
-    assert not GwmClimateRunTimeNumber(
-        SimpleNamespace(), coordinator, "SYNTHETIC-BEANTECH"
-    ).available
+
+    climate = GwmClimate(SimpleNamespace(), coordinator, "SYNTHETIC-BEANTECH")
+    assert climate.available
+    assert climate.hvac_modes == [HVACMode.OFF, HVACMode.AUTO]
+    assert climate.min_temp == 17
+    assert climate.max_temp == 31
+    assert climate.hvac_mode == HVACMode.AUTO
 
 
 @pytest.mark.asyncio

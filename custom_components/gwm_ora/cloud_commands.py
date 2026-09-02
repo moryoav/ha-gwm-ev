@@ -127,7 +127,7 @@ class GwmCommandApi:
         normalized_mode = mode.strip().lower() if isinstance(mode, str) else None
         allowed_modes = {None, "cool", "off"}
         if self._cloud.region == "cn":
-            allowed_modes.add("heat")
+            allowed_modes.update({"heat", "auto"})
         if normalized_mode not in allowed_modes:
             raise GwmCommandError(
                 "A/C mode must be 'cool', 'heat', or 'off' in mainland China"
@@ -204,7 +204,7 @@ class GwmCommandApi:
         currently_on = _climate_is_on(context.status)
 
         if (
-            normalized_mode in {"cool", "heat"}
+            normalized_mode in {"cool", "heat", "auto"}
             or temperature is not None
             or operation_time_minutes is not None
         ):
