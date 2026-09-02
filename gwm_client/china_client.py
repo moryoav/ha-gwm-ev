@@ -131,7 +131,27 @@ _BEAN_TECH_RECORDS_PATH = "/app-api/api/v3.0/vehicle/remote-ctrl/records/query"
 _BEAN_TECH_RECORDS_URL = _BEAN_TECH_BASE.rstrip("/") + _BEAN_TECH_RECORDS_PATH
 _BEAN_TECH_CHARGE_SETTING_PATH = "/app-api/api/v3.0/vehicle/charge/setting"
 _BEAN_TECH_CHARGE_SETTING_URL = _BEAN_TECH_BASE.rstrip("/") + _BEAN_TECH_CHARGE_SETTING_PATH
-_BEAN_TECH_PIN_EXEMPT_CONTROL_TYPES = frozenset({"FLASH", "WHISTLE", "WHISTLE_FLASH"})
+_BEAN_TECH_PIN_EXEMPT_CONTROL_TYPES = frozenset(
+    {
+        "FLASH",
+        "WHISTLE",
+        "WHISTLE_FLASH",
+        "AIR_CONDITIONER_START",
+        "AIR_CONDITIONER_STOP",
+        "SEAT_HEATING_START",
+        "SEAT_HEATING_STOP",
+        "SEAT_VENTILATION_START",
+        "SEAT_VENTILATION_STOP",
+        "STEERING_WHEEL_HEATING",
+        "STEERING_WHEEL_HEATLESS",
+        "DEFROST_FRONT_START",
+        "DEFROST_FRONT_STOP",
+        "DEFROST_BACK_START",
+        "DEFROST_BACK_STOP",
+        "CABIN_CLEANING_START",
+        "COMFORT_MODE_CTRL",
+    }
+)
 _AUTO_AI_LOGIN_URL = _G_APP_BASE + "tsp/v1/proxy/navinfo/GW.M.APP_LOGIN"
 _DISCOVERY_URL = _G_APP_BASE + "gcar/v1/app/android/vehicle/query-vehicle-list"
 _SOURCE_APP_VERSION = "2.1.5"

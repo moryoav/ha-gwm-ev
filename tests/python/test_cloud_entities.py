@@ -30,6 +30,7 @@ from custom_components.gwm_ora.sensor import (
     _sensor_descriptions_for_vehicle,
 )
 from custom_components.gwm_ora.switch import (
+    GwmBatteryHeatSwitch,
     GwmChargingScheduleSwitch,
     GwmClimatePresetSwitch,
     GwmFrontDefrosterSwitch,
@@ -192,7 +193,7 @@ async def test_cloud_coordinator_keeps_mixed_china_platform_entities_isolated() 
 
 
 @pytest.mark.asyncio
-async def test_task17_capability_exposes_climate_and_pin_gates_beantech() -> None:
+async def test_task17_capability_exposes_climate_without_pin_gate_beantech() -> None:
     coordinator = GwmDataUpdateCoordinator(
         HomeAssistant("synthetic-config"),
         SimpleNamespace(),
@@ -233,15 +234,7 @@ async def test_task17_capability_exposes_climate_and_pin_gates_beantech() -> Non
             ],
         }
     )
-    # BeanTech requires a configured security PIN before exposing climate control.
-    assert not GwmClimate(
-        SimpleNamespace(), pin_coordinator, "SYNTHETIC-BEANTECH"
-    ).available
-    assert not GwmClimateRunTimeNumber(
-        SimpleNamespace(), pin_coordinator, "SYNTHETIC-BEANTECH"
-    ).available
-
-    config_entry.options = {"beantech_encrypted_security_pin": "X=="}
+    # BeanTech climate control is PIN-exempt, so it is exposed without a PIN.
     assert GwmClimate(
         SimpleNamespace(), pin_coordinator, "SYNTHETIC-BEANTECH"
     ).available
@@ -572,7 +565,7 @@ async def test_beantech_remote_start_switch_replaces_remote_start_buttons() -> N
 
 
 @pytest.mark.asyncio
-async def test_beantech_comfort_switches_and_buttons_are_pin_gated_and_dispatch() -> None:
+async def test_beantech_comfort_switches_and_buttons_are_pin_exempt_and_dispatch() -> None:
     api = SimpleNamespace(
         async_vehicle_control=AsyncMock(
             return_value={"id": "comfort", "state": "in_progress"}
@@ -582,7 +575,7 @@ async def test_beantech_comfort_switches_and_buttons_are_pin_gated_and_dispatch(
         ),
     )
     config_entry = SimpleNamespace(
-        options={"beantech_encrypted_security_pin": "X=="},
+        options={},
         async_on_unload=lambda callback: None,
     )
     coordinator = GwmDataUpdateCoordinator(
@@ -656,22 +649,107 @@ async def test_beantech_comfort_switches_and_buttons_are_pin_gated_and_dispatch(
     assert fast_cool.available
     assert fast_cool.is_on is True
 
+    # Cabin clean is PIN-exempt, so it is exposed without a PIN.
+    cabin_clean = GwmBeanTechComfortButton(
+        api, coordinator, "SYNTHETIC-BEANTECH", "cabin_clean", "cabin_clean"
+    )
+    assert cabin_clean.available
+
+    # The one-touch comfort-off multi-command travels the PIN-gated timely path,
+    # so it stays unavailable without a PIN.
     comfort_off = GwmBeanTechComfortButton(
         api, coordinator, "SYNTHETIC-BEANTECH", "comfort_off", "comfort_off"
     )
-    assert comfort_off.available
+    assert not comfort_off.available
 
     with patch.object(seat, "async_write_ha_state"):
         await seat.async_turn_off()
         assert seat.is_on is False
     with patch.object(fast_cool, "async_write_ha_state"):
         await fast_cool.async_turn_on()
-    await comfort_off.async_press()
+    await cabin_clean.async_press()
 
     assert api.async_vehicle_control.await_args_list == [
         call("SYNTHETIC-BEANTECH", "seat_heating_stop"),
-        call("SYNTHETIC-BEANTECH", "comfort_off"),
+        call("SYNTHETIC-BEANTECH", "cabin_clean"),
     ]
     api.async_set_climate.assert_awaited_once_with(
         "SYNTHETIC-BEANTECH", mode="auto", temperature=17
     )
+
+
+@pytest.mark.asyncio
+async def test_beantech_pin_required_switches_and_buttons_stay_gated() -> None:
+    api = SimpleNamespace(
+        async_vehicle_control=AsyncMock(
+            return_value={"id": "cmd", "state": "in_progress"}
+        ),
+    )
+    config_entry = SimpleNamespace(
+        options={},
+        async_on_unload=lambda callback: None,
+    )
+    coordinator = GwmDataUpdateCoordinator(
+        HomeAssistant("synthetic-config"),
+        api,
+        cloud_client=SimpleNamespace(),  # type: ignore[arg-type]
+        config_entry=config_entry,  # type: ignore[arg-type]
+    )
+
+    def china_vehicle(vin: str, platform: str) -> dict[str, Any]:
+        return {
+            "vin": vin,
+            "platform": platform,
+            "name": f"Vehicle {vin[-1]}",
+            "manufacturer": "GWM",
+            "model": "Synthetic",
+            "serial_number": f"SERIAL-{vin[-1]}",
+            "capabilities": {
+                "remote_commands": True,
+                "climate_commands": True,
+                "china_vehicle_commands": True,
+            },
+            "values": {
+                "engine_state_code": 0,
+                "front_driver_seat_heater_level": 3,
+                "front_driver_seat_vent_level": 0,
+                "steering_wheel_heater_active": False,
+                "front_defroster": False,
+                "rear_defroster": False,
+            },
+            "timestamps": {},
+            "climate": {"mode": "auto", "target_temperature_c": 17},
+            "raw_items": {},
+        }
+
+    coordinator.async_set_updated_data(
+        {
+            "region": "cn",
+            "vehicles": [china_vehicle("SYNTHETIC-BEANTECH", "beantech")],
+        }
+    )
+
+    battery_heat = GwmBatteryHeatSwitch(
+        api,
+        coordinator,
+        "SYNTHETIC-BEANTECH",
+        turn_on_action="battery_gun_heat",
+        turn_off_action="battery_gun_heat_stop",
+        translation_key="battery_gun_heat",
+    )
+    remote_start = GwmRemoteStartSwitch(api, coordinator, "SYNTHETIC-BEANTECH")
+    comfort_off = GwmBeanTechComfortButton(
+        api, coordinator, "SYNTHETIC-BEANTECH", "comfort_off", "comfort_off"
+    )
+
+    # Remote start, battery heat and the multi-command comfort-off all need a
+    # configured PIN before they are exposed.
+    assert not remote_start.available
+    assert not battery_heat.available
+    assert not comfort_off.available
+
+    config_entry.options = {"beantech_encrypted_security_pin": "X=="}
+
+    assert remote_start.available
+    assert battery_heat.available
+    assert comfort_off.available

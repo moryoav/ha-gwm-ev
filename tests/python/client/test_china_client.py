@@ -1157,13 +1157,9 @@ async def test_navinfo_climate_rejects_temperatures_outside_captured_range() -> 
 
 
 @pytest.mark.asyncio
-async def test_beantech_climate_start_and_stop_use_timely_with_token() -> None:
+async def test_beantech_climate_start_and_stop_use_timely_without_token() -> None:
     transport = _FakeTransport(
         acquire_vehicles=[FIXTURE["responses"]["discovery"]],
-        generate_security_token=[
-            {"code": "000000", "data": "JWT"},
-            {"code": "000000", "data": "JWT"},
-        ],
         send_climate_command=[
             {"code": "000000", "data": {}},
             {"code": "000000", "data": {}},
@@ -1203,10 +1199,10 @@ async def test_beantech_climate_start_and_stop_use_timely_with_token() -> None:
     for request in transport.calls:
         if request.operation == "send_climate_command":
             assert request.url.endswith("/app-api/api/v3.0/vehicle/remote-ctrl/timely")
-            assert request.headers["securityToken"] == "JWT"
-    assert sum(
-        1 for call in transport.calls if call.operation == "generate_security_token"
-    ) == 2
+            assert "securityToken" not in request.headers
+    assert not any(
+        call.operation == "generate_security_token" for call in transport.calls
+    )
 
 
 @pytest.mark.asyncio
@@ -1687,10 +1683,28 @@ async def test_beantech_uses_timely_path_with_token_when_password_configured() -
 
 @pytest.mark.asyncio
 async def test_beantech_pin_exempt_commands_skip_token_generation() -> None:
+    actions = (
+        "horn",
+        "flash_lights",
+        "horn_and_lights",
+        "seat_heating_start",
+        "seat_heating_stop",
+        "seat_ventilation_start",
+        "seat_ventilation_stop",
+        "steering_wheel_heating",
+        "steering_wheel_heatless",
+        "defrost_front_start",
+        "defrost_front_stop",
+        "defrost_back_start",
+        "defrost_back_stop",
+        "cabin_clean",
+        "comfort_warm",
+        "comfort_cool",
+    )
     transport = _FakeTransport(
         acquire_vehicles=[FIXTURE["responses"]["discovery"]],
         send_vehicle_control_command=[
-            {"code": "000000", "data": {}} for _ in range(3)
+            {"code": "000000", "data": {}} for _ in actions
         ],
     )
     client = _client(transport, bean_tech_security_password="ENCRYPTED==")
@@ -1698,7 +1712,7 @@ async def test_beantech_pin_exempt_commands_skip_token_generation() -> None:
         await client.authenticate(_credentials(), state=_complete_state()),
         ChinaAuthenticated,
     )
-    for action in ("horn", "flash_lights", "horn_and_lights"):
+    for action in actions:
         await client.send_vehicle_control_command(
             ChinaVehicleControlCommand(VehicleIdentifier(BEAN_VIN), action)  # type: ignore[arg-type]
         )
@@ -2234,10 +2248,6 @@ async def test_beantech_horn_and_lights_maps_to_whistle_flash() -> None:
 async def test_beantech_seat_heating_start_and_stop_cmdbody_exact() -> None:
     transport = _FakeTransport(
         acquire_vehicles=[FIXTURE["responses"]["discovery"]],
-        generate_security_token=[
-            {"code": "000000", "data": "JWT"},
-            {"code": "000000", "data": "JWT"},
-        ],
         send_vehicle_control_command=[
             {"code": "000000", "data": {}},
             {"code": "000000", "data": {}},
@@ -2272,19 +2282,15 @@ async def test_beantech_seat_heating_start_and_stop_cmdbody_exact() -> None:
             "cmdBody": {"leftFront": 0, "rightFront": 0, "operationMode": 1},
         },
     ]
-    assert sum(
-        1 for call in transport.calls if call.operation == "generate_security_token"
-    ) == 2
+    assert not any(
+        call.operation == "generate_security_token" for call in transport.calls
+    )
 
 
 @pytest.mark.asyncio
 async def test_beantech_seat_ventilation_cmdbody_exact() -> None:
     transport = _FakeTransport(
         acquire_vehicles=[FIXTURE["responses"]["discovery"]],
-        generate_security_token=[
-            {"code": "000000", "data": "JWT"},
-            {"code": "000000", "data": "JWT"},
-        ],
         send_vehicle_control_command=[
             {"code": "000000", "data": {}},
             {"code": "000000", "data": {}},
@@ -2319,13 +2325,15 @@ async def test_beantech_seat_ventilation_cmdbody_exact() -> None:
             "cmdBody": {"leftFront": 0, "rightFront": 0, "operationMode": 2},
         },
     ]
+    assert not any(
+        call.operation == "generate_security_token" for call in transport.calls
+    )
 
 
 @pytest.mark.asyncio
 async def test_beantech_cabin_clean_cmdbody_exact() -> None:
     transport = _FakeTransport(
         acquire_vehicles=[FIXTURE["responses"]["discovery"]],
-        generate_security_token=[{"code": "000000", "data": "JWT"}],
         send_vehicle_control_command=[{"code": "000000", "data": {}}],
     )
     client = _client(transport, bean_tech_security_password="ENCRYPTED==")
@@ -2346,16 +2354,15 @@ async def test_beantech_cabin_clean_cmdbody_exact() -> None:
         "controlType": "CABIN_CLEANING_START",
         "cmdBody": {"operationTime": 60},
     }
+    assert not any(
+        call.operation == "generate_security_token" for call in transport.calls
+    )
 
 
 @pytest.mark.asyncio
 async def test_beantech_comfort_warm_and_cool_cmdbody_exact() -> None:
     transport = _FakeTransport(
         acquire_vehicles=[FIXTURE["responses"]["discovery"]],
-        generate_security_token=[
-            {"code": "000000", "data": "JWT"},
-            {"code": "000000", "data": "JWT"},
-        ],
         send_vehicle_control_command=[
             {"code": "000000", "data": {}},
             {"code": "000000", "data": {}},
@@ -2390,13 +2397,15 @@ async def test_beantech_comfort_warm_and_cool_cmdbody_exact() -> None:
             "cmdBody": {"action": 1, "modeId": "4982235", "type": "2"},
         },
     ]
+    assert not any(
+        call.operation == "generate_security_token" for call in transport.calls
+    )
 
 
 @pytest.mark.asyncio
 async def test_beantech_comfort_off_multicommand_shape() -> None:
     transport = _FakeTransport(
         acquire_vehicles=[FIXTURE["responses"]["discovery"]],
-        generate_security_token=[{"code": "000000", "data": "JWT"}],
         send_vehicle_control_command=[{"code": "000000", "data": {}}],
     )
     client = _client(transport, bean_tech_security_password="ENCRYPTED==")
@@ -2412,7 +2421,10 @@ async def test_beantech_comfort_off_multicommand_shape() -> None:
         call for call in transport.calls if call.operation == "send_vehicle_control_command"
     )
     assert sent.url.endswith("/app-api/api/v3.0/vehicle/remote-ctrl/timely")
-    assert sent.headers["securityToken"] == "JWT"
+    assert "securityToken" not in sent.headers
+    assert not any(
+        call.operation == "generate_security_token" for call in transport.calls
+    )
     body = json.loads(sent.body or b"null")
     assert body["sendType"] == 1
     assert body["commands"] == [

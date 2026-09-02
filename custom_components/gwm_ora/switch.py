@@ -456,7 +456,6 @@ class GwmRemoteControlSwitch(_OptimisticRemoteSwitch):
             super().available
             and self.remote_commands_available
             and self.is_china_beantech
-            and self.security_pin_configured
         )
 
     async def async_turn_on(self, **kwargs: Any) -> None:
@@ -570,7 +569,6 @@ class GwmClimatePresetSwitch(_OptimisticRemoteSwitch):
             super().available
             and self.climate_commands_available
             and self.is_china_beantech
-            and self.security_pin_configured
         )
 
     async def async_turn_on(self, **kwargs: Any) -> None:

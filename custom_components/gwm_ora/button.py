@@ -184,12 +184,14 @@ class GwmChinaRemoteButton(GwmEntity, ButtonEntity):
 
 
 class GwmBeanTechComfortButton(GwmEntity, ButtonEntity):
-    """PIN-gated BeanTech comfort action button.
+    """BeanTech comfort action button.
 
     Covers the fixed-duration cabin clean and the one-touch comfort modes
-    (warm, cool, and all-off). Each action maps to a single ``controlType`` in
-    the BeanTech timely path, except ``comfort_off`` which sends a multi-command
-    ``sendType=1`` sequence.
+    (warm, cool, and all-off). Cabin clean and the single-command comfort modes
+    are PIN-exempt, so they only need the capability and platform gates. The
+    one-touch ``comfort_off`` sends a multi-command ``sendType=1`` sequence that
+    can only travel the PIN-gated timely path, so it still requires a configured
+    PIN.
     """
 
     def __init__(
@@ -207,7 +209,7 @@ class GwmBeanTechComfortButton(GwmEntity, ButtonEntity):
             super().available
             and self.china_vehicle_commands_available
             and self.is_china_beantech
-            and self.security_pin_configured
+            and (self._action != "comfort_off" or self.security_pin_configured)
         )
 
     async def async_press(self) -> None:

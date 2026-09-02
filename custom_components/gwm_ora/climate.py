@@ -57,11 +57,7 @@ class GwmClimate(GwmEntity, ClimateEntity):
     @property
     def available(self) -> bool:
         """Return whether climate control is available."""
-        return (
-            super().available
-            and self.climate_commands_available
-            and (not self.is_china_beantech or self.security_pin_configured)
-        )
+        return super().available and self.climate_commands_available
 
     @property
     def climate(self) -> dict[str, Any]:

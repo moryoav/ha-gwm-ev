@@ -61,11 +61,7 @@ class GwmClimateRunTimeNumber(GwmEntity, NumberEntity):
     @property
     def available(self) -> bool:
         """Return whether the climate run-time setting is available."""
-        return (
-            super().available
-            and self.climate_commands_available
-            and (not self.is_china_beantech or self.security_pin_configured)
-        )
+        return super().available and self.climate_commands_available
 
     @property
     def native_value(self) -> float | None:
