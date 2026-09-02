@@ -222,17 +222,12 @@ class GwmCommandApi:
                 effective_operation_time,
             )
 
-        should_send = (
-            normalized_mode is not None or temperature is not None and currently_on
-        )
+        should_send = normalized_mode is not None or temperature is not None
         command_name = "A/C run time" if run_time_only else "A/C"
         if not should_send:
-            message = (
-                f"{command_name}: saved; applies to the next A/C command"
-                if run_time_only
-                else f"{command_name}: saved; A/C is off so no remote command was sent"
+            return _local_completed_command(
+                identifier.value, f"{command_name}: saved; applies to the next A/C command"
             )
-            return _local_completed_command(identifier.value, message)
 
         command = ClimateCommand(
             identifier=identifier,

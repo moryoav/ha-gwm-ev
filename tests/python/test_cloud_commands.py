@@ -428,11 +428,14 @@ async def test_runtime_only_and_temperature_while_off_save_without_command(
     api, _store, _credentials_value = await _api(tmp_path, cloud, clock)
 
     runtime = await api.async_set_climate(_VIN, operation_time_minutes=20)
-    temperature = await api.async_set_climate(_VIN, temperature=24)
     assert runtime["state"] == "completed"
-    assert temperature["state"] == "completed"
-    assert cloud.updated == [(22, 20), (24, 20)]
+    assert cloud.updated == [(22, 20)]
     assert cloud.sent == []
+
+    temperature = await api.async_set_climate(_VIN, temperature=24)
+    assert temperature["state"] == "in_progress"
+    assert cloud.updated == [(22, 20), (24, 20)]
+    assert len(cloud.sent) == 1
 
 
 @pytest.mark.asyncio
@@ -907,8 +910,9 @@ async def test_china_climate_uses_captured_temperature_range(tmp_path: Path) -> 
             await api.async_set_climate(_VIN, temperature=temperature)
 
     saved = await api.async_set_climate(_VIN, temperature=17)
-    assert saved["state"] == "completed"
+    assert saved["state"] == "in_progress"
     assert cloud.updated == [(17, 15)]
+    assert len(cloud.sent) == 1
 
 
 @pytest.mark.asyncio
