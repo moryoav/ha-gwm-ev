@@ -1813,6 +1813,99 @@ def test_beantech_result_request_keeps_t5_endpoint_without_password() -> None:
     )
 
 
+def test_beantech_records_request_shape_and_signature() -> None:
+    client = _client(_FakeTransport())
+    request = client._build_bean_tech_records_request(
+        _complete_state(),
+        VehicleIdentifier(BEAN_VIN),
+        page_num=3,
+        page_size=7,
+    )
+    assert request.url == (
+        "https://gw-app-gateway.gwmapp-h.com/app-api/api/v3.0/vehicle/remote-ctrl/records/query"
+    )
+    assert json.loads(request.body or b"null") == {
+        "vin": BEAN_VIN,
+        "type": "SELF",
+        "pageNum": 3,
+        "pageSize": 7,
+    }
+    assert request.headers["Content-Type"] == "application/json; charset=UTF-8"
+    # The sign must be over the exact encoded body, matching the retired add-on's
+    # SendBeanTechPostAsync ("json=" + rawBody) and no security token.
+    assert request.headers["bt-auth-sign"] == bean_tech_sign(
+        "POST",
+        "/app-api/api/v3.0/vehicle/remote-ctrl/records/query",
+        request.headers["bt-auth-nonce"],
+        request.headers["bt-auth-timestamp"],
+        "json=" + (request.body or b"").decode(),
+    )
+
+
+@pytest.mark.asyncio
+async def test_beantech_remote_records_are_read_and_returned_raw() -> None:
+    transport = _FakeTransport(
+        acquire_vehicles=[FIXTURE["responses"]["discovery"]],
+        get_remote_command_records=[
+            {
+                "code": "000000",
+                "data": {
+                    "pageNum": 1,
+                    "total": 2,
+                    "pages": 1,
+                    "list": [
+                        {
+                            "resultMsg": "电池包插枪保温关闭成功",
+                            "seqNo": "0123456789abcdef0123456789abcdef1234",
+                        },
+                        {
+                            "resultMsg": "闭锁成功",
+                            "seqNo": "0123456789abcdef0123456789abcdef9999",
+                        },
+                    ],
+                },
+            }
+        ],
+    )
+    client = _client(transport)
+    assert isinstance(
+        await client.authenticate(_credentials(), state=_complete_state()),
+        ChinaAuthenticated,
+    )
+    records = await client.get_remote_command_records(
+        VehicleIdentifier(BEAN_VIN), page_num=1, page_size=20
+    )
+    assert records["pageNum"] == 1
+    assert records["total"] == 2
+    assert records["pages"] == 1
+    assert [item["resultMsg"] for item in records["list"]] == [
+        "电池包插枪保温关闭成功",
+        "闭锁成功",
+    ]
+    request = transport.calls[-1]
+    assert request.url.endswith("/app-api/api/v3.0/vehicle/remote-ctrl/records/query")
+    assert json.loads(request.body or b"null") == {
+        "vin": BEAN_VIN,
+        "type": "SELF",
+        "pageNum": 1,
+        "pageSize": 20,
+    }
+
+
+@pytest.mark.asyncio
+async def test_beantech_remote_records_reject_non_beantech_platforms_before_transport() -> None:
+    transport = _FakeTransport(acquire_vehicles=[FIXTURE["responses"]["discovery"]])
+    client = _client(transport)
+    assert isinstance(
+        await client.authenticate(_credentials(), state=_complete_state()),
+        ChinaAuthenticated,
+    )
+    before = len(transport.calls)
+    with pytest.raises(GwmRoutePolicyError):
+        await client.get_remote_command_records(VehicleIdentifier(VIN))
+    assert len(transport.calls) == before
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("tank_capacity", ["not-a-number", -1, True, [], "NaN", 10**400])
 async def test_optional_tank_capacity_quirks_do_not_reject_discovery(tank_capacity: object) -> None:

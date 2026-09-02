@@ -126,6 +126,8 @@ _BEAN_TECH_TIMELY_PATH = "/app-api/api/v3.0/vehicle/remote-ctrl/timely"
 _BEAN_TECH_TIMELY_URL = _BEAN_TECH_BASE.rstrip("/") + _BEAN_TECH_TIMELY_PATH
 _BEAN_TECH_TIMELY_RESULT_PATH = "/app-api/api/v3.0/vehicle/remote-ctrl/result"
 _BEAN_TECH_TIMELY_RESULT_URL = _BEAN_TECH_BASE.rstrip("/") + _BEAN_TECH_TIMELY_RESULT_PATH
+_BEAN_TECH_RECORDS_PATH = "/app-api/api/v3.0/vehicle/remote-ctrl/records/query"
+_BEAN_TECH_RECORDS_URL = _BEAN_TECH_BASE.rstrip("/") + _BEAN_TECH_RECORDS_PATH
 _BEAN_TECH_PIN_EXEMPT_CONTROL_TYPES = frozenset({"FLASH", "WHISTLE", "WHISTLE_FLASH"})
 _AUTO_AI_LOGIN_URL = _G_APP_BASE + "tsp/v1/proxy/navinfo/GW.M.APP_LOGIN"
 _DISCOVERY_URL = _G_APP_BASE + "gcar/v1/app/android/vehicle/query-vehicle-list"
@@ -709,6 +711,42 @@ class ChinaClient:
             action=lambda deadline: self._get_remote_command_results_locked(
                 identifier,
                 command_id,
+                deadline=deadline,
+            ),
+        )
+
+    async def get_remote_command_records(
+        self,
+        identifier: VehicleIdentifier,
+        *,
+        page_num: int = 1,
+        page_size: int = 20,
+        timeout: float | None = None,
+    ) -> Mapping[str, object]:
+        """Read one BeanTech vehicle's paged remote-control records.
+
+        The endpoint returns the raw ``data`` mapping (``pageNum``/``total``/
+        ``pages``/``list``); each ``list`` entry carries at least ``resultMsg``.
+        """
+
+        operation = "get_remote_command_records"
+        if (
+            type(identifier) is not VehicleIdentifier
+            or isinstance(page_num, bool)
+            or not isinstance(page_num, int)
+            or not 1 <= page_num <= 10_000
+            or isinstance(page_size, bool)
+            or not isinstance(page_size, int)
+            or not 1 <= page_size <= 100
+        ):
+            raise GwmConfigurationError(operation=operation)
+        return await self._run_read(
+            operation,
+            timeout=timeout,
+            action=lambda deadline: self._get_remote_command_records_locked(
+                identifier,
+                page_num=page_num,
+                page_size=page_size,
                 deadline=deadline,
             ),
         )
@@ -1620,6 +1658,33 @@ class ChinaClient:
         except (RecursionError, OverflowError, TypeError, ValueError):
             raise GwmSchemaError(operation=operation) from None
 
+    async def _get_remote_command_records_locked(
+        self,
+        identifier: VehicleIdentifier,
+        *,
+        page_num: int,
+        page_size: int,
+        deadline: _Deadline,
+    ) -> Mapping[str, object]:
+        operation = "get_remote_command_records"
+        state = self._required_session(operation=operation)
+        vehicle = self._vehicles.get(identifier.value.casefold())
+        if vehicle is None or (vehicle.platform or "").strip().casefold() != "beantech":
+            raise GwmRoutePolicyError(operation=operation)
+        response = await self._send_locked(
+            self._build_bean_tech_records_request(
+                state,
+                identifier,
+                page_num=page_num,
+                page_size=page_size,
+            ),
+            deadline=deadline,
+        )
+        data = _decode_g_app_envelope(response, operation=operation)
+        if not isinstance(data, Mapping):
+            raise GwmSchemaError(operation=operation)
+        return cast(Mapping[str, object], data)
+
     async def _send_locked(
         self,
         request: _ChinaTransportRequest,
@@ -2110,6 +2175,41 @@ class ChinaClient:
             service="bean_tech",
             method="POST",
             url=_BEAN_TECH_SECURITY_TOKEN_URL,
+            headers=headers,
+            body=body.encode("utf-8"),
+        )
+
+    def _build_bean_tech_records_request(
+        self,
+        state: ChinaAuthState,
+        identifier: VehicleIdentifier,
+        *,
+        page_num: int,
+        page_size: int,
+    ) -> _ChinaTransportRequest:
+        operation: Literal["get_remote_command_records"] = "get_remote_command_records"
+        body = encode_dotnet_json(
+            {
+                "vin": identifier.value,
+                "type": "SELF",
+                "pageNum": page_num,
+                "pageSize": page_size,
+            }
+        )
+        headers = self._bean_tech_authenticated_headers(
+            state,
+            identifier,
+            operation=operation,
+            method="POST",
+            path=_BEAN_TECH_RECORDS_PATH,
+            parameter="json=" + body,
+        )
+        headers["Content-Type"] = "application/json; charset=UTF-8"
+        return _ChinaTransportRequest(
+            operation=operation,
+            service="bean_tech",
+            method="POST",
+            url=_BEAN_TECH_RECORDS_URL,
             headers=headers,
             body=body.encode("utf-8"),
         )
