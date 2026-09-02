@@ -459,6 +459,10 @@ def test_china_vehicle_control_contract_is_closed_and_platform_filtered() -> Non
         "comfort_warm",
         "comfort_cool",
         "comfort_off",
+        "battery_gun_heat",
+        "battery_gun_heat_stop",
+        "battery_initiative_heat",
+        "battery_initiative_heat_stop",
     } == BEANTECH_CHINA_VEHICLE_CONTROL_ACTIONS
     assert (
         ChinaVehicleControlCommand(

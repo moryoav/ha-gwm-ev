@@ -195,6 +195,15 @@
       },
       "fast_heat": {
         "default": "mdi:thermometer-chevron-up"
+      },
+      "battery_gun_heat": {
+        "default": "mdi:ev-plug-type2"
+      },
+      "battery_initiative_heat": {
+        "default": "mdi:battery-heart-variant"
+      },
+      "smart_charge": {
+        "default": "mdi:calendar-clock"
       }
     }
   }

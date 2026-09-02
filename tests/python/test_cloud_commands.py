@@ -126,6 +126,8 @@ class _Cloud:
         self,
         identifier: VehicleIdentifier,
         command_id: str,
+        *,
+        msg_type: str = "remote",
     ) -> tuple[RemoteCommandResultItem, ...]:
         assert identifier.value == _VIN
         assert command_id.startswith("provider-command-")

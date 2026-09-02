@@ -226,10 +226,24 @@ class _ChinaReadClient(Protocol):
         command: ChinaVehicleControlCommand,
     ) -> RemoteCommandAcceptance: ...
 
+    async def get_bean_tech_charge_setting(
+        self,
+        identifier: VehicleIdentifier,
+    ) -> Mapping[str, object]: ...
+
+    async def set_bean_tech_charging_mode(
+        self,
+        identifier: VehicleIdentifier,
+        *,
+        enable: bool,
+    ) -> str: ...
+
     async def get_remote_command_results(
         self,
         identifier: VehicleIdentifier,
         command_id: str,
+        *,
+        msg_type: str = "remote",
     ) -> tuple[RemoteCommandResultItem, ...]: ...
 
     async def aclose(self) -> None: ...
@@ -545,10 +559,9 @@ class GwmCloudClient:
                     "navinfo",
                     "beantech",
                 }
-                china_navinfo = self.region == REGION_CHINA and platform == "navinfo"
                 remote_commands_available = self._lock_window_commands_enabled and china_supported
                 charging_control_available = self._charging_control_enabled and (
-                    self.region != REGION_CHINA or china_navinfo
+                    self.region != REGION_CHINA or china_supported
                 )
                 snapshot = map_vehicle_snapshot(
                     vehicle,
@@ -781,13 +794,57 @@ class GwmCloudClient:
             lambda: cast(_ChinaReadClient, self._client).send_vehicle_control_command(command)
         )
 
+    async def async_get_bean_tech_charge_setting(
+        self,
+        identifier: VehicleIdentifier,
+    ) -> Mapping[str, object]:
+        """Read one BeanTech vehicle's smart-charge setting through the client."""
+
+        if self.region != REGION_CHINA:
+            raise GwmRoutePolicyError(operation="get_bean_tech_charge_setting")
+        return await self._async_with_session_renewal(
+            lambda: cast(_ChinaReadClient, self._client).get_bean_tech_charge_setting(
+                identifier
+            )
+        )
+
+    async def async_set_bean_tech_charging_mode(
+        self,
+        identifier: VehicleIdentifier,
+        *,
+        enable: bool,
+    ) -> str:
+        """Set one BeanTech smart-charge mode and return the pollable seqNo."""
+
+        if self.region != REGION_CHINA:
+            raise GwmRoutePolicyError(operation="set_bean_tech_charging_mode")
+        return await self._async_with_session_renewal(
+            lambda: cast(_ChinaReadClient, self._client).set_bean_tech_charging_mode(
+                identifier,
+                enable=enable,
+            )
+        )
+
     async def async_get_remote_command_results(
         self,
         identifier: VehicleIdentifier,
         command_id: str,
+        *,
+        msg_type: str = "remote",
     ) -> tuple[RemoteCommandResultItem, ...]:
+        if self.region == REGION_CHINA:
+            return await self._async_with_session_renewal(
+                lambda: cast(_ChinaReadClient, self._client).get_remote_command_results(
+                    identifier,
+                    command_id,
+                    msg_type=msg_type,
+                )
+            )
         return await self._async_with_session_renewal(
-            lambda: self._client.get_remote_command_results(identifier, command_id)
+            lambda: cast(_OverseasReadClient, self._client).get_remote_command_results(
+                identifier,
+                command_id,
+            )
         )
 
     async def _async_with_session_renewal[T](

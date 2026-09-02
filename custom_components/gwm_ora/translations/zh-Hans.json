@@ -284,7 +284,10 @@
       "defrost_front": { "name": "前除霜" },
       "defrost_back": { "name": "后除霜" },
       "fast_cool": { "name": "快速降温" },
-      "fast_heat": { "name": "快速升温" }
+      "fast_heat": { "name": "快速升温" },
+      "battery_gun_heat": { "name": "电池包插枪保温" },
+      "battery_initiative_heat": { "name": "电池包主动保温" },
+      "smart_charge": { "name": "智能预约充电" }
     }
   },
   "services": {

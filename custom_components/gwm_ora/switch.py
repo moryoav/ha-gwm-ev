@@ -112,6 +112,25 @@ async def async_setup_entry(
                 temperature=31,
                 translation_key="fast_heat",
             ),
+            GwmBatteryHeatSwitch(
+                entry.runtime_data.api,
+                entry.runtime_data.coordinator,
+                vehicle["vin"],
+                turn_on_action="battery_gun_heat",
+                turn_off_action="battery_gun_heat_stop",
+                translation_key="battery_gun_heat",
+            ),
+            GwmBatteryHeatSwitch(
+                entry.runtime_data.api,
+                entry.runtime_data.coordinator,
+                vehicle["vin"],
+                turn_on_action="battery_initiative_heat",
+                turn_off_action="battery_initiative_heat_stop",
+                translation_key="battery_initiative_heat",
+            ),
+            GwmSmartChargeSwitch(
+                entry.runtime_data.api, entry.runtime_data.coordinator, vehicle["vin"]
+            ),
         ),
     )
 
@@ -193,8 +212,17 @@ class GwmChargingScheduleSwitch(GwmEntity, SwitchEntity):
 
     @property
     def available(self) -> bool:
-        """Return whether charging control is enabled for this entry."""
-        return super().available and self.charging_control_available
+        """Return whether charging control is enabled for this entry.
+
+        BeanTech vehicles use the smart-scheduled-charging switch instead: they
+        have a single ``chargingMode`` toggle rather than the plan window this
+        switch writes, so exposing both would give one switch that always fails.
+        """
+        return (
+            super().available
+            and self.charging_control_available
+            and not self.is_china_beantech
+        )
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Set a charging window from now for the default duration."""
@@ -215,6 +243,91 @@ class GwmChargingScheduleSwitch(GwmEntity, SwitchEntity):
             forbidden_translation_key="charging_control_unavailable",
         )
         self.coordinator.set_charging_plan_active(self.vin, False)
+
+
+class GwmSmartChargeSwitch(GwmEntity, SwitchEntity):
+    """Smart scheduled charging for BeanTech vehicles.
+
+    The car exposes a single ``chargingMode`` toggle: on charges only inside the
+    window configured in the app (``customTime``), off charges as soon as it is
+    plugged in. The window itself is not editable here -- it is reported as
+    attributes so it is visible where the switch is.
+
+    The real ``chargingMode`` is read from ``charge/setting`` and re-read after
+    each toggle, so the switch stays in sync with the app instead of trusting a
+    start-time-only local guess.
+    """
+
+    _attr_translation_key = "smart_charge"
+
+    def __init__(self, api, coordinator, vin: str) -> None:
+        super().__init__(coordinator, vin)
+        self._api = api
+        self._attr_unique_id = f"{vin}_smart_charge"
+        self._start_time: str | None = None
+        self._end_time: str | None = None
+
+    async def _async_read_state(self) -> None:
+        """Read the charging mode and window from the car."""
+        try:
+            response = await self._api.async_get_charging_mode(self.vin)
+        except (GwmCommandError, GwmClientError) as err:
+            _LOGGER.debug("Could not read the GWM smart charging mode: %s", err)
+            return
+
+        self._start_time = response.get("start_time")
+        self._end_time = response.get("end_time")
+        self.coordinator.set_local_flag(
+            self.vin, "smart_charge", bool(response.get("enabled"))
+        )
+
+    async def async_added_to_hass(self) -> None:
+        """Read the current charging mode when the entity is added."""
+        await super().async_added_to_hass()
+        if not self.charging_control_available or not self.is_china_beantech:
+            return
+        await self._async_read_state()
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return whether scheduled charging is active."""
+        return self.coordinator.local_flag(self.vin, "smart_charge")
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        """Expose the charging window configured in the app."""
+        if self._start_time is None and self._end_time is None:
+            return None
+        return {"start_time": self._start_time, "end_time": self._end_time}
+
+    @property
+    def available(self) -> bool:
+        return (
+            super().available
+            and self.charging_control_available
+            and self.is_china_beantech
+        )
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        """Charge only inside the window configured in the app."""
+        await self._async_set(True)
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        """Charge as soon as the car is plugged in."""
+        await self._async_set(False)
+
+    async def _async_set(self, enable: bool) -> None:
+        command = await async_call_gwm_api(
+            self._api.async_set_charging_mode(self.vin, enable=enable),
+            forbidden_translation_key="charging_control_unavailable",
+        )
+        self.coordinator.set_local_flag(self.vin, "smart_charge", enable)
+        # Tracked like any other remote command so its result shows up in the
+        # command-status sensor. On a terminal state the value is read back so a
+        # failure reverts it and a success reflects the vehicle.
+        self.coordinator.async_track_command(
+            command, on_terminal=self._async_read_state
+        )
 
 
 class _OptimisticRemoteSwitch(GwmEntity, SwitchEntity):
@@ -358,6 +471,62 @@ class GwmRemoteControlSwitch(_OptimisticRemoteSwitch):
             self._api.async_vehicle_control(self.vin, self._turn_off_action)
         )
         self.coordinator.async_track_command(command)
+        self._set_optimistic(False)
+
+
+class GwmBatteryHeatSwitch(_OptimisticRemoteSwitch):
+    """Battery pack heating (active, or while plugged in).
+
+    The car accepts the heating commands but does not report battery-heat state
+    in the polled status snapshot, so the toggled state is kept locally via the
+    coordinator's generic local-flag mechanism and only reflects the last
+    command sent from Home Assistant.
+    """
+
+    def __init__(
+        self,
+        api,
+        coordinator,
+        vin: str,
+        *,
+        turn_on_action: str,
+        turn_off_action: str,
+        translation_key: str,
+    ) -> None:
+        super().__init__(coordinator, vin)
+        self._api = api
+        self._turn_on_action = turn_on_action
+        self._turn_off_action = turn_off_action
+        self._attr_translation_key = translation_key
+        self._attr_unique_id = f"{vin}_{translation_key}"
+
+    def _actual_is_on(self) -> bool | None:
+        """Return the last locally tracked heating state."""
+        return self.coordinator.local_flag(self.vin, self._attr_translation_key)
+
+    @property
+    def available(self) -> bool:
+        return (
+            super().available
+            and self.remote_commands_available
+            and self.is_china_beantech
+            and self.security_pin_configured
+        )
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        command = await async_call_gwm_api(
+            self._api.async_vehicle_control(self.vin, self._turn_on_action)
+        )
+        self.coordinator.async_track_command(command)
+        self.coordinator.set_local_flag(self.vin, self._attr_translation_key, True)
+        self._set_optimistic(True)
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        command = await async_call_gwm_api(
+            self._api.async_vehicle_control(self.vin, self._turn_off_action)
+        )
+        self.coordinator.async_track_command(command)
+        self.coordinator.set_local_flag(self.vin, self._attr_translation_key, False)
         self._set_optimistic(False)
 
 

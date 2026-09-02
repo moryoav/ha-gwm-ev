@@ -284,7 +284,10 @@
       "defrost_front": { "name": "Front defrost" },
       "defrost_back": { "name": "Rear defrost" },
       "fast_cool": { "name": "Fast cool" },
-      "fast_heat": { "name": "Fast heat" }
+      "fast_heat": { "name": "Fast heat" },
+      "battery_gun_heat": { "name": "Battery pack heating while plugged in" },
+      "battery_initiative_heat": { "name": "Battery pack active heating" },
+      "smart_charge": { "name": "Smart scheduled charging" }
     }
   },
   "services": {

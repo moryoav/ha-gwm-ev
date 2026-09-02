@@ -39,6 +39,10 @@ type ChinaVehicleControlAction = Literal[
     "comfort_warm",
     "comfort_cool",
     "comfort_off",
+    "battery_gun_heat",
+    "battery_gun_heat_stop",
+    "battery_initiative_heat",
+    "battery_initiative_heat_stop",
 ]
 type RemoteCommandState = Literal["pending", "completed", "failed"]
 
@@ -81,6 +85,10 @@ BEANTECH_CHINA_VEHICLE_CONTROL_ACTIONS: frozenset[ChinaVehicleControlAction] = f
         "comfort_warm",
         "comfort_cool",
         "comfort_off",
+        "battery_gun_heat",
+        "battery_gun_heat_stop",
+        "battery_initiative_heat",
+        "battery_initiative_heat_stop",
     }
 )
 

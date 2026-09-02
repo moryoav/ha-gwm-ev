@@ -43,6 +43,7 @@ from .errors import GwmCommandError, GwmCommandForbidden
 
 _DEFAULT_RESULT_TIMEOUT = timedelta(seconds=90)
 _RUSSIA_RESULT_TIMEOUT = timedelta(seconds=300)
+_SMART_CHARGE_COMMAND_NAME = "Smart charge"
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -391,6 +392,54 @@ class GwmCommandApi:
             acceptance.command_id,
         )
 
+    async def async_get_charging_mode(self, vin: str) -> dict[str, Any]:
+        """Return the BeanTech smart-charge state and its configured window.
+
+        ``enabled`` is True when the car charges only inside the app-configured
+        window (``chargingMode`` 0); the window itself is surfaced as start/end
+        time strings.
+        """
+
+        self._ensure_charging_available()
+        identifier = _vehicle_identifier(vin, command_name="Smart charge")
+        data = await self._cloud.async_get_bean_tech_charge_setting(identifier)
+        scheduled = data.get("chargingMode") in (0, "0")
+        charge_set_param = data.get("chargeSetParam")
+        custom = (
+            charge_set_param.get("customTime")
+            if isinstance(charge_set_param, dict)
+            else None
+        )
+        start_time = None
+        end_time = None
+        if isinstance(custom, dict):
+            raw_start = custom.get("startTime")
+            raw_end = custom.get("endTime")
+            start_time = raw_start if isinstance(raw_start, str) else None
+            end_time = raw_end if isinstance(raw_end, str) else None
+        return {
+            "enabled": scheduled,
+            "start_time": start_time,
+            "end_time": end_time,
+        }
+
+    async def async_set_charging_mode(
+        self,
+        vin: str,
+        *,
+        enable: bool,
+    ) -> dict[str, object]:
+        """Set the BeanTech smart-charge mode and journal the write for polling."""
+
+        self._ensure_charging_available()
+        if type(enable) is not bool:
+            raise GwmCommandError("Smart charge command requires an on or off state")
+        identifier = _vehicle_identifier(vin, command_name="Smart charge")
+        seq_no = await self._cloud.async_set_bean_tech_charging_mode(
+            identifier, enable=enable
+        )
+        return await self._record_acceptance(identifier, _SMART_CHARGE_COMMAND_NAME, seq_no)
+
     async def async_get_command(self, command_id: str) -> dict[str, object]:
         """Poll one accepted provider ID and persist every terminal transition."""
 
@@ -412,6 +461,11 @@ class GwmCommandApi:
             results = await self._cloud.async_get_remote_command_results(
                 VehicleIdentifier(entry.vehicle_id),
                 entry.cloud_command_id,
+                msg_type=(
+                    "charge"
+                    if entry.command_name == _SMART_CHARGE_COMMAND_NAME
+                    else "remote"
+                ),
             )
         except GwmClientError:
             raise
@@ -794,6 +848,8 @@ def _vehicle_identifier(vin: object, *, command_name: str) -> VehicleIdentifier:
 
 
 def _expected_remote_type(command_name: str) -> str:
+    if command_name == _SMART_CHARGE_COMMAND_NAME:
+        return "charge"
     if command_name in {"A/C", "A/C run time"}:
         return "0x04"
     if command_name in {"Door lock", "Door unlock"}:
