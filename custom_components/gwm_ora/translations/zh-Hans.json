@@ -138,6 +138,9 @@
     "invalid_climate_run_time": {
       "message": "空调运行时长必须是 5 到 30 分钟之间的整数。"
     },
+    "invalid_remote_start_run_time": {
+      "message": "远程启动时长必须是 5 到 30 分钟之间、且为 5 的倍数。"
+    },
     "invalid_charge_soc_limit": {
       "message": "充电上限必须是 50、60、70、80、90 或 100 之一。"
     }
@@ -252,12 +255,14 @@
     },
     "number": {
       "climate_run_time": { "name": "空调运行时长" },
-      "charge_soc_limit": { "name": "充电上限" }
+      "charge_soc_limit": { "name": "充电上限" },
+      "remote_start_run_time": { "name": "远程启动时长" }
     },
     "select": {
       "charge_window_start": { "name": "充电开始时间" },
       "charge_window_end": { "name": "充电结束时间" },
-      "battery_appointment_time": { "name": "电池预约加热出发时间" }
+      "battery_appointment_time": { "name": "电池预约加热出发时间" },
+      "cabin_clean_appointment_time": { "name": "车内清洁预约时间" }
     },
     "lock": {
       "door_lock": { "name": "门锁" }

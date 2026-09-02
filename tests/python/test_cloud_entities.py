@@ -559,7 +559,7 @@ async def test_beantech_remote_start_switch_replaces_remote_start_buttons() -> N
         assert switch.is_on is False
 
     assert api.async_vehicle_control.await_args_list == [
-        call("SYNTHETIC-BEANTECH", "remote_start"),
+        call("SYNTHETIC-BEANTECH", "remote_start", run_time_minutes=15),
         call("SYNTHETIC-BEANTECH", "remote_stop"),
     ]
 

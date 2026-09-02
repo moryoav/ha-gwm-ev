@@ -60,6 +60,9 @@ async def async_setup_entry(
             GwmBatteryAppointmentSelect(
                 entry.runtime_data.api, entry.runtime_data.coordinator, vehicle["vin"]
             ),
+            GwmCabinCleanAppointmentSelect(
+                entry.runtime_data.api, entry.runtime_data.coordinator, vehicle["vin"]
+            ),
         ),
     )
 
@@ -203,3 +206,24 @@ class GwmBatteryAppointmentSelect(_BeanTechTimeSelect):
             )
         )
         self.coordinator.async_track_command(command)
+
+
+class GwmCabinCleanAppointmentSelect(_BeanTechTimeSelect):
+    """Cabin-clean scheduled run time (HH:MM, within 24 h)."""
+
+    def __init__(self, api, coordinator, vin: str) -> None:
+        super().__init__(
+            api, coordinator, vin, translation_key="cabin_clean_appointment_time"
+        )
+
+    @property
+    def current_option(self) -> str | None:
+        value = self.coordinator.local_flag(self.vin, "cabin_clean_appointment_time")
+        return value if value in self._attr_options else None
+
+    async def async_select_option(self, option: str) -> None:
+        time_ms = _clock_to_today_ms(option)
+        self.coordinator.set_local_flag(self.vin, "cabin_clean_appointment_time", option)
+        await async_call_gwm_api(
+            self._api.async_set_cabin_clean_appointment(self.vin, time_ms=time_ms)
+        )

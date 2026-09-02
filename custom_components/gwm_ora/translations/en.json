@@ -138,6 +138,9 @@
     "invalid_climate_run_time": {
       "message": "Climate run time must be a whole number from 5 to 30 minutes."
     },
+    "invalid_remote_start_run_time": {
+      "message": "Remote start run time must be a multiple of 5 from 5 to 30 minutes."
+    },
     "invalid_charge_soc_limit": {
       "message": "Charge limit must be one of 50, 60, 70, 80, 90 or 100 percent."
     }
@@ -252,12 +255,14 @@
     },
     "number": {
       "climate_run_time": { "name": "Climate run time" },
-      "charge_soc_limit": { "name": "Charge limit" }
+      "charge_soc_limit": { "name": "Charge limit" },
+      "remote_start_run_time": { "name": "Remote start run time" }
     },
     "select": {
       "charge_window_start": { "name": "Charge window start" },
       "charge_window_end": { "name": "Charge window end" },
-      "battery_appointment_time": { "name": "Battery appointment departure" }
+      "battery_appointment_time": { "name": "Battery appointment departure" },
+      "cabin_clean_appointment_time": { "name": "Cabin clean appointment" }
     },
     "lock": {
       "door_lock": { "name": "Door lock" }
