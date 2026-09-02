@@ -72,6 +72,8 @@ type _ChinaOperation = Literal[
     "set_bean_tech_charging_mode",
     "get_bean_tech_battery_heating_appointment",
     "get_bean_tech_ac_temperature",
+    "get_bean_tech_switch_status",
+    "get_bean_tech_comfort_modes",
     "set_bean_tech_battery_heating_appointment",
     "set_bean_tech_charge_soc",
     "set_bean_tech_cabin_clean_appointment",
@@ -129,6 +131,14 @@ _BEAN_TECH_SUBSCRIBE_URL = (
     "https://gw-app-gateway.gwmapp-h.com/app-api/api/v3.0/vehicle/remote-ctrl/subscribe"
 )
 _BEAN_TECH_SUBSCRIBE_PATH = "/app-api/api/v3.0/vehicle/remote-ctrl/subscribe"
+_BEAN_TECH_SWITCH_STATUS_URL = (
+    "https://gw-app-gateway.gwmapp-h.com/app-api/api/v3.0/vehicle/switch/status"
+)
+_BEAN_TECH_SWITCH_STATUS_PATH = "/app-api/api/v3.0/vehicle/switch/status"
+_BEAN_TECH_ONE_TOUCH_MODE_URL = (
+    "https://gw-app-gateway.gwmapp-h.com/app-api/api/v3.0/vehicle/one-touch/mode"
+)
+_BEAN_TECH_ONE_TOUCH_MODE_PATH = "/app-api/api/v3.0/vehicle/one-touch/mode"
 _AUTO_AI_LOGIN_ORIGIN = _G_APP_ORIGIN
 _AUTO_AI_LOGIN_PATH = "/tsp/v1/proxy/navinfo/GW.M.APP_LOGIN"
 _DISCOVERY_URL = (
@@ -334,6 +344,11 @@ class _ChinaTransportRequest:
             "get_bean_tech_ac_temperature",
         }:
             _validate_bean_tech_config_query_request(self, copied)
+        elif self.operation in {
+            "get_bean_tech_switch_status",
+            "get_bean_tech_comfort_modes",
+        }:
+            _validate_bean_tech_simple_get_request(self, copied)
         elif self.operation == "set_bean_tech_battery_heating_appointment":
             _validate_bean_tech_battery_heating_appointment_request(self, copied)
         elif self.operation == "set_bean_tech_charge_soc":
@@ -1995,6 +2010,41 @@ def _validate_bean_tech_config_query_request(
             headers["bt-auth-nonce"],
             headers["bt-auth-timestamp"],
             "json=" + raw_body,
+        )
+    ):
+        raise ValueError("route_invalid")
+
+
+def _validate_bean_tech_simple_get_request(
+    request: _ChinaTransportRequest,
+    headers: Mapping[str, str],
+) -> None:
+    path = (
+        _BEAN_TECH_SWITCH_STATUS_PATH
+        if request.url.startswith(_BEAN_TECH_SWITCH_STATUS_URL)
+        else _BEAN_TECH_ONE_TOUCH_MODE_PATH
+    )
+    expected_url = (
+        _BEAN_TECH_SWITCH_STATUS_URL
+        if path == _BEAN_TECH_SWITCH_STATUS_PATH
+        else _BEAN_TECH_ONE_TOUCH_MODE_URL
+    )
+    vin = headers.get("vin", "")
+    if (
+        request.service != "bean_tech"
+        or request.method != "GET"
+        or request.body is not None
+        or request.url != expected_url + "?vin=" + quote(vin, safe="", encoding="utf-8", errors="strict")
+        or set(headers) != _BEAN_TECH_STATUS_HEADERS
+        or _VIN.fullmatch(vin) is None
+        or not _valid_bean_tech_authenticated_headers(headers)
+        or headers.get("bt-auth-sign")
+        != bean_tech_sign(
+            "GET",
+            path,
+            headers["bt-auth-nonce"],
+            headers["bt-auth-timestamp"],
+            "vin=" + vin,
         )
     ):
         raise ValueError("route_invalid")

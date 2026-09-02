@@ -135,6 +135,10 @@ _BEAN_TECH_CONFIG_QUERY_PATH = "/app-api/api/v3.0/vehicle/remote-ctrl/config/que
 _BEAN_TECH_CONFIG_QUERY_URL = _BEAN_TECH_BASE.rstrip("/") + _BEAN_TECH_CONFIG_QUERY_PATH
 _BEAN_TECH_SUBSCRIBE_PATH = "/app-api/api/v3.0/vehicle/remote-ctrl/subscribe"
 _BEAN_TECH_SUBSCRIBE_URL = _BEAN_TECH_BASE.rstrip("/") + _BEAN_TECH_SUBSCRIBE_PATH
+_BEAN_TECH_SWITCH_STATUS_PATH = "/app-api/api/v3.0/vehicle/switch/status"
+_BEAN_TECH_SWITCH_STATUS_URL = _BEAN_TECH_BASE.rstrip("/") + _BEAN_TECH_SWITCH_STATUS_PATH
+_BEAN_TECH_ONE_TOUCH_MODE_PATH = "/app-api/api/v3.0/vehicle/one-touch/mode"
+_BEAN_TECH_ONE_TOUCH_MODE_URL = _BEAN_TECH_BASE.rstrip("/") + _BEAN_TECH_ONE_TOUCH_MODE_PATH
 _BEAN_TECH_PIN_EXEMPT_CONTROL_TYPES = frozenset(
     {
         "FLASH",
@@ -882,6 +886,46 @@ class ChinaClient:
             operation,
             timeout=timeout,
             action=lambda deadline: self._get_bean_tech_ac_temperature_locked(
+                identifier,
+                deadline=deadline,
+            ),
+        )
+
+    async def get_bean_tech_switch_status(
+        self,
+        identifier: VehicleIdentifier,
+        *,
+        timeout: float | None = None,
+    ) -> Mapping[str, object]:
+        """Read the BeanTech ``switch/status`` switch block (battery heating)."""
+
+        operation = "get_bean_tech_switch_status"
+        if type(identifier) is not VehicleIdentifier:
+            raise GwmConfigurationError(operation=operation)
+        return await self._run_read(
+            operation,
+            timeout=timeout,
+            action=lambda deadline: self._get_bean_tech_switch_status_locked(
+                identifier,
+                deadline=deadline,
+            ),
+        )
+
+    async def get_bean_tech_comfort_modes(
+        self,
+        identifier: VehicleIdentifier,
+        *,
+        timeout: float | None = None,
+    ) -> tuple[Mapping[str, object], ...]:
+        """Read the BeanTech one-touch comfort modes (``commonUseMode`` flags)."""
+
+        operation = "get_bean_tech_comfort_modes"
+        if type(identifier) is not VehicleIdentifier:
+            raise GwmConfigurationError(operation=operation)
+        return await self._run_read(
+            operation,
+            timeout=timeout,
+            action=lambda deadline: self._get_bean_tech_comfort_modes_locked(
                 identifier,
                 deadline=deadline,
             ),
@@ -2030,7 +2074,9 @@ class ChinaClient:
         *,
         deadline: _Deadline,
     ) -> bool:
-        operation = "get_bean_tech_battery_heating_appointment"
+        operation: Literal["get_bean_tech_battery_heating_appointment"] = (
+            "get_bean_tech_battery_heating_appointment"
+        )
         state = self._required_session(operation=operation)
         vehicle = self._vehicles.get(identifier.value.casefold())
         if vehicle is None or (vehicle.platform or "").strip().casefold() != "beantech":
@@ -2061,7 +2107,7 @@ class ChinaClient:
         *,
         deadline: _Deadline,
     ) -> int | None:
-        operation = "get_bean_tech_ac_temperature"
+        operation: Literal["get_bean_tech_ac_temperature"] = "get_bean_tech_ac_temperature"
         state = self._required_session(operation=operation)
         vehicle = self._vehicles.get(identifier.value.casefold())
         if vehicle is None or (vehicle.platform or "").strip().casefold() != "beantech":
@@ -2090,6 +2136,59 @@ class ChinaClient:
             return int(temperature)
         except (TypeError, ValueError):
             raise GwmSchemaError(operation=operation) from None
+
+    async def _get_bean_tech_switch_status_locked(
+        self,
+        identifier: VehicleIdentifier,
+        *,
+        deadline: _Deadline,
+    ) -> Mapping[str, object]:
+        operation: Literal["get_bean_tech_switch_status"] = "get_bean_tech_switch_status"
+        state = self._required_session(operation=operation)
+        vehicle = self._vehicles.get(identifier.value.casefold())
+        if vehicle is None or (vehicle.platform or "").strip().casefold() != "beantech":
+            raise GwmRoutePolicyError(operation=operation)
+        response = await self._send_locked(
+            self._build_bean_tech_simple_get_request(
+                state,
+                identifier,
+                operation=operation,
+                path=_BEAN_TECH_SWITCH_STATUS_PATH,
+                url=_BEAN_TECH_SWITCH_STATUS_URL,
+            ),
+            deadline=deadline,
+        )
+        data = _decode_g_app_envelope(response, operation=operation)
+        switch_status = _property(data, "switchStatus") if isinstance(data, Mapping) else None
+        if not isinstance(switch_status, Mapping):
+            raise GwmSchemaError(operation=operation)
+        return cast(Mapping[str, object], switch_status)
+
+    async def _get_bean_tech_comfort_modes_locked(
+        self,
+        identifier: VehicleIdentifier,
+        *,
+        deadline: _Deadline,
+    ) -> tuple[Mapping[str, object], ...]:
+        operation: Literal["get_bean_tech_comfort_modes"] = "get_bean_tech_comfort_modes"
+        state = self._required_session(operation=operation)
+        vehicle = self._vehicles.get(identifier.value.casefold())
+        if vehicle is None or (vehicle.platform or "").strip().casefold() != "beantech":
+            raise GwmRoutePolicyError(operation=operation)
+        response = await self._send_locked(
+            self._build_bean_tech_simple_get_request(
+                state,
+                identifier,
+                operation=operation,
+                path=_BEAN_TECH_ONE_TOUCH_MODE_PATH,
+                url=_BEAN_TECH_ONE_TOUCH_MODE_URL,
+            ),
+            deadline=deadline,
+        )
+        data = _decode_g_app_envelope(response, operation=operation)
+        if not isinstance(data, list):
+            raise GwmSchemaError(operation=operation)
+        return tuple(mode for mode in data if isinstance(mode, Mapping))
 
     async def _set_bean_tech_battery_heating_appointment_locked(
         self,
@@ -3001,6 +3100,34 @@ class ChinaClient:
             url=_BEAN_TECH_SUBSCRIBE_URL,
             headers=headers,
             body=body.encode("utf-8"),
+        )
+
+    def _build_bean_tech_simple_get_request(
+        self,
+        state: ChinaAuthState,
+        identifier: VehicleIdentifier,
+        *,
+        operation: Literal[
+            "get_bean_tech_switch_status", "get_bean_tech_comfort_modes"
+        ],
+        path: str,
+        url: str,
+    ) -> _ChinaTransportRequest:
+        headers = self._bean_tech_authenticated_headers(
+            state,
+            identifier,
+            operation=operation,
+            method="GET",
+            path=path,
+            parameter="vin=" + identifier.value,
+        )
+        return _ChinaTransportRequest(
+            operation=operation,
+            service="bean_tech",
+            method="GET",
+            url=url + "?vin=" + identifier.encoded,
+            headers=headers,
+            body=None,
         )
 
     async def _generate_bean_tech_security_token(

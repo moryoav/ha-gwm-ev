@@ -11,7 +11,7 @@ import json
 import math
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from types import MappingProxyType
 
@@ -481,15 +481,6 @@ def map_vehicle_snapshot(
         battery_pack_current=_number(raw_items, "9000026"),
         battery_pack_voltage=_number(raw_items, "9000027"),
     )
-    # The raw ``power`` field is the parked power draw (0 while charging); the
-    # useful figure is the charging power derived from pack current and voltage.
-    if values.battery_pack_current is not None and values.battery_pack_voltage is not None:
-        values = replace(
-            values,
-            power=round(
-                values.battery_pack_current * values.battery_pack_voltage / 1000.0, 2
-            ),
-        )
     ac_on = values.ac_active is True
     climate_configuration = basics.climate
     target_temperature = normalize_temperature(
