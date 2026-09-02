@@ -361,26 +361,9 @@ class GwmBatteryAppointmentHeatingSwitch(GwmEntity, SwitchEntity):
         self._api = api
         self._attr_unique_id = f"{vin}_battery_appointment_heating"
 
-    async def _async_read_state(self) -> None:
-        try:
-            response = await self._api.async_get_battery_heating_appointment(self.vin)
-        except (GwmCommandError, GwmClientError) as err:
-            _LOGGER.debug("Could not read battery appointment heating: %s", err)
-            return
-        self.coordinator.set_local_flag(
-            self.vin, "battery_appointment_heating", bool(response.get("enabled"))
-        )
-
-    async def async_added_to_hass(self) -> None:
-        """Read the armed state when the entity is added."""
-        await super().async_added_to_hass()
-        if not self.remote_commands_available or not self.is_china_beantech:
-            return
-        await self._async_read_state()
-
     @property
     def is_on(self) -> bool | None:
-        """Return the last known armed state."""
+        """Return the last requested armed state (the car does not report it)."""
         return self.coordinator.local_flag(self.vin, "battery_appointment_heating")
 
     @property
@@ -428,7 +411,7 @@ class GwmBatteryAppointmentHeatingSwitch(GwmEntity, SwitchEntity):
             )
         )
         self.coordinator.set_local_flag(self.vin, "battery_appointment_heating", True)
-        self.coordinator.async_track_command(command, on_terminal=self._async_read_state)
+        self.coordinator.async_track_command(command)
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Cancel the armed appointment."""
@@ -438,7 +421,7 @@ class GwmBatteryAppointmentHeatingSwitch(GwmEntity, SwitchEntity):
         self.coordinator.set_local_flag(
             self.vin, "battery_appointment_heating", False
         )
-        self.coordinator.async_track_command(command, on_terminal=self._async_read_state)
+        self.coordinator.async_track_command(command)
 
 
 class _OptimisticRemoteSwitch(GwmEntity, SwitchEntity):
