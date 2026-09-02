@@ -133,7 +133,7 @@ class GwmChargeSocNumber(GwmEntity, NumberEntity):
         the user sets one.
         """
         value = self.coordinator.local_flag(self.vin, "charge_soc_limit")
-        return float(value) if value is not None else 100.0
+        return float(value) if value else 100.0
 
     async def async_set_native_value(self, value: float) -> None:
         """Send a new charge limit to the vehicle."""
@@ -176,7 +176,7 @@ class GwmRemoteStartRunTimeNumber(GwmEntity, NumberEntity):
     @property
     def native_value(self) -> float | None:
         value = self.coordinator.local_flag(self.vin, "remote_start_run_time")
-        return float(value) if value is not None else 15.0
+        return float(value) if value else 15.0
 
     async def async_set_native_value(self, value: float) -> None:
         minutes = int(value)
