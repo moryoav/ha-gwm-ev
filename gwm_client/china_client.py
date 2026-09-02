@@ -1641,13 +1641,34 @@ class ChinaClient:
             if command.mode != "off" and not 17 <= command.temperature <= 31:
                 raise GwmConfigurationError(operation=operation)
             control_type, command_body = _bean_tech_climate_control(command)
-            return await self._send_bean_tech_control(
+            acceptance = await self._send_bean_tech_control(
                 state,
                 command.identifier,
                 operation=operation,
                 commands=[(control_type, command_body)],
                 deadline=deadline,
             )
+            if command.mode != "off":
+                # The app also persists the temperature via remote-ctrl/config so
+                # the car remembers it; send that as a best-effort companion.
+                try:
+                    config_response = await self._send_locked(
+                        self._build_bean_tech_config_request(
+                            state,
+                            command.identifier,
+                            temperature=command.temperature,
+                            operation_time_minutes=command.operation_time_minutes,
+                        ),
+                        deadline=deadline,
+                    )
+                    _decode_g_app_envelope(config_response, operation="set_bean_tech_ac_temperature")
+                except GwmClientError as err:
+                    _LOGGER.warning(
+                        "BeanTech A/C command was accepted but its companion "
+                        "temperature-save request failed (%s)",
+                        type(err).__name__,
+                    )
+            return acceptance
         if platform != "navinfo":
             raise GwmRoutePolicyError(operation=operation)
         if state.auto_ai_token_id is None or state.auto_ai_user_id is None:
@@ -3206,6 +3227,50 @@ class ChinaClient:
             url=url + "?vin=" + identifier.encoded,
             headers=headers,
             body=None,
+        )
+
+    def _build_bean_tech_config_request(
+        self,
+        state: ChinaAuthState,
+        identifier: VehicleIdentifier,
+        *,
+        temperature: int,
+        operation_time_minutes: int,
+    ) -> _ChinaTransportRequest:
+        operation: Literal["set_bean_tech_ac_temperature"] = (
+            "set_bean_tech_ac_temperature"
+        )
+        body = encode_dotnet_json(
+            {
+                "configs": [
+                    {
+                        "controlType": "AIR_CONDITIONER_START",
+                        "cmdBody": {
+                            "allowStartEng": 1,
+                            "operationTime": operation_time_minutes * 60,
+                            "temperature": temperature,
+                        },
+                    }
+                ],
+                "vin": identifier.value,
+            }
+        )
+        headers = self._bean_tech_authenticated_headers(
+            state,
+            identifier,
+            operation=operation,
+            method="POST",
+            path=_NAVINFO_CLIMATE_CONFIG_PATH,
+            parameter="json=" + body,
+        )
+        headers["Content-Type"] = "application/json; charset=UTF-8"
+        return _ChinaTransportRequest(
+            operation=operation,
+            service="bean_tech",
+            method="POST",
+            url=_NAVINFO_CLIMATE_CONFIG_URL,
+            headers=headers,
+            body=body.encode("utf-8"),
         )
 
     async def _generate_bean_tech_security_token(

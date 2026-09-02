@@ -1164,6 +1164,7 @@ async def test_beantech_climate_start_and_stop_use_timely_without_token() -> Non
             {"code": "000000", "data": {}},
             {"code": "000000", "data": {}},
         ],
+        set_bean_tech_ac_temperature=[{"code": "000000", "data": {}}],
     )
     client = _client(transport, bean_tech_security_password="ENCRYPTED==")
     assert isinstance(
