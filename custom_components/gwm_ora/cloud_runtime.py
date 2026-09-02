@@ -237,6 +237,41 @@ class _ChinaReadClient(Protocol):
         identifier: VehicleIdentifier,
     ) -> int | None: ...
 
+    async def get_bean_tech_battery_heating_appointment(
+        self,
+        identifier: VehicleIdentifier,
+    ) -> bool: ...
+
+    async def set_bean_tech_battery_heating_appointment(
+        self,
+        identifier: VehicleIdentifier,
+        *,
+        enable: bool,
+        use_car_time_ms: int | None,
+    ) -> str: ...
+
+    async def set_bean_tech_charge_soc(
+        self,
+        identifier: VehicleIdentifier,
+        *,
+        percent: int,
+    ) -> str: ...
+
+    async def set_bean_tech_cabin_clean_appointment(
+        self,
+        identifier: VehicleIdentifier,
+        *,
+        time_ms: int,
+    ) -> None: ...
+
+    async def set_bean_tech_charge_window(
+        self,
+        identifier: VehicleIdentifier,
+        *,
+        start_time: str,
+        end_time: str,
+    ) -> str: ...
+
     async def set_bean_tech_charging_mode(
         self,
         identifier: VehicleIdentifier,
@@ -828,6 +863,101 @@ class GwmCloudClient:
             lambda: cast(_ChinaReadClient, self._client).set_bean_tech_charging_mode(
                 identifier,
                 enable=enable,
+            )
+        )
+
+    async def async_get_bean_tech_ac_temperature(
+        self,
+        identifier: VehicleIdentifier,
+    ) -> int | None:
+        """Read the BeanTech A/C set temperature through the client."""
+        if self.region != REGION_CHINA:
+            raise GwmRoutePolicyError(operation="get_bean_tech_ac_temperature")
+        return await self._async_with_session_renewal(
+            lambda: cast(_ChinaReadClient, self._client).get_bean_tech_ac_temperature(
+                identifier
+            )
+        )
+
+    async def async_get_bean_tech_battery_heating_appointment(
+        self,
+        identifier: VehicleIdentifier,
+    ) -> bool:
+        """Read whether BeanTech battery appointment heating is armed."""
+        if self.region != REGION_CHINA:
+            raise GwmRoutePolicyError(operation="get_bean_tech_battery_heating_appointment")
+        return await self._async_with_session_renewal(
+            lambda: cast(
+                _ChinaReadClient, self._client
+            ).get_bean_tech_battery_heating_appointment(identifier)
+        )
+
+    async def async_set_bean_tech_battery_heating_appointment(
+        self,
+        identifier: VehicleIdentifier,
+        *,
+        enable: bool,
+        use_car_time_ms: int | None = None,
+    ) -> str:
+        """Arm or disarm BeanTech battery appointment heating and return seqNo."""
+        if self.region != REGION_CHINA:
+            raise GwmRoutePolicyError(operation="set_bean_tech_battery_heating_appointment")
+        return await self._async_with_session_renewal(
+            lambda: cast(
+                _ChinaReadClient, self._client
+            ).set_bean_tech_battery_heating_appointment(
+                identifier,
+                enable=enable,
+                use_car_time_ms=use_car_time_ms,
+            )
+        )
+
+    async def async_set_bean_tech_charge_soc(
+        self,
+        identifier: VehicleIdentifier,
+        *,
+        percent: int,
+    ) -> str:
+        """Set the BeanTech charge limit and return the pollable seqNo."""
+        if self.region != REGION_CHINA:
+            raise GwmRoutePolicyError(operation="set_bean_tech_charge_soc")
+        return await self._async_with_session_renewal(
+            lambda: cast(_ChinaReadClient, self._client).set_bean_tech_charge_soc(
+                identifier,
+                percent=percent,
+            )
+        )
+
+    async def async_set_bean_tech_cabin_clean_appointment(
+        self,
+        identifier: VehicleIdentifier,
+        *,
+        time_ms: int,
+    ) -> None:
+        """Schedule one BeanTech cabin-clean run through the client."""
+        if self.region != REGION_CHINA:
+            raise GwmRoutePolicyError(operation="set_bean_tech_cabin_clean_appointment")
+        await self._async_with_session_renewal(
+            lambda: cast(
+                _ChinaReadClient, self._client
+            ).set_bean_tech_cabin_clean_appointment(identifier, time_ms=time_ms)
+        )
+
+    async def async_set_bean_tech_charge_window(
+        self,
+        identifier: VehicleIdentifier,
+        *,
+        start_time: str,
+        end_time: str,
+    ) -> str:
+        """Write the BeanTech smart-charge window and return the pollable seqNo."""
+        if self.region != REGION_CHINA:
+            raise GwmRoutePolicyError(operation="set_bean_tech_charge_window")
+        return await self._async_with_session_renewal(
+            lambda: cast(_ChinaReadClient, self._client).set_bean_tech_charge_window(
+                identifier,
+                start_time=start_time,
+                end_time=end_time,
             )
         )
 
