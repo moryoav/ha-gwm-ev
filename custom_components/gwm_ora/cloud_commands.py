@@ -506,22 +506,6 @@ class GwmCommandApi:
             identifier, time_ms=time_ms
         )
 
-    async def async_set_ac_temperature(
-        self,
-        vin: str,
-        *,
-        temperature: int,
-        operation_time_minutes: int = 10,
-    ) -> None:
-        """Save the BeanTech A/C temperature so the car remembers it."""
-        self._ensure_china_vehicle_control_available()
-        identifier = _vehicle_identifier(vin, command_name="A/C temperature")
-        await self._cloud.async_set_bean_tech_ac_temperature(
-            identifier,
-            temperature=temperature,
-            operation_time_minutes=operation_time_minutes,
-        )
-
     async def async_set_charge_window(
         self,
         vin: str,

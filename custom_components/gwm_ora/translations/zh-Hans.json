@@ -140,12 +140,6 @@
     },
     "invalid_charge_soc_limit": {
       "message": "充电上限必须是 50、60、70、80、90 或 100 之一。"
-    },
-    "invalid_cabin_clean_appointment": {
-      "message": "车内清洁预约时间必须在 10 到 240 分钟之间。"
-    },
-    "invalid_ac_temperature": {
-      "message": "空调温度必须在 17 到 31 ℃ 之间。"
     }
   },
   "entity": {
@@ -258,9 +252,13 @@
     },
     "number": {
       "climate_run_time": { "name": "空调运行时长" },
-      "charge_soc_limit": { "name": "充电上限" },
-      "cabin_clean_appointment": { "name": "车内清洁预约时间" },
-      "ac_temperature": { "name": "空调温度" }
+      "charge_soc_limit": { "name": "充电上限" }
+    },
+    "time": {
+      "charge_window_start": { "name": "充电开始时间" },
+      "charge_window_end": { "name": "充电结束时间" },
+      "battery_appointment_time": { "name": "电池预约加热出发时间" },
+      "cabin_clean_appointment_time": { "name": "车内清洁预约时间" }
     },
     "lock": {
       "door_lock": { "name": "门锁" }

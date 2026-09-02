@@ -47,6 +47,7 @@ PLATFORMS: list[Platform] = [
     Platform.BUTTON,
     Platform.NUMBER,
     Platform.SWITCH,
+    Platform.TIME,
 ]
 
 # Charging schedule control (behind the integration option).

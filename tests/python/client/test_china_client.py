@@ -2863,36 +2863,6 @@ async def test_beantech_cabin_clean_appointment_request_shape() -> None:
 
 
 @pytest.mark.asyncio
-async def test_beantech_ac_temperature_request_shape() -> None:
-    transport = _FakeTransport(
-        acquire_vehicles=[FIXTURE["responses"]["discovery"]],
-        set_bean_tech_ac_temperature=[{"code": "000000", "data": {}}],
-    )
-    client = _client(transport)
-    assert isinstance(
-        await client.authenticate(_credentials(), state=_complete_state()),
-        ChinaAuthenticated,
-    )
-
-    await client.set_bean_tech_ac_temperature(
-        VehicleIdentifier(BEAN_VIN), temperature=24
-    )
-
-    request = next(
-        call for call in transport.calls if call.operation == "set_bean_tech_ac_temperature"
-    )
-    assert json.loads(request.body or b"null") == {
-        "configs": [
-            {
-                "controlType": "AIR_CONDITIONER_START",
-                "cmdBody": {"allowStartEng": 1, "operationTime": 600, "temperature": 24},
-            }
-        ],
-        "vin": BEAN_VIN,
-    }
-
-
-@pytest.mark.asyncio
 async def test_beantech_charge_window_write_updates_custom_time() -> None:
     charge_setting = {
         "chargingMode": 0,

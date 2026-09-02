@@ -74,7 +74,6 @@ type _ChinaOperation = Literal[
     "set_bean_tech_battery_heating_appointment",
     "set_bean_tech_charge_soc",
     "set_bean_tech_cabin_clean_appointment",
-    "set_bean_tech_ac_temperature",
     "set_bean_tech_charge_window",
 ]
 
@@ -337,8 +336,6 @@ class _ChinaTransportRequest:
             _validate_bean_tech_charge_soc_request(self, copied)
         elif self.operation == "set_bean_tech_cabin_clean_appointment":
             _validate_bean_tech_subscribe_request(self, copied)
-        elif self.operation == "set_bean_tech_ac_temperature":
-            _validate_bean_tech_config_request(self, copied)
         elif self.operation == "set_bean_tech_charge_window":
             _validate_bean_tech_charge_setting_write_request(self, copied)
         else:  # pragma: no cover - the Literal is still a runtime boundary
@@ -2034,44 +2031,6 @@ def _validate_bean_tech_subscribe_request(
         != bean_tech_sign(
             "POST",
             _BEAN_TECH_SUBSCRIBE_PATH,
-            headers["bt-auth-nonce"],
-            headers["bt-auth-timestamp"],
-            "json=" + raw_body,
-        )
-    ):
-        raise ValueError("route_invalid")
-
-
-def _validate_bean_tech_config_request(
-    request: _ChinaTransportRequest,
-    headers: Mapping[str, str],
-) -> None:
-    raw_body = _utf8_body(request.body)
-    body = _decode_wire_object(raw_body) if raw_body is not None else None
-    configs = body.get("configs") if isinstance(body, Mapping) else None
-    if (
-        request.service != "bean_tech"
-        or request.method != "POST"
-        or request.url != _NAVINFO_CLIMATE_CONFIG_URL
-        or raw_body is None
-        or not isinstance(body, Mapping)
-        or set(headers) != _BEAN_TECH_COMMAND_HEADERS
-        or list(body) != ["configs", "vin"]
-        or not isinstance(configs, list)
-        or len(configs) != 1
-        or not isinstance(configs[0], Mapping)
-        or list(configs[0]) != ["controlType", "cmdBody"]
-        or configs[0].get("controlType") != "AIR_CONDITIONER_START"
-        or not _valid_air_conditioner_start_body(configs[0].get("cmdBody"))
-        or _VIN.fullmatch(str(body.get("vin", ""))) is None
-        or body.get("vin") != headers.get("vin")
-        or encode_dotnet_json(body) != raw_body
-        or headers.get("Content-Type") != "application/json; charset=UTF-8"
-        or not _valid_bean_tech_authenticated_headers(headers)
-        or headers.get("bt-auth-sign")
-        != bean_tech_sign(
-            "POST",
-            _NAVINFO_CLIMATE_CONFIG_PATH,
             headers["bt-auth-nonce"],
             headers["bt-auth-timestamp"],
             "json=" + raw_body,

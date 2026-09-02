@@ -140,12 +140,6 @@
     },
     "invalid_charge_soc_limit": {
       "message": "Charge limit must be one of 50, 60, 70, 80, 90 or 100 percent."
-    },
-    "invalid_cabin_clean_appointment": {
-      "message": "Cabin clean appointment must be from 10 to 240 minutes."
-    },
-    "invalid_ac_temperature": {
-      "message": "A/C temperature must be from 17 to 31 °C."
     }
   },
   "entity": {
@@ -258,9 +252,13 @@
     },
     "number": {
       "climate_run_time": { "name": "Climate run time" },
-      "charge_soc_limit": { "name": "Charge limit" },
-      "cabin_clean_appointment": { "name": "Cabin clean appointment" },
-      "ac_temperature": { "name": "A/C temperature" }
+      "charge_soc_limit": { "name": "Charge limit" }
+    },
+    "time": {
+      "charge_window_start": { "name": "Charge window start" },
+      "charge_window_end": { "name": "Charge window end" },
+      "battery_appointment_time": { "name": "Battery appointment departure" },
+      "cabin_clean_appointment_time": { "name": "Cabin clean appointment" }
     },
     "lock": {
       "door_lock": { "name": "Door lock" }

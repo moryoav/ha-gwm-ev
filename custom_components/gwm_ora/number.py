@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import time
 from typing import Any
 
 from homeassistant.components.number import NumberDeviceClass, NumberEntity, NumberMode
-from homeassistant.const import PERCENTAGE, UnitOfTemperature, UnitOfTime
+from homeassistant.const import PERCENTAGE, UnitOfTime
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity import EntityCategory
@@ -35,16 +34,6 @@ async def async_setup_entry(
                 vehicle["vin"],
             ),
             GwmChargeSocNumber(
-                entry.runtime_data.api,
-                entry.runtime_data.coordinator,
-                vehicle["vin"],
-            ),
-            GwmCabinCleanAppointmentNumber(
-                entry.runtime_data.api,
-                entry.runtime_data.coordinator,
-                vehicle["vin"],
-            ),
-            GwmAcTemperatureNumber(
                 entry.runtime_data.api,
                 entry.runtime_data.coordinator,
                 vehicle["vin"],
@@ -150,91 +139,3 @@ class GwmChargeSocNumber(GwmEntity, NumberEntity):
         )
         self.coordinator.set_local_flag(self.vin, "charge_soc_limit", percent)
         self.coordinator.async_track_command(command)
-
-
-class GwmCabinCleanAppointmentNumber(GwmEntity, NumberEntity):
-    """BeanTech cabin-clean appointment, in minutes from now."""
-
-    _attr_translation_key = "cabin_clean_appointment"
-    _attr_entity_category = EntityCategory.CONFIG
-    _attr_mode = NumberMode.BOX
-    _attr_native_min_value = 10
-    _attr_native_max_value = 240
-    _attr_native_step = 5
-    _attr_native_unit_of_measurement = UnitOfTime.MINUTES
-
-    def __init__(self, api, coordinator, vin: str) -> None:
-        super().__init__(coordinator, vin)
-        self._api = api
-        self._attr_unique_id = f"{vin}_cabin_clean_appointment"
-
-    @property
-    def available(self) -> bool:
-        return (
-            super().available
-            and self.remote_commands_available
-            and self.is_china_beantech
-        )
-
-    @property
-    def native_value(self) -> float | None:
-        """The appointment time is write-only, so there is no value to show."""
-        return None
-
-    async def async_set_native_value(self, value: float) -> None:
-        """Schedule a cabin-clean run ``value`` minutes from now."""
-        minutes = int(value)
-        if minutes < 10 or minutes > 240:
-            raise HomeAssistantError(
-                translation_domain=DOMAIN,
-                translation_key="invalid_cabin_clean_appointment",
-            )
-        time_ms = int(time.time() * 1000) + minutes * 60 * 1000
-        await async_call_gwm_api(
-            self._api.async_set_cabin_clean_appointment(self.vin, time_ms=time_ms)
-        )
-
-
-class GwmAcTemperatureNumber(GwmEntity, NumberEntity):
-    """BeanTech A/C temperature the car remembers for the next start."""
-
-    _attr_translation_key = "ac_temperature"
-    _attr_entity_category = EntityCategory.CONFIG
-    _attr_mode = NumberMode.SLIDER
-    _attr_native_min_value = 17
-    _attr_native_max_value = 31
-    _attr_native_step = 1
-    _attr_device_class = NumberDeviceClass.TEMPERATURE
-    _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
-
-    def __init__(self, api, coordinator, vin: str) -> None:
-        super().__init__(coordinator, vin)
-        self._api = api
-        self._attr_unique_id = f"{vin}_ac_temperature"
-
-    @property
-    def available(self) -> bool:
-        return (
-            super().available
-            and self.climate_commands_available
-            and self.is_china_beantech
-        )
-
-    @property
-    def native_value(self) -> float | None:
-        """Return the currently targeted A/C temperature."""
-        vehicle = self.vehicle or {}
-        value = (vehicle.get("climate") or {}).get("target_temperature_c")
-        return float(value) if value is not None else None
-
-    async def async_set_native_value(self, value: float) -> None:
-        """Save a new A/C temperature to the vehicle."""
-        temperature = int(value)
-        if temperature < 17 or temperature > 31:
-            raise HomeAssistantError(
-                translation_domain=DOMAIN,
-                translation_key="invalid_ac_temperature",
-            )
-        await async_call_gwm_api(
-            self._api.async_set_ac_temperature(self.vin, temperature=temperature)
-        )

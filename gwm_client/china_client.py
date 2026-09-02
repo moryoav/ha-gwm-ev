@@ -944,30 +944,6 @@ class ChinaClient:
             ),
         )
 
-    async def set_bean_tech_ac_temperature(
-        self,
-        identifier: VehicleIdentifier,
-        *,
-        temperature: int,
-        operation_time_minutes: int = 10,
-        timeout: float | None = None,
-    ) -> None:
-        """Save the BeanTech A/C temperature so the car remembers it."""
-
-        operation = "set_bean_tech_ac_temperature"
-        if type(identifier) is not VehicleIdentifier:
-            raise GwmConfigurationError(operation=operation)
-        await self._run_read(
-            operation,
-            timeout=timeout,
-            action=lambda deadline: self._set_bean_tech_ac_temperature_locked(
-                identifier,
-                temperature=temperature,
-                operation_time_minutes=operation_time_minutes,
-                deadline=deadline,
-            ),
-        )
-
     async def set_bean_tech_charge_window(
         self,
         identifier: VehicleIdentifier,
@@ -2139,39 +2115,6 @@ class ChinaClient:
         )
         _decode_g_app_envelope(response, operation=operation)
 
-    async def _set_bean_tech_ac_temperature_locked(
-        self,
-        identifier: VehicleIdentifier,
-        *,
-        temperature: int,
-        operation_time_minutes: int,
-        deadline: _Deadline,
-    ) -> None:
-        operation = "set_bean_tech_ac_temperature"
-        state = self._required_session(operation=operation)
-        vehicle = self._vehicles.get(identifier.value.casefold())
-        if vehicle is None or (vehicle.platform or "").strip().casefold() != "beantech":
-            raise GwmRoutePolicyError(operation=operation)
-        if (
-            isinstance(temperature, bool)
-            or not isinstance(temperature, int)
-            or not 17 <= temperature <= 31
-            or isinstance(operation_time_minutes, bool)
-            or not isinstance(operation_time_minutes, int)
-            or not 5 <= operation_time_minutes <= 30
-        ):
-            raise GwmConfigurationError(operation=operation)
-        response = await self._send_locked(
-            self._build_bean_tech_config_request(
-                state,
-                identifier,
-                temperature=temperature,
-                operation_time_minutes=operation_time_minutes,
-            ),
-            deadline=deadline,
-        )
-        _decode_g_app_envelope(response, operation=operation)
-
     async def _set_bean_tech_charge_window_locked(
         self,
         identifier: VehicleIdentifier,
@@ -2992,50 +2935,6 @@ class ChinaClient:
             service="bean_tech",
             method="POST",
             url=_BEAN_TECH_SUBSCRIBE_URL,
-            headers=headers,
-            body=body.encode("utf-8"),
-        )
-
-    def _build_bean_tech_config_request(
-        self,
-        state: ChinaAuthState,
-        identifier: VehicleIdentifier,
-        *,
-        temperature: int,
-        operation_time_minutes: int,
-    ) -> _ChinaTransportRequest:
-        operation: Literal["set_bean_tech_ac_temperature"] = (
-            "set_bean_tech_ac_temperature"
-        )
-        body = encode_dotnet_json(
-            {
-                "configs": [
-                    {
-                        "controlType": "AIR_CONDITIONER_START",
-                        "cmdBody": {
-                            "allowStartEng": 1,
-                            "operationTime": operation_time_minutes * 60,
-                            "temperature": temperature,
-                        },
-                    }
-                ],
-                "vin": identifier.value,
-            }
-        )
-        headers = self._bean_tech_authenticated_headers(
-            state,
-            identifier,
-            operation=operation,
-            method="POST",
-            path=_NAVINFO_CLIMATE_CONFIG_PATH,
-            parameter="json=" + body,
-        )
-        headers["Content-Type"] = "application/json; charset=UTF-8"
-        return _ChinaTransportRequest(
-            operation=operation,
-            service="bean_tech",
-            method="POST",
-            url=_NAVINFO_CLIMATE_CONFIG_URL,
             headers=headers,
             body=body.encode("utf-8"),
         )
