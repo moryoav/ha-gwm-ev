@@ -454,6 +454,16 @@ class GwmCommandApi:
         )
         return {"enabled": enabled}
 
+    async def async_get_battery_heat_status(self, vin: str) -> dict[str, Any]:
+        """Read the BeanTech battery-heating switch status (gun/active warm)."""
+        self._ensure_china_vehicle_control_available()
+        identifier = _vehicle_identifier(vin, command_name="Battery heating status")
+        switch_status = await self._cloud.async_get_bean_tech_switch_status(identifier)
+        return {
+            "gun_warm": switch_status.get("insertGunKeepWarm") in (1, "1"),
+            "active_warm": switch_status.get("activeKeepWarm") in (1, "1"),
+        }
+
     async def async_set_battery_heating_appointment(
         self,
         vin: str,

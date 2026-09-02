@@ -237,6 +237,16 @@ class _ChinaReadClient(Protocol):
         identifier: VehicleIdentifier,
     ) -> int | None: ...
 
+    async def get_bean_tech_switch_status(
+        self,
+        identifier: VehicleIdentifier,
+    ) -> Mapping[str, object]: ...
+
+    async def get_bean_tech_comfort_modes(
+        self,
+        identifier: VehicleIdentifier,
+    ) -> tuple[Mapping[str, object], ...]: ...
+
     async def get_bean_tech_battery_heating_appointment(
         self,
         identifier: VehicleIdentifier,
@@ -875,6 +885,32 @@ class GwmCloudClient:
             raise GwmRoutePolicyError(operation="get_bean_tech_ac_temperature")
         return await self._async_with_session_renewal(
             lambda: cast(_ChinaReadClient, self._client).get_bean_tech_ac_temperature(
+                identifier
+            )
+        )
+
+    async def async_get_bean_tech_switch_status(
+        self,
+        identifier: VehicleIdentifier,
+    ) -> Mapping[str, object]:
+        """Read the BeanTech switch/status block through the client."""
+        if self.region != REGION_CHINA:
+            raise GwmRoutePolicyError(operation="get_bean_tech_switch_status")
+        return await self._async_with_session_renewal(
+            lambda: cast(_ChinaReadClient, self._client).get_bean_tech_switch_status(
+                identifier
+            )
+        )
+
+    async def async_get_bean_tech_comfort_modes(
+        self,
+        identifier: VehicleIdentifier,
+    ) -> tuple[Mapping[str, object], ...]:
+        """Read the BeanTech one-touch comfort modes through the client."""
+        if self.region != REGION_CHINA:
+            raise GwmRoutePolicyError(operation="get_bean_tech_comfort_modes")
+        return await self._async_with_session_renewal(
+            lambda: cast(_ChinaReadClient, self._client).get_bean_tech_comfort_modes(
                 identifier
             )
         )

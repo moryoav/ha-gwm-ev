@@ -598,6 +598,24 @@ class GwmBatteryHeatSwitch(_OptimisticRemoteSwitch):
         """Return the last locally tracked heating state."""
         return self.coordinator.local_flag(self.vin, self._attr_translation_key)
 
+    async def _async_read_state(self) -> None:
+        """Read the real battery-heat state from ``switch/status``."""
+        try:
+            response = await self._api.async_get_battery_heat_status(self.vin)
+        except (GwmCommandError, GwmClientError) as err:
+            _LOGGER.debug("Could not read battery heating status: %s", err)
+            return
+        key = "gun_warm" if self._turn_on_action == "battery_gun_heat" else "active_warm"
+        self.coordinator.set_local_flag(
+            self.vin, self._attr_translation_key, bool(response.get(key))
+        )
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        if not self.available:
+            return
+        await self._async_read_state()
+
     @property
     def available(self) -> bool:
         return (
@@ -618,7 +636,7 @@ class GwmBatteryHeatSwitch(_OptimisticRemoteSwitch):
         command = await async_call_gwm_api(
             self._api.async_vehicle_control(self.vin, self._turn_off_action)
         )
-        self.coordinator.async_track_command(command)
+        self.coordinator.async_track_command(command, on_terminal=self._async_read_state)
         self.coordinator.set_local_flag(self.vin, self._attr_translation_key, False)
         self._set_optimistic(False)
 
