@@ -988,6 +988,10 @@ async def test_navinfo_climate_start_heat_update_stop_and_result_contracts() -> 
             {"header": {"c": "0"}, "body": {"transactionId": value}}
             for value in transaction_ids
         ],
+        save_climate_config=[
+            {"code": "000000", "data": None},
+            {"code": "000000", "data": None},
+        ],
         get_remote_command_result=[
             {
                 "code": "000000",
@@ -1032,24 +1036,63 @@ async def test_navinfo_climate_start_heat_update_stop_and_result_contracts() -> 
     assert start_payload["header"]["fn"] == "GW.M.SET_AND_OPEN_COMMAND"
     assert start_payload["body"]["cmdCode"] == 6
     assert start_payload["body"]["airParams"] == {
+        "engineControl": 1,
         "runTime": 10,
         "temperature": 21,
-        "coldSwitch": "1",
-        "heatSwitch": "0",
-        "engineControl": 0,
     }
-    assert heat_payload["header"]["fn"] == "GW.M.SET_AIR_PRM"
-    assert "cmdCode" not in heat_payload["body"]
+    assert heat_payload["header"]["fn"] == "GW.M.SET_AND_OPEN_COMMAND"
+    assert heat_payload["body"]["cmdCode"] == 6
     assert heat_payload["body"]["airParams"] == {
+        "engineControl": 1,
         "runTime": 20,
         "temperature": 26,
-        "coldSwitch": "0",
-        "heatSwitch": "1",
-        "engineControl": 0,
     }
     assert stop_payload["header"]["fn"] == "GW.M.SEND_COMMON_COMMAND"
     assert stop_payload["body"]["cmdCode"] == 7
     assert "airParams" not in stop_payload["body"]
+    paired_operations = [
+        request.operation
+        for request in transport.calls
+        if request.operation in {"send_climate_command", "save_climate_config"}
+    ]
+    assert paired_operations == [
+        "send_climate_command",
+        "save_climate_config",
+        "send_climate_command",
+        "save_climate_config",
+        "send_climate_command",
+    ]
+    config_requests = [
+        request for request in transport.calls if request.operation == "save_climate_config"
+    ]
+    assert [urlsplit(request.url).path for request in config_requests] == [
+        "/app-api/api/v3.0/vehicle/remote-ctrl/config",
+        "/app-api/api/v3.0/vehicle/remote-ctrl/config",
+    ]
+    assert [json.loads(request.body or b"null") for request in config_requests] == [
+        {
+            "configs": {
+                "cmdBody": {
+                    "allowStartEng": 1,
+                    "operationTime": 600,
+                    "temperature": 21,
+                },
+                "controlType": "AIR_CONDITIONER_START",
+            },
+            "vin": VIN,
+        },
+        {
+            "configs": {
+                "cmdBody": {
+                    "allowStartEng": 1,
+                    "operationTime": 1200,
+                    "temperature": 26,
+                },
+                "controlType": "AIR_CONDITIONER_START",
+            },
+            "vin": VIN,
+        },
+    ]
 
     result_request = transport.calls[-1]
     assert result_request.service == "bean_tech"
@@ -1060,6 +1103,50 @@ async def test_navinfo_climate_start_heat_update_stop_and_result_contracts() -> 
     assert results[0].command_id == transaction_ids[1]
     assert results[0].result_code == "2000"
     assert results[0].result_message == "Command is still running"
+
+
+@pytest.mark.asyncio
+async def test_navinfo_climate_config_failure_preserves_accepted_command(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    transport = _FakeTransport(
+        acquire_vehicles=[FIXTURE["responses"]["discovery"]],
+        send_climate_command=[
+            {"header": {"c": "0"}, "body": {"transactionId": "TX-ACCEPTED"}}
+        ],
+        save_climate_config=[GwmNetworkError(operation="send_climate_command")],
+    )
+    client = _client(transport)
+    assert isinstance(
+        await client.authenticate(_credentials(), state=_complete_state()),
+        ChinaAuthenticated,
+    )
+
+    accepted = await client.send_climate_command(
+        ClimateCommand(VehicleIdentifier(VIN), "cool", 22, 10)
+    )
+
+    assert accepted.command_id == "TX-ACCEPTED"
+    assert "companion configuration request failed" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_navinfo_climate_rejects_temperatures_outside_captured_range() -> None:
+    transport = _FakeTransport(acquire_vehicles=[FIXTURE["responses"]["discovery"]])
+    client = _client(transport)
+    assert isinstance(
+        await client.authenticate(_credentials(), state=_complete_state()),
+        ChinaAuthenticated,
+    )
+    before = len(transport.calls)
+
+    for temperature in (16, 32):
+        with pytest.raises(GwmConfigurationError):
+            await client.send_climate_command(
+                ClimateCommand(VehicleIdentifier(VIN), "cool", temperature, 10)
+            )
+
+    assert len(transport.calls) == before
 
 
 @pytest.mark.asyncio
@@ -1234,6 +1321,8 @@ async def test_navinfo_extended_vehicle_controls_use_exact_app_command_shapes() 
         "sunroof_tilt",
         "sunroof_half",
         "sunroof_full",
+        "cabin_purge",
+        "force_refresh",
     )
     transaction_ids = tuple(f"TX-CONTROL-{index}" for index in range(len(actions)))
     transport = _FakeTransport(
@@ -1270,9 +1359,10 @@ async def test_navinfo_extended_vehicle_controls_use_exact_app_command_shapes() 
     payloads = [_auto_ai_payload(request) for request in requests]
     assert [payload["header"]["fn"] for payload in payloads] == [
         "GW.M.SET_AND_OPEN_COMMAND",
-        *("GW.M.SEND_COMMON_COMMAND" for _ in range(10)),
+        *("GW.M.SEND_COMMON_COMMAND" for _ in range(11)),
+        "GW.M.REFRESH_VEHICLE_STATE",
     ]
-    assert [payload["body"]["cmdCode"] for payload in payloads] == [
+    assert [payload["body"].get("cmdCode") for payload in payloads] == [
         15,
         16,
         19,
@@ -1284,13 +1374,16 @@ async def test_navinfo_extended_vehicle_controls_use_exact_app_command_shapes() 
         29,
         29,
         29,
+        34,
+        None,
     ]
     assert payloads[0]["body"]["engineParams"] == {"runTime": 20}
     assert [payloads[index]["body"]["openAngle"] for index in (8, 9, 10)] == [
-        3,
-        2,
-        1,
+        11,
+        5,
+        10,
     ]
+    assert payloads[-1]["body"] == {"vin": VIN}
 
 
 @pytest.mark.asyncio

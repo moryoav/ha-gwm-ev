@@ -437,7 +437,7 @@ def test_result_selection_preserves_russian_and_default_semantics() -> None:
 
 def test_china_vehicle_control_contract_is_closed_and_platform_filtered() -> None:
     identifier = VehicleIdentifier(_fixture()["vin"])
-    assert len(NAVINFO_CHINA_VEHICLE_CONTROL_ACTIONS) == 11
+    assert len(NAVINFO_CHINA_VEHICLE_CONTROL_ACTIONS) == 13
     assert {
         "remote_start",
         "remote_stop",

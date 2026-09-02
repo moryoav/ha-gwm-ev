@@ -91,11 +91,15 @@ class GwmClimate(GwmEntity, ClimateEntity):
     @property
     def min_temp(self) -> float:
         """Return minimum temperature."""
+        if self.coordinator.region == "cn":
+            return 17
         return self.climate.get("min_temperature_c", 16)
 
     @property
     def max_temp(self) -> float:
         """Return maximum temperature."""
+        if self.coordinator.region == "cn":
+            return 31
         return self.climate.get("max_temperature_c", 32)
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:

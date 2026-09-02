@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import math
 import re
 import secrets
@@ -111,6 +112,10 @@ _BEAN_TECH_STATUS_PATH = "/app-api/api/v2.0/vehicle/getLastStatus"
 _BEAN_TECH_STATUS_URL = _BEAN_TECH_BASE.rstrip("/") + _BEAN_TECH_STATUS_PATH
 _NAVINFO_RESULT_PATH = "/app-api/api/v3.0/vehicle/remote-ctrl/result"
 _NAVINFO_RESULT_URL = _BEAN_TECH_BASE.rstrip("/") + _NAVINFO_RESULT_PATH
+_NAVINFO_CLIMATE_CONFIG_PATH = "/app-api/api/v3.0/vehicle/remote-ctrl/config"
+_NAVINFO_CLIMATE_CONFIG_URL = (
+    _BEAN_TECH_BASE.rstrip("/") + _NAVINFO_CLIMATE_CONFIG_PATH
+)
 _BEAN_TECH_SEND_PATH = "/app-api/api/v1.0/vehicle/T5/sendCmd"
 _BEAN_TECH_SEND_URL = _BEAN_TECH_BASE.rstrip("/") + _BEAN_TECH_SEND_PATH
 _BEAN_TECH_RESULT_PATH = "/app-api/api/v1.0/vehicle/getRemoteCtrlResultT5"
@@ -118,6 +123,7 @@ _BEAN_TECH_RESULT_URL = _BEAN_TECH_BASE.rstrip("/") + _BEAN_TECH_RESULT_PATH
 _AUTO_AI_LOGIN_URL = _G_APP_BASE + "tsp/v1/proxy/navinfo/GW.M.APP_LOGIN"
 _DISCOVERY_URL = _G_APP_BASE + "gcar/v1/app/android/vehicle/query-vehicle-list"
 _SOURCE_APP_VERSION = "2.1.5"
+_LOGGER = logging.getLogger(__name__)
 _SOURCE_APP_CODE = "2150"
 _OFFICIAL_USER_AGENT = "okhttp/4.2.2"
 _DISCOVERY_BODY = b'{"vehicleVersion":13}'
@@ -1282,6 +1288,8 @@ class ChinaClient:
             raise GwmRoutePolicyError(operation=operation)
         if state.auto_ai_token_id is None or state.auto_ai_user_id is None:
             raise GwmAuthenticationError(operation=operation)
+        if command.mode != "off" and not 17 <= command.temperature <= 31:
+            raise GwmConfigurationError(operation=operation)
         body: dict[str, object] = {
             "flag": 1,
             "signStr": hashlib.md5(
@@ -1296,15 +1304,12 @@ class ChinaClient:
             function = "GW.M.SEND_COMMON_COMMAND"
             body["cmdCode"] = 7
         else:
-            function = "GW.M.SET_AIR_PRM" if command.currently_on else "GW.M.SET_AND_OPEN_COMMAND"
-            if not command.currently_on:
-                body["cmdCode"] = 6
+            function = "GW.M.SET_AND_OPEN_COMMAND"
+            body["cmdCode"] = 6
             body["airParams"] = {
+                "engineControl": 1,
                 "runTime": command.operation_time_minutes,
                 "temperature": command.temperature,
-                "coldSwitch": "1" if command.mode == "cool" else "0",
-                "heatSwitch": "1" if command.mode == "heat" else "0",
-                "engineControl": 0,
             }
         response = await self._send_locked(
             self._build_auto_ai_request(
@@ -1327,11 +1332,32 @@ class ChinaClient:
                 or any(ord(character) < 0x21 or ord(character) > 0x7E for character in command_id)
             ):
                 raise ValueError("command_acceptance_invalid")
-            return RemoteCommandAcceptance(command_id)
+            acceptance = RemoteCommandAcceptance(command_id)
         except GwmClientError:
             raise
         except (RecursionError, OverflowError, TypeError, ValueError):
             raise GwmSchemaError(operation=operation) from None
+        if command.mode != "off":
+            try:
+                config_response = await self._send_locked(
+                    self._build_navinfo_climate_config_request(
+                        state,
+                        command.identifier,
+                        operation_time_minutes=command.operation_time_minutes,
+                        temperature=command.temperature,
+                    ),
+                    deadline=deadline,
+                )
+                _decode_g_app_envelope(config_response, operation=operation)
+            except GwmClientError as err:
+                # The physical command already has a provider transaction ID. Do not
+                # discard that ID, because the HA command journal must still poll it.
+                _LOGGER.warning(
+                    "NavInfo climate command was accepted but its companion "
+                    "configuration request failed (%s)",
+                    type(err).__name__,
+                )
+        return acceptance
 
     async def _send_lock_window_command_locked(
         self,
@@ -1460,27 +1486,31 @@ class ChinaClient:
 
         if state.auto_ai_token_id is None or state.auto_ai_user_id is None:
             raise GwmAuthenticationError(operation=operation)
-        body: dict[str, object] = {
-            "flag": 1,
-            "signStr": hashlib.md5(
-                (command.identifier.value + state.auto_ai_token_id).encode("utf-8"),
-                usedforsecurity=False,
-            ).hexdigest(),
-            "userId": state.auto_ai_user_id,
-            "userType": "0",
-            "vin": command.identifier.value,
-        }
         command_code, function = _navinfo_vehicle_control(command)
-        body["cmdCode"] = command_code
+        if command.action == "force_refresh":
+            body: dict[str, object] = {"vin": command.identifier.value}
+        else:
+            body = {
+                "flag": 1,
+                "signStr": hashlib.md5(
+                    (command.identifier.value + state.auto_ai_token_id).encode("utf-8"),
+                    usedforsecurity=False,
+                ).hexdigest(),
+                "userId": state.auto_ai_user_id,
+                "userType": "0",
+                "vin": command.identifier.value,
+            }
+        if command_code is not None:
+            body["cmdCode"] = command_code
         if command.action == "remote_start":
             body["engineParams"] = {
                 "runTime": command.run_time_minutes or 15,
             }
         elif command.action in {"sunroof_full", "sunroof_half", "sunroof_tilt"}:
             body["openAngle"] = {
-                "sunroof_full": 1,
-                "sunroof_half": 2,
-                "sunroof_tilt": 3,
+                "sunroof_full": 10,
+                "sunroof_half": 5,
+                "sunroof_tilt": 11,
             }[command.action]
         response = await self._send_locked(
             self._build_auto_ai_request(
@@ -1870,6 +1900,46 @@ class ChinaClient:
             service="bean_tech",
             method="POST",
             url=_BEAN_TECH_SEND_URL,
+            headers=headers,
+            body=body.encode("utf-8"),
+        )
+
+    def _build_navinfo_climate_config_request(
+        self,
+        state: ChinaAuthState,
+        identifier: VehicleIdentifier,
+        *,
+        operation_time_minutes: int,
+        temperature: int,
+    ) -> _ChinaTransportRequest:
+        operation: Literal["save_climate_config"] = "save_climate_config"
+        body = encode_dotnet_json(
+            {
+                "configs": {
+                    "cmdBody": {
+                        "allowStartEng": 1,
+                        "operationTime": operation_time_minutes * 60,
+                        "temperature": temperature,
+                    },
+                    "controlType": "AIR_CONDITIONER_START",
+                },
+                "vin": identifier.value,
+            }
+        )
+        headers = self._bean_tech_authenticated_headers(
+            state,
+            identifier,
+            operation=operation,
+            method="POST",
+            path=_NAVINFO_CLIMATE_CONFIG_PATH,
+            parameter="json=" + body,
+        )
+        headers["Content-Type"] = "application/json; charset=UTF-8"
+        return _ChinaTransportRequest(
+            operation=operation,
+            service="bean_tech",
+            method="POST",
+            url=_NAVINFO_CLIMATE_CONFIG_URL,
             headers=headers,
             body=body.encode("utf-8"),
         )
@@ -2474,7 +2544,7 @@ def _bean_tech_lock_window_control(
 
 def _navinfo_vehicle_control(
     command: ChinaVehicleControlCommand,
-) -> tuple[int, str]:
+) -> tuple[int | None, str]:
     command_codes = {
         "remote_start": 15,
         "remote_stop": 16,
@@ -2487,13 +2557,19 @@ def _navinfo_vehicle_control(
         "sunroof_tilt": 29,
         "sunroof_half": 29,
         "sunroof_full": 29,
+        "cabin_purge": 34,
+        "force_refresh": None,
     }
     return (
         command_codes[command.action],
         (
             "GW.M.SET_AND_OPEN_COMMAND"
             if command.action == "remote_start"
-            else "GW.M.SEND_COMMON_COMMAND"
+            else (
+                "GW.M.REFRESH_VEHICLE_STATE"
+                if command.action == "force_refresh"
+                else "GW.M.SEND_COMMON_COMMAND"
+            )
         ),
     )
 

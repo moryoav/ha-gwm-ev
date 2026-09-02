@@ -264,7 +264,9 @@
       "close_sunroof": { "name": "关闭天窗" },
       "tilt_sunroof": { "name": "天窗翘起" },
       "half_open_sunroof": { "name": "天窗半开" },
-      "fully_open_sunroof": { "name": "天窗全开" }
+      "fully_open_sunroof": { "name": "天窗全开" },
+      "cabin_purge": { "name": "座舱净化" },
+      "force_refresh": { "name": "强制刷新" }
     },
     "switch": {
       "front_defroster": { "name": "前除霜" },

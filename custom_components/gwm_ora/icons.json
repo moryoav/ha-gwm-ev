@@ -65,6 +65,12 @@
       },
       "fully_open_sunroof": {
         "default": "mdi:car-select"
+      },
+      "cabin_purge": {
+        "default": "mdi:air-purifier"
+      },
+      "force_refresh": {
+        "default": "mdi:refresh"
       }
     },
     "climate": {

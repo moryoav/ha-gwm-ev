@@ -134,12 +134,18 @@ class GwmCommandApi:
                 if self._cloud.region == "cn"
                 else "A/C mode must be 'cool' or 'off' in this region"
             )
+        minimum_temperature, maximum_temperature = (
+            (17, 31) if self._cloud.region == "cn" else (16, 32)
+        )
         if temperature is not None and (
             isinstance(temperature, bool)
             or not isinstance(temperature, int)
-            or not 16 <= temperature <= 32
+            or not minimum_temperature <= temperature <= maximum_temperature
         ):
-            raise GwmCommandError("A/C temperature must be a whole number from 16 to 32")
+            raise GwmCommandError(
+                "A/C temperature must be a whole number from "
+                f"{minimum_temperature} to {maximum_temperature}"
+            )
         if operation_time_minutes is not None and (
             isinstance(operation_time_minutes, bool)
             or not isinstance(operation_time_minutes, int)
@@ -185,6 +191,8 @@ class GwmCommandApi:
                 str(temperature) if temperature is not None else stored_temperature,
                 DEFAULT_TEMPERATURE_C,
             )
+        if self._cloud.region == "cn" and not 17 <= effective_temperature <= 31:
+            effective_temperature = DEFAULT_TEMPERATURE_C
         effective_operation_time = (
             operation_time_minutes
             if operation_time_minutes is not None
@@ -825,6 +833,8 @@ _CHINA_VEHICLE_CONTROL_NAMES = {
     "sunroof_tilt": "Sunroof tilt",
     "sunroof_half": "Sunroof half open",
     "sunroof_full": "Sunroof fully open",
+    "cabin_purge": "Cabin purge",
+    "force_refresh": "Force refresh",
 }
 
 

@@ -23,6 +23,8 @@ CHINA_REMOTE_BUTTONS: tuple[tuple[str, str], ...] = (
     ("sunroof_tilt", "tilt_sunroof"),
     ("sunroof_half", "half_open_sunroof"),
     ("sunroof_full", "fully_open_sunroof"),
+    ("cabin_purge", "cabin_purge"),
+    ("force_refresh", "force_refresh"),
 )
 
 BEANTECH_REMOTE_ACTIONS = {

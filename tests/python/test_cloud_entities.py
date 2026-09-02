@@ -339,6 +339,9 @@ async def test_task19_china_buttons_are_capability_and_platform_filtered() -> No
         "horn",
         "sound_horn",
     ).available
+    navinfo_climate = GwmClimate(api, coordinator, "SYNTHETIC-NAVINFO")
+    assert navinfo_climate.min_temp == 17
+    assert navinfo_climate.max_temp == 31
 
 
 @pytest.mark.asyncio

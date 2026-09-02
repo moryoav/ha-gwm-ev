@@ -6,6 +6,18 @@ This project follows semantic versioning. HACS uses the latest GitHub release ta
 
 ## [Unreleased]
 
+## [0.16.19] - 2026-09-02
+
+### Added
+
+- I added the captured NavInfo cabin-purge and force-refresh controls for mainland-China vehicles.
+
+### Fixed
+
+- I corrected the NavInfo sunroof positions to use the official app's confirmed tilt, half-open, and fully-open angle values.
+- I matched the official NavInfo climate start contract: every start or temperature change now uses the start function, command code `6`, engine control enabled, and the confirmed 17 to 31 C range.
+- I added the official app's signed companion climate-configuration request after each accepted NavInfo climate start. If that follow-up request fails, the integration preserves the already accepted provider command ID so Home Assistant can continue tracking the physical command safely.
+
 ## [0.16.18] - 2026-09-01
 
 ### Fixed

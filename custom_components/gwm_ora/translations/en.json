@@ -264,7 +264,9 @@
       "close_sunroof": { "name": "Close sunroof" },
       "tilt_sunroof": { "name": "Tilt sunroof" },
       "half_open_sunroof": { "name": "Half open sunroof" },
-      "fully_open_sunroof": { "name": "Fully open sunroof" }
+      "fully_open_sunroof": { "name": "Fully open sunroof" },
+      "cabin_purge": { "name": "Cabin purge" },
+      "force_refresh": { "name": "Force refresh" }
     },
     "switch": {
       "front_defroster": { "name": "Front defroster" },

@@ -23,6 +23,8 @@ type ChinaVehicleControlAction = Literal[
     "sunroof_tilt",
     "sunroof_half",
     "sunroof_full",
+    "cabin_purge",
+    "force_refresh",
 ]
 type RemoteCommandState = Literal["pending", "completed", "failed"]
 
@@ -39,6 +41,8 @@ NAVINFO_CHINA_VEHICLE_CONTROL_ACTIONS: frozenset[ChinaVehicleControlAction] = fr
         "sunroof_tilt",
         "sunroof_half",
         "sunroof_full",
+        "cabin_purge",
+        "force_refresh",
     }
 )
 BEANTECH_CHINA_VEHICLE_CONTROL_ACTIONS: frozenset[ChinaVehicleControlAction] = frozenset(

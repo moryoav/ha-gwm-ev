@@ -61,6 +61,7 @@ type _ChinaOperation = Literal[
     "get_charging_plan",
     "set_charging_plan",
     "send_climate_command",
+    "save_climate_config",
     "send_lock_command",
     "send_close_windows_command",
     "send_vehicle_control_command",
@@ -82,6 +83,10 @@ _NAVINFO_RESULT_URL = (
     "https://gw-app-gateway.gwmapp-h.com/app-api/api/v3.0/vehicle/remote-ctrl/result"
 )
 _NAVINFO_RESULT_PATH = "/app-api/api/v3.0/vehicle/remote-ctrl/result"
+_NAVINFO_CLIMATE_CONFIG_URL = (
+    "https://gw-app-gateway.gwmapp-h.com/app-api/api/v3.0/vehicle/remote-ctrl/config"
+)
+_NAVINFO_CLIMATE_CONFIG_PATH = "/app-api/api/v3.0/vehicle/remote-ctrl/config"
 _BEAN_TECH_SEND_URL = (
     "https://gw-app-gateway.gwmapp-h.com/app-api/api/v1.0/vehicle/T5/sendCmd"
 )
@@ -271,6 +276,8 @@ class _ChinaTransportRequest:
             _validate_charging_plan_request(self, copied)
         elif self.operation == "send_climate_command":
             _validate_climate_command_request(self, copied)
+        elif self.operation == "save_climate_config":
+            _validate_navinfo_climate_config_request(self, copied)
         elif self.operation == "send_lock_command":
             _validate_lock_window_command_request(self, copied, command_kind="lock")
         elif self.operation == "send_close_windows_command":
@@ -980,7 +987,6 @@ def _validate_climate_command_request(
         for function, variant in (
             ("GW.M.SEND_COMMON_COMMAND", "off"),
             ("GW.M.SET_AND_OPEN_COMMAND", "start"),
-            ("GW.M.SET_AIR_PRM", "update"),
         )
     )
     if (
@@ -990,6 +996,62 @@ def _validate_climate_command_request(
         or set(headers) != _STATUS_HEADERS
         or not _valid_auto_ai_headers(headers, token_required=True)
         or not valid_route
+    ):
+        raise ValueError("route_invalid")
+
+
+def _validate_navinfo_climate_config_request(
+    request: _ChinaTransportRequest,
+    headers: Mapping[str, str],
+) -> None:
+    raw_body = _utf8_body(request.body)
+    body = _decode_wire_object(raw_body) if raw_body is not None else None
+    configs = body.get("configs") if isinstance(body, Mapping) else None
+    command_body = configs.get("cmdBody") if isinstance(configs, Mapping) else None
+    operation_time = (
+        command_body.get("operationTime")
+        if isinstance(command_body, Mapping)
+        else None
+    )
+    temperature = (
+        command_body.get("temperature")
+        if isinstance(command_body, Mapping)
+        else None
+    )
+    if (
+        request.service != "bean_tech"
+        or request.method != "POST"
+        or request.url != _NAVINFO_CLIMATE_CONFIG_URL
+        or raw_body is None
+        or not isinstance(body, Mapping)
+        or list(body) != ["configs", "vin"]
+        or not isinstance(configs, Mapping)
+        or list(configs) != ["cmdBody", "controlType"]
+        or not isinstance(command_body, Mapping)
+        or list(command_body) != ["allowStartEng", "operationTime", "temperature"]
+        or command_body.get("allowStartEng") != 1
+        or isinstance(operation_time, bool)
+        or not isinstance(operation_time, int)
+        or not 300 <= operation_time <= 1800
+        or operation_time % 60 != 0
+        or isinstance(temperature, bool)
+        or not isinstance(temperature, int)
+        or not 17 <= temperature <= 31
+        or configs.get("controlType") != "AIR_CONDITIONER_START"
+        or _VIN.fullmatch(str(body.get("vin", ""))) is None
+        or body.get("vin") != headers.get("vin")
+        or encode_dotnet_json(body) != raw_body
+        or set(headers) != _BEAN_TECH_COMMAND_HEADERS
+        or headers.get("Content-Type") != "application/json; charset=UTF-8"
+        or not _valid_bean_tech_authenticated_headers(headers)
+        or headers.get("bt-auth-sign")
+        != bean_tech_sign(
+            "POST",
+            _NAVINFO_CLIMATE_CONFIG_PATH,
+            headers["bt-auth-nonce"],
+            headers["bt-auth-timestamp"],
+            "json=" + raw_body,
+        )
     ):
         raise ValueError("route_invalid")
 
@@ -1090,9 +1152,10 @@ def _validate_vehicle_control_command_request(
     request: _ChinaTransportRequest,
     headers: Mapping[str, str],
 ) -> None:
-    variants: tuple[tuple[str, Literal["common", "engine_start"]], ...] = (
+    variants: tuple[tuple[str, Literal["common", "engine_start", "refresh"]], ...] = (
         ("GW.M.SEND_COMMON_COMMAND", "common"),
         ("GW.M.SET_AND_OPEN_COMMAND", "engine_start"),
+        ("GW.M.REFRESH_VEHICLE_STATE", "refresh"),
     )
     valid_auto_ai = (
         request.service == "auto_ai"
@@ -1124,8 +1187,10 @@ def _validate_vehicle_control_command_request(
 
 def _valid_vehicle_control_body(
     body: Mapping[str, object],
-    variant: Literal["common", "engine_start"],
+    variant: Literal["common", "engine_start", "refresh"],
 ) -> bool:
+    if variant == "refresh":
+        return list(body) == ["vin"] and _VIN.fullmatch(str(body.get("vin", ""))) is not None
     common_prefix = (
         body.get("flag") == 1
         and _LOWER_HEX_32.fullmatch(str(body.get("signStr", ""))) is not None
@@ -1167,16 +1232,16 @@ def _valid_vehicle_control_body(
                 "cmdCode",
                 "openAngle",
             ]
-            and body.get("openAngle") in {1, 2, 3}
+            and body.get("openAngle") in {5, 10, 11}
         )
     return (
         list(body) == ["flag", "signStr", "userId", "userType", "vin", "cmdCode"]
-        and body.get("cmdCode") in {5, 16, 17, 18, 19, 20, 28}
+        and body.get("cmdCode") in {5, 16, 17, 18, 19, 20, 28, 34}
     )
 
 
 def _vehicle_control_body_validator(
-    variant: Literal["common", "engine_start"],
+    variant: Literal["common", "engine_start", "refresh"],
 ) -> Callable[[Mapping[str, object]], bool]:
     def validate(body: Mapping[str, object]) -> bool:
         return _valid_vehicle_control_body(body, variant)
@@ -1511,36 +1576,26 @@ def _valid_climate_body(body: Mapping[str, object], variant: str) -> bool:
         return False
     if variant == "off":
         return list(body) == [*base_keys, "cmdCode"] and body.get("cmdCode") == 7
-    if variant not in {"start", "update"}:
+    if variant != "start":
         return False
     expected_keys = [
         *base_keys,
-        *(("cmdCode",) if variant == "start" else ()),
+        "cmdCode",
         "airParams",
     ]
-    if list(body) != expected_keys or (variant == "start" and body.get("cmdCode") != 6):
+    if list(body) != expected_keys or body.get("cmdCode") != 6:
         return False
     air = body.get("airParams")
     return (
         isinstance(air, dict)
-        and list(air)
-        == [
-            "runTime",
-            "temperature",
-            "coldSwitch",
-            "heatSwitch",
-            "engineControl",
-        ]
+        and list(air) == ["engineControl", "runTime", "temperature"]
+        and air.get("engineControl") == 1
         and isinstance(air.get("runTime"), int)
         and not isinstance(air.get("runTime"), bool)
         and 5 <= air["runTime"] <= 30
         and isinstance(air.get("temperature"), int)
         and not isinstance(air.get("temperature"), bool)
-        and 16 <= air["temperature"] <= 32
-        and air.get("coldSwitch") in {"0", "1"}
-        and air.get("heatSwitch") in {"0", "1"}
-        and air.get("coldSwitch") != air.get("heatSwitch")
-        and air.get("engineControl") == 0
+        and 17 <= air["temperature"] <= 31
     )
 
 

@@ -895,6 +895,21 @@ async def test_china_no_pin_lifecycle_journals_heat_lock_window_and_extended_con
 
 
 @pytest.mark.asyncio
+async def test_china_climate_uses_captured_temperature_range(tmp_path: Path) -> None:
+    clock = _Clock()
+    cloud = _Cloud(currently_on=False)
+    api, _store, _credentials_value = await _china_api(tmp_path, cloud, clock)
+
+    for temperature in (16, 32):
+        with pytest.raises(GwmCommandError, match="from 17 to 31"):
+            await api.async_set_climate(_VIN, temperature=temperature)
+
+    saved = await api.async_set_climate(_VIN, temperature=17)
+    assert saved["state"] == "completed"
+    assert cloud.updated == [(17, 15)]
+
+
+@pytest.mark.asyncio
 async def test_command_context_region_mismatch_fails_before_any_write(
     tmp_path: Path,
 ) -> None:
