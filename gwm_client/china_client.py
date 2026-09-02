@@ -2031,9 +2031,6 @@ class ChinaClient:
             headers=headers,
             body=body.encode("utf-8"),
         )
-            headers=headers,
-            body=body.encode("utf-8"),
-        )
 
     def _build_bean_tech_result_request(
         self,
