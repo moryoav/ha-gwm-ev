@@ -4,108 +4,110 @@ All notable changes to this project will be documented in this file.
 
 This project follows semantic versioning. HACS uses the latest GitHub release tag as the remote version, so every released version must have both a tag and a GitHub release.
 
+<!-- Use direct release-note language. Do not begin changelog bullets with first-person "I". -->
+
 ## [Unreleased]
 
 ## [0.16.19] - 2026-09-02
 
 ### Added
 
-- I added the captured NavInfo cabin-purge and force-refresh controls for mainland-China vehicles.
+- Added the captured NavInfo cabin-purge and force-refresh controls for mainland-China vehicles.
 
 ### Fixed
 
-- I corrected the NavInfo sunroof positions to use the official app's confirmed tilt, half-open, and fully-open angle values.
-- I matched the official NavInfo climate start contract: every start or temperature change now uses the start function, command code `6`, engine control enabled, and the confirmed 17 to 31 C range.
-- I added the official app's signed companion climate-configuration request after each accepted NavInfo climate start. If that follow-up request fails, the integration preserves the already accepted provider command ID so Home Assistant can continue tracking the physical command safely.
+- Corrected the NavInfo sunroof positions to use the official app's confirmed tilt, half-open, and fully-open angle values.
+- Matched the official NavInfo climate start contract: every start or temperature change now uses the start function, command code `6`, engine control enabled, and the confirmed 17 to 31 C range.
+- Added the official app's signed companion climate-configuration request after each accepted NavInfo climate start. If that follow-up request fails, the integration preserves the already accepted provider command ID so Home Assistant can continue tracking the physical command safely.
 
 ## [0.16.18] - 2026-09-01
 
 ### Fixed
 
-- I corrected the overseas air-circulation request so its confirmed cabin-clean fields are sent directly under command flag `0x11`. This removes the invalid extra wrapper that GWM rejected with API code `550002`.
-- I added privacy-safe service-call logging for the client error type, category, operation, API code, HTTP status, and retry delay. Request bodies, credentials, tokens, VINs, and provider descriptions remain excluded.
+- Corrected the overseas air-circulation request so its confirmed cabin-clean fields are sent directly under command flag `0x11`. This removes the invalid extra wrapper that GWM rejected with API code `550002`.
+- Added privacy-safe service-call logging for the client error type, category, operation, API code, HTTP status, and retry delay. Request bodies, credentials, tokens, VINs, and provider descriptions remain excluded.
 
 ## [0.16.17] - 2026-09-01
 
 ### Added
 
-- I added BeanTech battery-pack current and voltage sensors using the read-only fields researched in the retired repository's PR #27. These values remain unknown when the vehicle does not report them, which is expected while some vehicles are parked and powered off.
+- Added BeanTech battery-pack current and voltage sensors using the read-only fields researched in the retired repository's PR #27. These values remain unknown when the vehicle does not report them, which is expected while some vehicles are parked and powered off.
 
 ### Changed
 
-- I now expose the existing BeanTech power value as an enabled measurement sensor in kilowatts. Battery current, voltage, and power remain isolated to mainland-China BeanTech vehicles.
+- Exposed the existing BeanTech power value as an enabled measurement sensor in kilowatts. Battery current, voltage, and power remain isolated to mainland-China BeanTech vehicles.
 
 ## [0.16.16] - 2026-08-31
 
 ### Added
 
-- I added a capability-gated **Front defroster** switch for overseas vehicles that report front-defroster status. It uses the official app's 15-minute start request, supports an explicit stop request, and follows the existing restart-safe command journal and result polling.
-- I added a capability-gated **Start air circulation** button for overseas vehicles that report the matching status. It runs the official app's fixed 60-second external-air cabin-clean action and follows the same command journal and result polling.
+- Added a capability-gated **Front defroster** switch for overseas vehicles that report front-defroster status. It uses the official app's 15-minute start request, supports an explicit stop request, and follows the existing restart-safe command journal and result polling.
+- Added a capability-gated **Start air circulation** button for overseas vehicles that report the matching status. It runs the official app's fixed 60-second external-air cabin-clean action and follows the same command journal and result polling.
 
 ## [0.16.15] - 2026-08-31
 
 ### Fixed
 
-- I now prefer Home Assistant's supported public `TrackerEntity` API, with a compatibility fallback for older supported Home Assistant releases. This shared platform fix applies to every region and removes the warning about the deprecated alias being removed in Home Assistant Core 2027.6.
+- Switched to Home Assistant's supported public `TrackerEntity` API, with a compatibility fallback for older supported Home Assistant releases. This shared platform fix applies to every region and removes the warning about the deprecated alias being removed in Home Assistant Core 2027.6.
 
 ## [0.16.14] - 2026-08-31
 
 ### Fixed
 
-- I added automatic access-token renewal for EU, legacy ANZ, and Russia, and kept the existing current ANZ renewal path. A rejected access token now triggers one serialized refresh, saves both rotated tokens before retrying the interrupted request, and asks for reauthentication only when GWM rejects the refresh.
-- I now recognize GWM's `550004` expired-session response during startup and normal polling. This fixes EU entries that previously stayed in setup retry after their 24-hour access token expired.
-- I restored the stable `deviceId` in the current ANZ refresh request to match the working add-on contract. This addresses the `550002` refresh error reported with the current GWM ANZ authentication method.
+- Added automatic access-token renewal for EU, legacy ANZ, and Russia, and kept the existing current ANZ renewal path. A rejected access token now triggers one serialized refresh, saves both rotated tokens before retrying the interrupted request, and asks for reauthentication only when GWM rejects the refresh.
+- Recognized GWM's `550004` expired-session response during startup and normal polling. This fixes EU entries that previously stayed in setup retry after their 24-hour access token expired.
+- Restored the stable `deviceId` in the current ANZ refresh request to match the working add-on contract. This addresses the `550002` refresh error reported with the current GWM ANZ authentication method.
 
 ## [0.16.13] - 2026-08-31
 
 ### Fixed
 
-- I added automatic session renewal for the current GWM ANZ app login method. When GWM reports an expired access token, the integration now uses the official app's native refresh route, atomically rotates and privately persists both returned tokens, and retries the interrupted poll or command once.
-- I serialize ANZ renewal so concurrent requests cannot rotate the same refresh token more than once. If the account has no usable refresh token, GWM rejects renewal, or a renewed session is immediately rejected again, Home Assistant now requests reauthentication instead of retrying the expired session indefinitely.
+- Added automatic session renewal for the current GWM ANZ app login method. When GWM reports an expired access token, the integration now uses the official app's native refresh route, atomically rotates and privately persists both returned tokens, and retries the interrupted poll or command once.
+- Serialized ANZ renewal so concurrent requests cannot rotate the same refresh token more than once. If the account has no usable refresh token, GWM rejects renewal, or a renewed session is immediately rejected again, Home Assistant now requests reauthentication instead of retrying the expired session indefinitely.
 
 ## [0.16.12] - 2026-08-31
 
 ### Fixed
 
-- I separated current ANZ authentication signing from native vehicle-read signing. Current-v2 sessions keep their full device ID, access token, `gwId`, and current app headers, while discovery, status, and basics reads now use the official app's native 16-character nonce and regional query canonicalization. This addresses the exact `607099` signature rejection reported at `getLastStatus` after login and vehicle discovery had already succeeded.
+- Separated current ANZ authentication signing from native vehicle-read signing. Current-v2 sessions keep their full device ID, access token, `gwId`, and current app headers, while discovery, status, and basics reads now use the official app's native 16-character nonce and regional query canonicalization. This addresses the exact `607099` signature rejection reported at `getLastStatus` after login and vehicle discovery had already succeeded.
 
 ## [0.16.11] - 2026-08-31
 
 ### Changed
 
-- I added privacy-safe metadata for vehicle refresh failures and show GWM's sanitized API result code in Home Assistant's failed-setup message. This lets the ANZ current-app beta distinguish a signing or request-contract mismatch without logging account details, tokens, VINs, headers, signatures, or response text.
+- Added privacy-safe metadata for vehicle refresh failures and displayed GWM's sanitized API result code in Home Assistant's failed-setup message. This lets the ANZ current-app beta distinguish a signing or request-contract mismatch without logging account details, tokens, VINs, headers, signatures, or response text.
 
 ## [0.16.10] - 2026-08-31
 
 ### Fixed
 
-- I matched the current GWM ANZ app's password input behavior before login. Current-app authentication now removes characters that the official app silently filters out and applies its 40-character limit, while the legacy ANZ method remains unchanged.
+- Matched the current GWM ANZ app's password input behavior before login. Current-app authentication now removes characters that the official app silently filters out and applies its 40-character limit, while the legacy ANZ method remains unchanged.
 
 ## [0.16.9] - 2026-08-31
 
 ### Fixed
 
-- I changed current GWM ANZ request signing to use the gateway-accepted URL path. A controlled live probe confirmed that the full URL returns `607099` (`sign is inconformity`), while the same synthetic login signed with the path reaches account validation.
-- I classify the exact ANZ authentication response `607099` as a sanitized signature error, making any remaining signing failure clear without logging credentials, request data, signatures, or cloud response text.
+- Changed current GWM ANZ request signing to use the gateway-accepted URL path. A controlled live probe confirmed that the full URL returns `607099` (`sign is inconformity`), while the same synthetic login signed with the path reaches account validation.
+- Classified the exact ANZ authentication response `607099` as a sanitized signature error, making any remaining signing failure clear without logging credentials, request data, signatures, or cloud response text.
 
 ## [0.16.8] - 2026-08-31
 
 ### Fixed
 
-- I aligned the beta current GWM ANZ password and verification requests with the signed GWM ANZ 1.0.6 app. This includes full absolute-URL signing, its decoded query rules, 32-character nonce, URI encoding, compact JSON, headers, full device ID, content type, account type, nullable push token, and verification result handling.
-- I retain the current app's `gwId` with its access token and carry the selected ANZ method through authentication state, Home Assistant restart recovery, polling, commands, and command-result polling.
-- I now publish a successful current-app session directly from the v2 login response, as the signed app does. Current login no longer makes an unevidenced legacy v1 profile request or requires an unevidenced `refreshToken` field.
-- I kept the legacy add-on-compatible ANZ authentication request unchanged.
+- Aligned the beta current GWM ANZ password and verification requests with the signed GWM ANZ 1.0.6 app. This includes full absolute-URL signing, its decoded query rules, 32-character nonce, URI encoding, compact JSON, headers, full device ID, content type, account type, nullable push token, and verification result handling.
+- Retained the current app's `gwId` with its access token and carried the selected ANZ method through authentication state, Home Assistant restart recovery, polling, commands, and command-result polling.
+- Published a successful current-app session directly from the v2 login response, as the signed app does. Current login no longer makes an unevidenced legacy v1 profile request or requires an unevidenced `refreshToken` field.
+- Kept the legacy add-on-compatible ANZ authentication request unchanged.
 
 ### Changed
 
-- I added the selected region and authentication method to the sanitized setup failure log. Account details, passwords, codes, tokens, device IDs, request data, and response data remain excluded.
+- Added the selected region and authentication method to the sanitized setup failure log. Account details, passwords, codes, tokens, device IDs, request data, and response data remain excluded.
 
 ## [0.16.7] - 2026-08-31
 
 ### Added
 
-- I added a beta authentication method that follows the current signed GWM ANZ app's v2 password and verification flow.
+- Added a beta authentication method that follows the current signed GWM ANZ app's v2 password and verification flow.
 
 ### Changed
 
@@ -115,37 +117,37 @@ This project follows semantic versioning. HACS uses the latest GitHub release ta
 
 ### Changed
 
-- I log only sanitized authentication failure metadata, including the operation and GWM result code, so setup failures can be investigated without exposing credentials, tokens, request data, or response bodies.
+- Logged only sanitized authentication failure metadata, including the operation and GWM result code, so setup failures can be investigated without exposing credentials, tokens, request data, or response bodies.
 
 ## [0.16.5] - 2026-08-31
 
 ### Fixed
 
-- I preserve explicit Australia/New Zealand single-session consent while continuing through e-mail verification, preventing setup from returning to the consent form without submitting the code.
+- Preserved explicit Australia/New Zealand single-session consent while continuing through e-mail verification, preventing setup from returning to the consent form without submitting the code.
 
 ## [0.16.4] - 2026-08-30
 
 ### Fixed
 
-- I keep the latest remote-command result visible across normal vehicle refreshes instead of immediately resetting it to "No remote command has run yet".
+- Kept the latest remote-command result visible across normal vehicle refreshes instead of immediately resetting it to "No remote command has run yet".
 
 ## [0.16.3] - 2026-08-30
 
 ### Changed
 
-- I show the stored vehicle security PIN in the options form as a masked, revealable password value.
+- Displayed the stored vehicle security PIN in the options form as a masked, revealable password value.
 
 ## [0.16.2] - 2026-08-30
 
 ### Fixed
 
-- I keep a newly saved climate run time for the next A/C command while the GWM cloud read model catches up.
+- Kept a newly saved climate run time for the next A/C command while the GWM cloud read model catches up.
 
 ## [0.16.1] - 2026-08-30
 
 ### Fixed
 
-- I moved overseas and mainland-China system trust loading off the Home Assistant event loop.
+- Moved overseas and mainland-China system trust loading off the Home Assistant event loop.
 
 ## [0.16.0] - 2026-08-30
 
