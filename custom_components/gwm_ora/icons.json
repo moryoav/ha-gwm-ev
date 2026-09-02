@@ -210,6 +210,9 @@
       },
       "smart_charge": {
         "default": "mdi:calendar-clock"
+      },
+      "battery_appointment_heating": {
+        "default": "mdi:battery-heart-variant"
       }
     }
   }

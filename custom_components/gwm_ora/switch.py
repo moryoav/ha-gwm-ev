@@ -23,6 +23,10 @@ PARALLEL_UPDATES = 0
 # the value reported by the car.
 OPTIMISTIC_STATE_TIMEOUT = 120.0
 
+# Departure offset used when arming battery appointment heating without a
+# caller-supplied time; the car pre-heats the battery to be ready by then.
+DEFAULT_BATTERY_APPOINTMENT_OFFSET_MINUTES = 30
+
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -147,6 +151,9 @@ async def async_setup_entry(
                 translation_key="battery_initiative_heat",
             ),
             GwmSmartChargeSwitch(
+                entry.runtime_data.api, entry.runtime_data.coordinator, vehicle["vin"]
+            ),
+            GwmBatteryAppointmentHeatingSwitch(
                 entry.runtime_data.api, entry.runtime_data.coordinator, vehicle["vin"]
             ),
         ),
@@ -346,6 +353,77 @@ class GwmSmartChargeSwitch(GwmEntity, SwitchEntity):
         self.coordinator.async_track_command(
             command, on_terminal=self._async_read_state
         )
+
+
+class GwmBatteryAppointmentHeatingSwitch(GwmEntity, SwitchEntity):
+    """BeanTech battery appointment heating on/off.
+
+    The car pre-heats the battery to be ready by a departure time. Arming uses a
+    default departure offset; the real armed state is read from
+    ``remote-ctrl/config/query`` (not the polled snapshot), so it is cached
+    locally and re-read after each toggle.
+    """
+
+    _attr_translation_key = "battery_appointment_heating"
+
+    def __init__(self, api, coordinator, vin: str) -> None:
+        super().__init__(coordinator, vin)
+        self._api = api
+        self._attr_unique_id = f"{vin}_battery_appointment_heating"
+
+    async def _async_read_state(self) -> None:
+        try:
+            response = await self._api.async_get_battery_heating_appointment(self.vin)
+        except (GwmCommandError, GwmClientError) as err:
+            _LOGGER.debug("Could not read battery appointment heating: %s", err)
+            return
+        self.coordinator.set_local_flag(
+            self.vin, "battery_appointment_heating", bool(response.get("enabled"))
+        )
+
+    async def async_added_to_hass(self) -> None:
+        """Read the armed state when the entity is added."""
+        await super().async_added_to_hass()
+        if not self.remote_commands_available or not self.is_china_beantech:
+            return
+        await self._async_read_state()
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return the last known armed state."""
+        return self.coordinator.local_flag(self.vin, "battery_appointment_heating")
+
+    @property
+    def available(self) -> bool:
+        return (
+            super().available
+            and self.remote_commands_available
+            and self.is_china_beantech
+        )
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        """Arm appointment heating for a departure shortly from now."""
+        departure_ms = (
+            int(time.time() * 1000)
+            + DEFAULT_BATTERY_APPOINTMENT_OFFSET_MINUTES * 60 * 1000
+        )
+        command = await async_call_gwm_api(
+            self._api.async_set_battery_heating_appointment(
+                self.vin, enable=True, use_car_time_ms=departure_ms
+            )
+        )
+        self.coordinator.set_local_flag(self.vin, "battery_appointment_heating", True)
+        self.coordinator.async_track_command(command, on_terminal=self._async_read_state)
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        """Cancel the armed appointment."""
+        command = await async_call_gwm_api(
+            self._api.async_set_battery_heating_appointment(self.vin, enable=False)
+        )
+        self.coordinator.set_local_flag(
+            self.vin, "battery_appointment_heating", False
+        )
+        self.coordinator.async_track_command(command, on_terminal=self._async_read_state)
 
 
 class _OptimisticRemoteSwitch(GwmEntity, SwitchEntity):

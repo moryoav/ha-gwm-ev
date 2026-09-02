@@ -44,6 +44,9 @@ from .errors import GwmCommandError, GwmCommandForbidden
 _DEFAULT_RESULT_TIMEOUT = timedelta(seconds=90)
 _RUSSIA_RESULT_TIMEOUT = timedelta(seconds=300)
 _SMART_CHARGE_COMMAND_NAME = "Smart charge"
+_BATTERY_APPOINTMENT_COMMAND_NAME = "Battery appointment heating"
+_CHARGE_SOC_COMMAND_NAME = "Charge SOC limit"
+_CHARGE_WINDOW_COMMAND_NAME = "Charge window"
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -440,6 +443,102 @@ class GwmCommandApi:
         )
         return await self._record_acceptance(identifier, _SMART_CHARGE_COMMAND_NAME, seq_no)
 
+    async def async_get_battery_heating_appointment(self, vin: str) -> dict[str, Any]:
+        """Return whether BeanTech battery appointment heating is armed."""
+        self._ensure_china_vehicle_control_available()
+        identifier = _vehicle_identifier(
+            vin, command_name="Battery appointment heating"
+        )
+        enabled = await self._cloud.async_get_bean_tech_battery_heating_appointment(
+            identifier
+        )
+        return {"enabled": enabled}
+
+    async def async_set_battery_heating_appointment(
+        self,
+        vin: str,
+        *,
+        enable: bool,
+        use_car_time_ms: int | None = None,
+    ) -> dict[str, object]:
+        """Arm or disarm BeanTech battery appointment heating and journal it."""
+        self._ensure_china_vehicle_control_available()
+        if type(enable) is not bool:
+            raise GwmCommandError(
+                "Battery appointment heating requires an on or off state"
+            )
+        identifier = _vehicle_identifier(
+            vin, command_name="Battery appointment heating"
+        )
+        seq_no = await self._cloud.async_set_bean_tech_battery_heating_appointment(
+            identifier, enable=enable, use_car_time_ms=use_car_time_ms
+        )
+        return await self._record_acceptance(
+            identifier, _BATTERY_APPOINTMENT_COMMAND_NAME, seq_no
+        )
+
+    async def async_set_charge_soc(
+        self,
+        vin: str,
+        *,
+        percent: int,
+    ) -> dict[str, object]:
+        """Set the BeanTech charge limit (50-100) and journal it."""
+        self._ensure_china_vehicle_control_available()
+        identifier = _vehicle_identifier(vin, command_name="Charge SOC limit")
+        seq_no = await self._cloud.async_set_bean_tech_charge_soc(
+            identifier, percent=percent
+        )
+        return await self._record_acceptance(
+            identifier, _CHARGE_SOC_COMMAND_NAME, seq_no
+        )
+
+    async def async_set_cabin_clean_appointment(
+        self,
+        vin: str,
+        *,
+        time_ms: int,
+    ) -> None:
+        """Schedule one BeanTech cabin-clean run."""
+        self._ensure_china_vehicle_control_available()
+        identifier = _vehicle_identifier(vin, command_name="Cabin clean appointment")
+        await self._cloud.async_set_bean_tech_cabin_clean_appointment(
+            identifier, time_ms=time_ms
+        )
+
+    async def async_set_ac_temperature(
+        self,
+        vin: str,
+        *,
+        temperature: int,
+        operation_time_minutes: int = 10,
+    ) -> None:
+        """Save the BeanTech A/C temperature so the car remembers it."""
+        self._ensure_china_vehicle_control_available()
+        identifier = _vehicle_identifier(vin, command_name="A/C temperature")
+        await self._cloud.async_set_bean_tech_ac_temperature(
+            identifier,
+            temperature=temperature,
+            operation_time_minutes=operation_time_minutes,
+        )
+
+    async def async_set_charge_window(
+        self,
+        vin: str,
+        *,
+        start_time: str,
+        end_time: str,
+    ) -> dict[str, object]:
+        """Write the BeanTech smart-charge time window and journal it."""
+        self._ensure_charging_available()
+        identifier = _vehicle_identifier(vin, command_name="Charge window")
+        seq_no = await self._cloud.async_set_bean_tech_charge_window(
+            identifier, start_time=start_time, end_time=end_time
+        )
+        return await self._record_acceptance(
+            identifier, _CHARGE_WINDOW_COMMAND_NAME, seq_no
+        )
+
     async def async_get_command(self, command_id: str) -> dict[str, object]:
         """Poll one accepted provider ID and persist every terminal transition."""
 
@@ -463,7 +562,8 @@ class GwmCommandApi:
                 entry.cloud_command_id,
                 msg_type=(
                     "charge"
-                    if entry.command_name == _SMART_CHARGE_COMMAND_NAME
+                    if entry.command_name
+                    in {_SMART_CHARGE_COMMAND_NAME, _CHARGE_WINDOW_COMMAND_NAME}
                     else "remote"
                 ),
             )

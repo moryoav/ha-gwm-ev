@@ -137,6 +137,15 @@
     },
     "invalid_climate_run_time": {
       "message": "空调运行时长必须是 5 到 30 分钟之间的整数。"
+    },
+    "invalid_charge_soc_limit": {
+      "message": "充电上限必须是 50、60、70、80、90 或 100 之一。"
+    },
+    "invalid_cabin_clean_appointment": {
+      "message": "车内清洁预约时间必须在 10 到 240 分钟之间。"
+    },
+    "invalid_ac_temperature": {
+      "message": "空调温度必须在 17 到 31 ℃ 之间。"
     }
   },
   "entity": {
@@ -248,7 +257,10 @@
       "ac_climate": { "name": "空调" }
     },
     "number": {
-      "climate_run_time": { "name": "空调运行时长" }
+      "climate_run_time": { "name": "空调运行时长" },
+      "charge_soc_limit": { "name": "充电上限" },
+      "cabin_clean_appointment": { "name": "车内清洁预约时间" },
+      "ac_temperature": { "name": "空调温度" }
     },
     "lock": {
       "door_lock": { "name": "门锁" }
@@ -289,7 +301,8 @@
       "fast_heat": { "name": "快速升温" },
       "battery_gun_heat": { "name": "电池包插枪保温" },
       "battery_initiative_heat": { "name": "电池包主动保温" },
-      "smart_charge": { "name": "智能预约充电" }
+      "smart_charge": { "name": "智能预约充电" },
+      "battery_appointment_heating": { "name": "电池预约加热" }
     }
   },
   "services": {

@@ -137,6 +137,15 @@
     },
     "invalid_climate_run_time": {
       "message": "Climate run time must be a whole number from 5 to 30 minutes."
+    },
+    "invalid_charge_soc_limit": {
+      "message": "Charge limit must be one of 50, 60, 70, 80, 90 or 100 percent."
+    },
+    "invalid_cabin_clean_appointment": {
+      "message": "Cabin clean appointment must be from 10 to 240 minutes."
+    },
+    "invalid_ac_temperature": {
+      "message": "A/C temperature must be from 17 to 31 °C."
     }
   },
   "entity": {
@@ -248,7 +257,10 @@
       "ac_climate": { "name": "A/C climate" }
     },
     "number": {
-      "climate_run_time": { "name": "Climate run time" }
+      "climate_run_time": { "name": "Climate run time" },
+      "charge_soc_limit": { "name": "Charge limit" },
+      "cabin_clean_appointment": { "name": "Cabin clean appointment" },
+      "ac_temperature": { "name": "A/C temperature" }
     },
     "lock": {
       "door_lock": { "name": "Door lock" }
@@ -289,7 +301,8 @@
       "fast_heat": { "name": "Fast heat" },
       "battery_gun_heat": { "name": "Battery pack heating while plugged in" },
       "battery_initiative_heat": { "name": "Battery pack active heating" },
-      "smart_charge": { "name": "Smart scheduled charging" }
+      "smart_charge": { "name": "Smart scheduled charging" },
+      "battery_appointment_heating": { "name": "Battery appointment heating" }
     }
   },
   "services": {
