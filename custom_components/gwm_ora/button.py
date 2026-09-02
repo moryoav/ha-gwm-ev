@@ -102,6 +102,16 @@ async def async_setup_entry(
                     ("comfort_off", "comfort_off"),
                 )
             )
+            entities.extend(
+                GwmClimatePresetButton(
+                    entry.runtime_data.api,
+                    entry.runtime_data.coordinator,
+                    vin,
+                    temperature,
+                    translation_key,
+                )
+                for temperature, translation_key in ((17, "fast_cool"), (31, "fast_heat"))
+            )
         return entities
 
     setup_vehicle_entities(
@@ -233,4 +243,43 @@ class GwmBeanTechComfortButton(GwmEntity, ButtonEntity):
             command = await async_call_gwm_api(
                 self._api.async_vehicle_control(self.vin, self._action)
             )
+        self.coordinator.async_track_command(command)
+
+
+class GwmClimatePresetButton(GwmEntity, ButtonEntity):
+    """Fast cool / fast heat one-shot button.
+
+    The car has no dedicated fast cool/heat command: both are the normal A/C
+    start with the temperature pinned to one end of its 17-31 range.
+    """
+
+    def __init__(
+        self,
+        api,
+        coordinator,
+        vin: str,
+        temperature: int,
+        translation_key: str,
+    ) -> None:
+        super().__init__(coordinator, vin)
+        self._api = api
+        self._temperature = temperature
+        self._attr_translation_key = translation_key
+        self._attr_unique_id = f"{vin}_{translation_key}"
+
+    @property
+    def available(self) -> bool:
+        return (
+            super().available
+            and self.climate_commands_available
+            and self.is_china_beantech
+        )
+
+    async def async_press(self) -> None:
+        """Start the A/C pinned to this preset's temperature."""
+        command = await async_call_gwm_api(
+            self._api.async_set_climate(
+                self.vin, mode="auto", temperature=self._temperature
+            )
+        )
         self.coordinator.async_track_command(command)

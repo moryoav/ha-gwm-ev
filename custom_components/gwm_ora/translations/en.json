@@ -287,7 +287,9 @@
       "comfort_warm": { "name": "Comfort warm" },
       "comfort_cool": { "name": "Comfort cool" },
       "comfort_last": { "name": "Comfort (last used)" },
-      "comfort_off": { "name": "Comfort off" }
+      "comfort_off": { "name": "Comfort off" },
+      "fast_cool": { "name": "Fast cool" },
+      "fast_heat": { "name": "Fast heat" }
     },
     "switch": {
       "front_defroster": { "name": "Front defroster" },
@@ -300,8 +302,6 @@
       "steering_wheel_heating": { "name": "Steering wheel heating" },
       "defrost_front": { "name": "Front defrost" },
       "defrost_back": { "name": "Rear defrost" },
-      "fast_cool": { "name": "Fast cool" },
-      "fast_heat": { "name": "Fast heat" },
       "battery_gun_heat": { "name": "Battery pack heating while plugged in" },
       "battery_initiative_heat": { "name": "Battery pack active heating" },
       "smart_charge": { "name": "Smart scheduled charging" },

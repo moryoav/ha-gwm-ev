@@ -118,12 +118,6 @@ async def async_setup_entry(
                 state_key="rear_defroster",
                 translation_key="defrost_back",
             ),
-            GwmClimatePresetSwitch(
-                api, coordinator, vin, temperature=17, translation_key="fast_cool"
-            ),
-            GwmClimatePresetSwitch(
-                api, coordinator, vin, temperature=31, translation_key="fast_heat"
-            ),
             GwmBatteryHeatSwitch(
                 api,
                 coordinator,
@@ -663,65 +657,4 @@ class GwmBatteryHeatSwitch(_OptimisticRemoteSwitch):
         )
         self.coordinator.async_track_command(command, on_terminal=self._async_read_state)
         self.coordinator.set_local_flag(self.vin, self._attr_translation_key, False)
-        self._set_optimistic(False)
-
-
-class GwmClimatePresetSwitch(_OptimisticRemoteSwitch):
-    """Fast cool / fast heat, driven by the A/C command at a fixed temperature.
-
-    The car has no dedicated fast cool/heat command: both are the normal A/C
-    start with the temperature pinned to one end of its 17-31 range.
-    """
-
-    def __init__(
-        self,
-        api,
-        coordinator,
-        vin: str,
-        *,
-        temperature: int,
-        translation_key: str,
-    ) -> None:
-        super().__init__(coordinator, vin)
-        self._api = api
-        self._temperature = temperature
-        self._attr_translation_key = translation_key
-        self._attr_unique_id = f"{vin}_{translation_key}"
-
-    @property
-    def climate(self) -> dict[str, Any]:
-        """Return the vehicle's climate block."""
-        vehicle = self.vehicle or {}
-        return vehicle.get("climate") or {}
-
-    def _actual_is_on(self) -> bool | None:
-        """Return whether the A/C is running at this preset's temperature."""
-        if self.climate.get("mode") == "off":
-            return False
-        return self.climate.get("target_temperature_c") == self._temperature
-
-    @property
-    def available(self) -> bool:
-        return (
-            super().available
-            and self.climate_commands_available
-            and self.is_china_beantech
-        )
-
-    async def async_turn_on(self, **kwargs: Any) -> None:
-        """Start the A/C pinned to this preset's temperature."""
-        command = await async_call_gwm_api(
-            self._api.async_set_climate(
-                self.vin, mode="auto", temperature=self._temperature
-            )
-        )
-        self.coordinator.async_track_command(command)
-        self._set_optimistic(True)
-
-    async def async_turn_off(self, **kwargs: Any) -> None:
-        """Stop the A/C."""
-        command = await async_call_gwm_api(
-            self._api.async_set_climate(self.vin, mode="off")
-        )
-        self.coordinator.async_track_command(command)
         self._set_optimistic(False)

@@ -29,10 +29,10 @@ from custom_components.gwm_ora.sensor import (
     GwmSensor,
     _sensor_descriptions_for_vehicle,
 )
+from custom_components.gwm_ora.button import GwmClimatePresetButton
 from custom_components.gwm_ora.switch import (
     GwmBatteryHeatSwitch,
     GwmChargingScheduleSwitch,
-    GwmClimatePresetSwitch,
     GwmFrontDefrosterSwitch,
     GwmRemoteControlSwitch,
     GwmRemoteStartSwitch,
@@ -643,11 +643,10 @@ async def test_beantech_comfort_switches_and_buttons_are_pin_exempt_and_dispatch
         translation_key="seat_heating",
     ).available
 
-    fast_cool = GwmClimatePresetSwitch(
+    fast_cool = GwmClimatePresetButton(
         api, coordinator, "SYNTHETIC-BEANTECH", temperature=17, translation_key="fast_cool"
     )
     assert fast_cool.available
-    assert fast_cool.is_on is True
 
     # Cabin clean is PIN-exempt, so it is exposed without a PIN.
     cabin_clean = GwmBeanTechComfortButton(
@@ -665,8 +664,7 @@ async def test_beantech_comfort_switches_and_buttons_are_pin_exempt_and_dispatch
     with patch.object(seat, "async_write_ha_state"):
         await seat.async_turn_off()
         assert seat.is_on is False
-    with patch.object(fast_cool, "async_write_ha_state"):
-        await fast_cool.async_turn_on()
+    await fast_cool.async_press()
     await cabin_clean.async_press()
 
     assert api.async_vehicle_control.await_args_list == [

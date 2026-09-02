@@ -287,7 +287,9 @@
       "comfort_warm": { "name": "一键舒适（温暖）" },
       "comfort_cool": { "name": "一键舒适（凉爽）" },
       "comfort_last": { "name": "一键舒适（常用）" },
-      "comfort_off": { "name": "一键舒适关闭" }
+      "comfort_off": { "name": "一键舒适关闭" },
+      "fast_cool": { "name": "快速降温" },
+      "fast_heat": { "name": "快速升温" }
     },
     "switch": {
       "front_defroster": { "name": "前除霜" },
@@ -300,8 +302,6 @@
       "steering_wheel_heating": { "name": "方向盘加热" },
       "defrost_front": { "name": "前除霜" },
       "defrost_back": { "name": "后除霜" },
-      "fast_cool": { "name": "快速降温" },
-      "fast_heat": { "name": "快速升温" },
       "battery_gun_heat": { "name": "电池包插枪保温" },
       "battery_initiative_heat": { "name": "电池包主动保温" },
       "smart_charge": { "name": "智能预约充电" },

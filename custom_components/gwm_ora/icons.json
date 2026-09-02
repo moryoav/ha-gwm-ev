@@ -86,6 +86,12 @@
       },
       "comfort_off": {
         "default": "mdi:power"
+      },
+      "fast_cool": {
+        "default": "mdi:thermometer-chevron-down"
+      },
+      "fast_heat": {
+        "default": "mdi:thermometer-chevron-up"
       }
     },
     "climate": {
@@ -198,12 +204,6 @@
       },
       "defrost_back": {
         "default": "mdi:car-defrost-rear"
-      },
-      "fast_cool": {
-        "default": "mdi:thermometer-chevron-down"
-      },
-      "fast_heat": {
-        "default": "mdi:thermometer-chevron-up"
       },
       "battery_gun_heat": {
         "default": "mdi:ev-plug-type2"
