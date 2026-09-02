@@ -66,10 +66,28 @@ async def async_setup_entry(
                 entry.runtime_data.api,
                 entry.runtime_data.coordinator,
                 vehicle["vin"],
+                turn_on_action="seat_heating_start_passenger",
+                turn_off_action="seat_heating_stop_passenger",
+                state_key="front_passenger_seat_heater_level",
+                translation_key="seat_heating_passenger",
+            ),
+            GwmRemoteControlSwitch(
+                entry.runtime_data.api,
+                entry.runtime_data.coordinator,
+                vehicle["vin"],
                 turn_on_action="seat_ventilation_start",
                 turn_off_action="seat_ventilation_stop",
                 state_key="front_driver_seat_vent_level",
                 translation_key="seat_ventilation",
+            ),
+            GwmRemoteControlSwitch(
+                entry.runtime_data.api,
+                entry.runtime_data.coordinator,
+                vehicle["vin"],
+                turn_on_action="seat_ventilation_start_passenger",
+                turn_off_action="seat_ventilation_stop_passenger",
+                state_key="front_passenger_seat_vent_level",
+                translation_key="seat_ventilation_passenger",
             ),
             GwmRemoteControlSwitch(
                 entry.runtime_data.api,
@@ -421,8 +439,8 @@ class GwmRemoteControlSwitch(_OptimisticRemoteSwitch):
 
     Maps a paired ``turn_on_action``/``turn_off_action`` to the vehicle and
     reads the polled status snapshot for its real state. Seat heating and
-    ventilation use the driver-side level as the representative "front" state,
-    matching the retired add-on's ``front_driver_seat_heater_level`` reading.
+    ventilation are exposed as separate driver and passenger switches, each
+    reading its own per-seat level from the snapshot.
     """
 
     def __init__(
@@ -509,7 +527,6 @@ class GwmBatteryHeatSwitch(_OptimisticRemoteSwitch):
             super().available
             and self.remote_commands_available
             and self.is_china_beantech
-            and self.security_pin_configured
         )
 
     async def async_turn_on(self, **kwargs: Any) -> None:

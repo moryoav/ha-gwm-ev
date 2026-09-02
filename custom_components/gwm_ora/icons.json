@@ -178,7 +178,13 @@
       "seat_heating": {
         "default": "mdi:car-seat-heater"
       },
+      "seat_heating_passenger": {
+        "default": "mdi:car-seat-heater"
+      },
       "seat_ventilation": {
+        "default": "mdi:car-seat-cooler"
+      },
+      "seat_ventilation_passenger": {
         "default": "mdi:car-seat-cooler"
       },
       "steering_wheel_heating": {

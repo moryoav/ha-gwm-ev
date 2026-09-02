@@ -1689,8 +1689,12 @@ async def test_beantech_pin_exempt_commands_skip_token_generation() -> None:
         "horn_and_lights",
         "seat_heating_start",
         "seat_heating_stop",
+        "seat_heating_start_passenger",
+        "seat_heating_stop_passenger",
         "seat_ventilation_start",
         "seat_ventilation_stop",
+        "seat_ventilation_start_passenger",
+        "seat_ventilation_stop_passenger",
         "steering_wheel_heating",
         "steering_wheel_heatless",
         "defrost_front_start",
@@ -1700,6 +1704,10 @@ async def test_beantech_pin_exempt_commands_skip_token_generation() -> None:
         "cabin_clean",
         "comfort_warm",
         "comfort_cool",
+        "battery_gun_heat",
+        "battery_gun_heat_stop",
+        "battery_initiative_heat",
+        "battery_initiative_heat_stop",
     )
     transport = _FakeTransport(
         acquire_vehicles=[FIXTURE["responses"]["discovery"]],
@@ -2275,11 +2283,54 @@ async def test_beantech_seat_heating_start_and_stop_cmdbody_exact() -> None:
     assert [body["commands"][0] for body in sends] == [
         {
             "controlType": "SEAT_HEATING_START",
-            "cmdBody": {"leftFront": 3, "rightFront": 3, "operationTime": 600},
+            "cmdBody": {"leftFront": 3, "operationTime": 600},
         },
         {
             "controlType": "SEAT_HEATING_STOP",
-            "cmdBody": {"leftFront": 0, "rightFront": 0, "operationMode": 1},
+            "cmdBody": {"leftFront": 0, "operationMode": 1},
+        },
+    ]
+    assert not any(
+        call.operation == "generate_security_token" for call in transport.calls
+    )
+
+
+@pytest.mark.asyncio
+async def test_beantech_seat_heating_passenger_cmdbody_exact() -> None:
+    transport = _FakeTransport(
+        acquire_vehicles=[FIXTURE["responses"]["discovery"]],
+        send_vehicle_control_command=[
+            {"code": "000000", "data": {}},
+            {"code": "000000", "data": {}},
+        ],
+    )
+    client = _client(transport, bean_tech_security_password="ENCRYPTED==")
+    assert isinstance(
+        await client.authenticate(_credentials(), state=_complete_state()),
+        ChinaAuthenticated,
+    )
+    identifier = VehicleIdentifier(BEAN_VIN)
+
+    await client.send_vehicle_control_command(
+        ChinaVehicleControlCommand(identifier, "seat_heating_start_passenger")
+    )
+    await client.send_vehicle_control_command(
+        ChinaVehicleControlCommand(identifier, "seat_heating_stop_passenger")
+    )
+
+    sends = [
+        json.loads(request.body or b"null")
+        for request in transport.calls
+        if request.operation == "send_vehicle_control_command"
+    ]
+    assert [body["commands"][0] for body in sends] == [
+        {
+            "controlType": "SEAT_HEATING_START",
+            "cmdBody": {"rightFront": 3, "operationTime": 600},
+        },
+        {
+            "controlType": "SEAT_HEATING_STOP",
+            "cmdBody": {"rightFront": 0, "operationMode": 1},
         },
     ]
     assert not any(
@@ -2318,11 +2369,54 @@ async def test_beantech_seat_ventilation_cmdbody_exact() -> None:
     assert [body["commands"][0] for body in sends] == [
         {
             "controlType": "SEAT_VENTILATION_START",
-            "cmdBody": {"leftFront": 3, "rightFront": 3, "operationTime": 600},
+            "cmdBody": {"leftFront": 3, "operationTime": 600},
         },
         {
             "controlType": "SEAT_VENTILATION_STOP",
-            "cmdBody": {"leftFront": 0, "rightFront": 0, "operationMode": 2},
+            "cmdBody": {"leftFront": 0, "operationMode": 2},
+        },
+    ]
+    assert not any(
+        call.operation == "generate_security_token" for call in transport.calls
+    )
+
+
+@pytest.mark.asyncio
+async def test_beantech_seat_ventilation_passenger_cmdbody_exact() -> None:
+    transport = _FakeTransport(
+        acquire_vehicles=[FIXTURE["responses"]["discovery"]],
+        send_vehicle_control_command=[
+            {"code": "000000", "data": {}},
+            {"code": "000000", "data": {}},
+        ],
+    )
+    client = _client(transport, bean_tech_security_password="ENCRYPTED==")
+    assert isinstance(
+        await client.authenticate(_credentials(), state=_complete_state()),
+        ChinaAuthenticated,
+    )
+    identifier = VehicleIdentifier(BEAN_VIN)
+
+    await client.send_vehicle_control_command(
+        ChinaVehicleControlCommand(identifier, "seat_ventilation_start_passenger")
+    )
+    await client.send_vehicle_control_command(
+        ChinaVehicleControlCommand(identifier, "seat_ventilation_stop_passenger")
+    )
+
+    sends = [
+        json.loads(request.body or b"null")
+        for request in transport.calls
+        if request.operation == "send_vehicle_control_command"
+    ]
+    assert [body["commands"][0] for body in sends] == [
+        {
+            "controlType": "SEAT_VENTILATION_START",
+            "cmdBody": {"rightFront": 3, "operationTime": 600},
+        },
+        {
+            "controlType": "SEAT_VENTILATION_STOP",
+            "cmdBody": {"rightFront": 0, "operationMode": 2},
         },
     ]
     assert not any(
@@ -2460,12 +2554,9 @@ async def test_beantech_comfort_off_requires_pin_and_rejects_legacy_path() -> No
 
 
 @pytest.mark.asyncio
-async def test_beantech_battery_heat_commands_have_empty_cmdbody_and_require_token() -> None:
+async def test_beantech_battery_heat_commands_have_empty_cmdbody_and_skip_token() -> None:
     transport = _FakeTransport(
         acquire_vehicles=[FIXTURE["responses"]["discovery"]],
-        generate_security_token=[
-            {"code": "000000", "data": "JWT"} for _ in range(4)
-        ],
         send_vehicle_control_command=[
             {"code": "000000", "data": {}} for _ in range(4)
         ],
@@ -2498,9 +2589,15 @@ async def test_beantech_battery_heat_commands_have_empty_cmdbody_and_require_tok
         {"controlType": "BATTERY_INITIATIVE_HEAT_START"},
         {"controlType": "BATTERY_INITIATIVE_HEAT_STOP"},
     ]
-    assert sum(
-        1 for call in transport.calls if call.operation == "generate_security_token"
-    ) == 4
+    # Battery heating is PIN-exempt, so no security token is fetched even when
+    # a PIN is configured, and the commands travel the timely path unsigned.
+    assert not any(
+        call.operation == "generate_security_token" for call in transport.calls
+    )
+    for call in transport.calls:
+        if call.operation == "send_vehicle_control_command":
+            assert call.url.endswith("/app-api/api/v3.0/vehicle/remote-ctrl/timely")
+            assert "securityToken" not in call.headers
 
 
 def test_beantech_charge_setting_read_request_shape_and_signature() -> None:

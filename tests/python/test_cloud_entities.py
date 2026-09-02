@@ -742,10 +742,11 @@ async def test_beantech_pin_required_switches_and_buttons_stay_gated() -> None:
         api, coordinator, "SYNTHETIC-BEANTECH", "comfort_off", "comfort_off"
     )
 
-    # Remote start, battery heat and the multi-command comfort-off all need a
-    # configured PIN before they are exposed.
+    # Remote start and the multi-command comfort-off need a configured PIN
+    # before they are exposed; battery heating is PIN-exempt like the other
+    # comfort controls, so it is available without one.
     assert not remote_start.available
-    assert not battery_heat.available
+    assert battery_heat.available
     assert not comfort_off.available
 
     config_entry.options = {"beantech_encrypted_security_pin": "X=="}

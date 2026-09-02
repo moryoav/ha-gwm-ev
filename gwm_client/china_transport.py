@@ -1322,10 +1322,22 @@ _BEAN_TECH_VEHICLE_CONTROL_BODIES: dict[str, object] = {
     "FLASH": None,
     "WHISTLE_FLASH": None,
     "SKYLIGNT_CLOSE": {"skyLight": 0},
-    "SEAT_HEATING_START": {"leftFront": 3, "rightFront": 3, "operationTime": 600},
-    "SEAT_HEATING_STOP": {"leftFront": 0, "rightFront": 0, "operationMode": 1},
-    "SEAT_VENTILATION_START": {"leftFront": 3, "rightFront": 3, "operationTime": 600},
-    "SEAT_VENTILATION_STOP": {"leftFront": 0, "rightFront": 0, "operationMode": 2},
+    "SEAT_HEATING_START": (
+        {"leftFront": 3, "operationTime": 600},
+        {"rightFront": 3, "operationTime": 600},
+    ),
+    "SEAT_HEATING_STOP": (
+        {"leftFront": 0, "operationMode": 1},
+        {"rightFront": 0, "operationMode": 1},
+    ),
+    "SEAT_VENTILATION_START": (
+        {"leftFront": 3, "operationTime": 600},
+        {"rightFront": 3, "operationTime": 600},
+    ),
+    "SEAT_VENTILATION_STOP": (
+        {"leftFront": 0, "operationMode": 2},
+        {"rightFront": 0, "operationMode": 2},
+    ),
     "STEERING_WHEEL_HEATING": {"operationTime": 600},
     "STEERING_WHEEL_HEATLESS": None,
     "DEFROST_FRONT_START": {"operationTime": 900},
@@ -1343,6 +1355,24 @@ _BEAN_TECH_COMFORT_MODE_BODIES: tuple[dict[str, object], ...] = (
     {"action": 1, "modeId": "4982234", "type": "1"},
     {"action": 1, "modeId": "4982235", "type": "2"},
 )
+
+
+def _bean_tech_vehicle_control_expects_body(control_type: str) -> bool:
+    """Return whether ``control_type`` carries a non-null ``cmdBody``."""
+    expected = _BEAN_TECH_VEHICLE_CONTROL_BODIES[control_type]
+    return any(isinstance(body, Mapping) for body in expected) if isinstance(
+        expected, tuple
+    ) else expected is not None
+
+
+def _bean_tech_vehicle_control_body_matches(
+    control_type: str, cmd_body: object
+) -> bool:
+    """Return whether ``cmd_body`` is one of the accepted bodies for ``control_type``."""
+    expected = _BEAN_TECH_VEHICLE_CONTROL_BODIES[control_type]
+    if isinstance(expected, tuple):
+        return cmd_body in expected
+    return cmd_body == expected
 
 
 def _valid_bean_tech_comfort_off_commands(commands: object) -> bool:
@@ -1428,8 +1458,9 @@ def _valid_bean_tech_command_request(
             if isinstance(control_type, str) and control_type in _BEAN_TECH_VEHICLE_CONTROL_BODIES:
                 valid_command = (
                     valid_command_shape
-                    and command.get("cmdBody")
-                    == _BEAN_TECH_VEHICLE_CONTROL_BODIES[control_type]
+                    and _bean_tech_vehicle_control_body_matches(
+                        control_type, command.get("cmdBody")
+                    )
                 )
             elif control_type == "COMFORT_MODE_CTRL":
                 valid_command = (
@@ -1544,16 +1575,18 @@ def _valid_bean_tech_timely_command_request(
             )
         else:
             if isinstance(control_type, str) and control_type in _BEAN_TECH_VEHICLE_CONTROL_BODIES:
-                expected_body = _BEAN_TECH_VEHICLE_CONTROL_BODIES[control_type]
+                expects_body = _bean_tech_vehicle_control_expects_body(control_type)
                 valid_command = (
-                    has_cmd_body == (expected_body is not None)
+                    has_cmd_body == expects_body
                     and list(command)
                     == (
                         ["controlType", "cmdBody"]
-                        if expected_body is not None
+                        if expects_body
                         else ["controlType"]
                     )
-                    and command.get("cmdBody") == expected_body
+                    and _bean_tech_vehicle_control_body_matches(
+                        control_type, command.get("cmdBody")
+                    )
                 )
             elif control_type == "COMFORT_MODE_CTRL":
                 valid_command = (

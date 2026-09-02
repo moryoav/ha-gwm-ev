@@ -150,6 +150,10 @@ _BEAN_TECH_PIN_EXEMPT_CONTROL_TYPES = frozenset(
         "DEFROST_BACK_STOP",
         "CABIN_CLEANING_START",
         "COMFORT_MODE_CTRL",
+        "BATTERY_GUN_HEAT_START",
+        "BATTERY_GUN_HEAT_STOP",
+        "BATTERY_INITIATIVE_HEAT_START",
+        "BATTERY_INITIATIVE_HEAT_STOP",
     }
 )
 _AUTO_AI_LOGIN_URL = _G_APP_BASE + "tsp/v1/proxy/navinfo/GW.M.APP_LOGIN"
@@ -3192,22 +3196,42 @@ def _bean_tech_vehicle_control(
     if command.action == "seat_heating_start":
         return (
             "SEAT_HEATING_START",
-            {"leftFront": 3, "rightFront": 3, "operationTime": 600},
+            {"leftFront": 3, "operationTime": 600},
         )
     if command.action == "seat_heating_stop":
         return (
             "SEAT_HEATING_STOP",
-            {"leftFront": 0, "rightFront": 0, "operationMode": 1},
+            {"leftFront": 0, "operationMode": 1},
+        )
+    if command.action == "seat_heating_start_passenger":
+        return (
+            "SEAT_HEATING_START",
+            {"rightFront": 3, "operationTime": 600},
+        )
+    if command.action == "seat_heating_stop_passenger":
+        return (
+            "SEAT_HEATING_STOP",
+            {"rightFront": 0, "operationMode": 1},
         )
     if command.action == "seat_ventilation_start":
         return (
             "SEAT_VENTILATION_START",
-            {"leftFront": 3, "rightFront": 3, "operationTime": 600},
+            {"leftFront": 3, "operationTime": 600},
         )
     if command.action == "seat_ventilation_stop":
         return (
             "SEAT_VENTILATION_STOP",
-            {"leftFront": 0, "rightFront": 0, "operationMode": 2},
+            {"leftFront": 0, "operationMode": 2},
+        )
+    if command.action == "seat_ventilation_start_passenger":
+        return (
+            "SEAT_VENTILATION_START",
+            {"rightFront": 3, "operationTime": 600},
+        )
+    if command.action == "seat_ventilation_stop_passenger":
+        return (
+            "SEAT_VENTILATION_STOP",
+            {"rightFront": 0, "operationMode": 2},
         )
     if command.action == "steering_wheel_heating":
         return "STEERING_WHEEL_HEATING", {"operationTime": 600}
