@@ -109,7 +109,7 @@ _SMS_REQUEST_URL = _G_APP_BASE + "api-guser/v5/user/login-sms/send"
 _SMS_LOGIN_URL = _G_APP_BASE + "api-guser/v5/user/sms-login"
 _REFRESH_URL = _G_APP_BASE + "api-guser/v5/token/refresh"
 _BEAN_TECH_LOGIN_URL = _BEAN_TECH_BASE + "app-api/api/v1.0/userAuth/loginSSOAccount"
-_BEAN_TECH_STATUS_PATH = "/app-api/api/v2.0/vehicle/getLastStatus"
+_BEAN_TECH_STATUS_PATH = "/app-api/api/v3.0/vehicle/getLastStatus"
 _BEAN_TECH_STATUS_URL = _BEAN_TECH_BASE.rstrip("/") + _BEAN_TECH_STATUS_PATH
 _NAVINFO_RESULT_PATH = "/app-api/api/v3.0/vehicle/remote-ctrl/result"
 _NAVINFO_RESULT_URL = _BEAN_TECH_BASE.rstrip("/") + _NAVINFO_RESULT_PATH
@@ -175,6 +175,13 @@ _VERIFICATION_INTERVAL = timedelta(minutes=10)
 _TRANSIENT_INIT_HTTP_STATUSES = frozenset({502, 503, 504})
 _MAX_INIT_ATTEMPTS = 3
 _INIT_RETRY_SECONDS = 1.0
+# The BeanTech backend executes one command per vehicle at a time: a command
+# sent while the previous one is still running is rejected with 551210. Queue
+# the send by waiting a few seconds between attempts, so rapid toggles (and a
+# sleeping car's slower first wake-up) drain in order instead of surfacing
+# "remote command in progress".
+_MAX_BEAN_TECH_COMMAND_ATTEMPTS = 5
+_BEAN_TECH_COMMAND_RETRY_SECONDS = 5.0
 _MAX_JSON_DEPTH = 64
 _MAX_ALLOWED_RESPONSE_BYTES = 16 * 1024 * 1024
 _MAX_SECRET_LENGTH = 16 * 1024
@@ -1030,6 +1037,26 @@ class ChinaClient:
             ),
         )
 
+    async def get_bean_tech_cabin_clean_appointment(
+        self,
+        identifier: VehicleIdentifier,
+        *,
+        timeout: float | None = None,
+    ) -> int | None:
+        """Read the scheduled BeanTech cabin-clean epoch-ms, or ``None`` if unset."""
+
+        operation = "get_bean_tech_cabin_clean_appointment"
+        if type(identifier) is not VehicleIdentifier:
+            raise GwmConfigurationError(operation=operation)
+        return await self._run_read(
+            operation,
+            timeout=timeout,
+            action=lambda deadline: self._get_bean_tech_cabin_clean_appointment_locked(
+                identifier,
+                deadline=deadline,
+            ),
+        )
+
     async def set_bean_tech_charge_window(
         self,
         identifier: VehicleIdentifier,
@@ -1828,56 +1855,66 @@ class ChinaClient:
         send_type: int = 0,
         deadline: _Deadline,
     ) -> RemoteCommandAcceptance:
-        try:
-            sequence_number = self._sequence_source()
-        except Exception:
-            raise GwmConfigurationError(operation=operation) from None
-        if (
-            not isinstance(sequence_number, str)
-            or _BEAN_TECH_SEQUENCE.fullmatch(sequence_number) is None
-        ):
-            raise GwmConfigurationError(operation=operation)
-
-        if self._bean_tech_security_password is None:
-            # The legacy T5 path carries exactly one command with sendType 0.
-            # Multi-command requests (e.g. one-touch comfort off) require the
-            # PIN-gated timely path, so fail closed when no PIN is configured.
-            if send_type != 0 or len(commands) != 1:
-                raise GwmConfigurationError(operation=operation)
-            control_type, command_body = commands[0]
-            request = self._build_bean_tech_command_request(
-                state,
-                identifier,
-                sequence_number=sequence_number,
-                operation=operation,
-                control_type=control_type,
-                command_body=command_body,
-            )
-        else:
-            security_token: str | None = None
-            if any(
-                control_type not in _BEAN_TECH_PIN_EXEMPT_CONTROL_TYPES
-                for control_type, _command_body in commands
+        for attempt in range(_MAX_BEAN_TECH_COMMAND_ATTEMPTS):
+            try:
+                sequence_number = self._sequence_source()
+            except Exception:
+                raise GwmConfigurationError(operation=operation) from None
+            if (
+                not isinstance(sequence_number, str)
+                or _BEAN_TECH_SEQUENCE.fullmatch(sequence_number) is None
             ):
-                security_token = await self._generate_bean_tech_security_token(
+                raise GwmConfigurationError(operation=operation)
+
+            if self._bean_tech_security_password is None:
+                # The legacy T5 path carries exactly one command with sendType 0.
+                # Multi-command requests (e.g. one-touch comfort off) require the
+                # PIN-gated timely path, so fail closed when no PIN is configured.
+                if send_type != 0 or len(commands) != 1:
+                    raise GwmConfigurationError(operation=operation)
+                control_type, command_body = commands[0]
+                request = self._build_bean_tech_command_request(
                     state,
                     identifier,
+                    sequence_number=sequence_number,
                     operation=operation,
-                    deadline=deadline,
+                    control_type=control_type,
+                    command_body=command_body,
                 )
-            request = self._build_bean_tech_timely_request_for_commands(
-                state,
-                identifier,
-                sequence_number=sequence_number,
-                operation=operation,
-                commands=commands,
-                send_type=send_type,
-                security_token=security_token,
-            )
+            else:
+                security_token: str | None = None
+                if any(
+                    control_type not in _BEAN_TECH_PIN_EXEMPT_CONTROL_TYPES
+                    for control_type, _command_body in commands
+                ):
+                    security_token = await self._generate_bean_tech_security_token(
+                        state,
+                        identifier,
+                        operation=operation,
+                        deadline=deadline,
+                    )
+                request = self._build_bean_tech_timely_request_for_commands(
+                    state,
+                    identifier,
+                    sequence_number=sequence_number,
+                    operation=operation,
+                    commands=commands,
+                    send_type=send_type,
+                    security_token=security_token,
+                )
 
-        response = await self._send_locked(request, deadline=deadline)
-        _decode_g_app_envelope(response, operation=operation)
-        return RemoteCommandAcceptance(sequence_number)
+            response = await self._send_locked(request, deadline=deadline)
+            try:
+                _decode_g_app_envelope(response, operation=operation)
+                return RemoteCommandAcceptance(sequence_number)
+            except GwmApiError as err:
+                if (
+                    err.api_code == "551210"
+                    and attempt < _MAX_BEAN_TECH_COMMAND_ATTEMPTS - 1
+                ):
+                    await self._sleeper(_BEAN_TECH_COMMAND_RETRY_SECONDS)
+                    continue
+                raise
 
     async def _send_vehicle_control_command_locked(
         self,
@@ -2370,6 +2407,35 @@ class ChinaClient:
             deadline=deadline,
         )
         _decode_g_app_envelope(response, operation=operation)
+
+    async def _get_bean_tech_cabin_clean_appointment_locked(
+        self,
+        identifier: VehicleIdentifier,
+        *,
+        deadline: _Deadline,
+    ) -> int | None:
+        operation: Literal["get_bean_tech_cabin_clean_appointment"] = (
+            "get_bean_tech_cabin_clean_appointment"
+        )
+        state = self._required_session(operation=operation)
+        vehicle = self._vehicles.get(identifier.value.casefold())
+        if vehicle is None or (vehicle.platform or "").strip().casefold() != "beantech":
+            raise GwmRoutePolicyError(operation=operation)
+        response = await self._send_locked(
+            self._build_bean_tech_subscribe_get_request(state, identifier),
+            deadline=deadline,
+        )
+        data = _decode_g_app_envelope(response, operation=operation)
+        if not isinstance(data, list) or not data:
+            return None
+        if not isinstance(data[0], Mapping):
+            raise GwmSchemaError(operation=operation)
+        time_ms = data[0].get("time")
+        if time_ms is None:
+            return None
+        if isinstance(time_ms, bool) or not isinstance(time_ms, int) or time_ms <= 0:
+            raise GwmSchemaError(operation=operation)
+        return time_ms
 
     async def _set_bean_tech_charge_window_locked(
         self,
@@ -3199,6 +3265,33 @@ class ChinaClient:
             url=_BEAN_TECH_SUBSCRIBE_URL,
             headers=headers,
             body=body.encode("utf-8"),
+        )
+
+    def _build_bean_tech_subscribe_get_request(
+        self,
+        state: ChinaAuthState,
+        identifier: VehicleIdentifier,
+    ) -> _ChinaTransportRequest:
+        operation: Literal["get_bean_tech_cabin_clean_appointment"] = (
+            "get_bean_tech_cabin_clean_appointment"
+        )
+        query = "cmds=CABIN_CLEANING_START&type=0"
+        path = _BEAN_TECH_SUBSCRIBE_PATH + "/" + identifier.value
+        headers = self._bean_tech_authenticated_headers(
+            state,
+            identifier,
+            operation=operation,
+            method="GET",
+            path=path,
+            parameter=query,
+        )
+        return _ChinaTransportRequest(
+            operation=operation,
+            service="bean_tech",
+            method="GET",
+            url=_BEAN_TECH_SUBSCRIBE_URL + "/" + identifier.encoded + "?" + query,
+            headers=headers,
+            body=None,
         )
 
     def _build_bean_tech_simple_get_request(

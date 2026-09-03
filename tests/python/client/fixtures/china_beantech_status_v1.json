@@ -5,13 +5,13 @@
   "request": {
     "method": "GET",
     "service": "bean_tech",
-    "url": "https://gw-app-gateway.gwmapp-h.com/app-api/api/v2.0/vehicle/getLastStatus?vin=LGWTEST0000000003",
+    "url": "https://gw-app-gateway.gwmapp-h.com/app-api/api/v3.0/vehicle/getLastStatus?vin=LGWTEST0000000003",
     "body": null,
     "headers": {
       "bt-auth-appkey": "7863128529",
       "bt-auth-nonce": "0123456789abcdef",
       "bt-auth-timestamp": "1723456789123",
-      "bt-auth-sign": "865b2cbf6396faf76a6ddf344f53e5c347bea11e5bf4cc11508189532aef2d15",
+      "bt-auth-sign": "940f290b7ae26aa85970841e8c27c9d86895f2319b12a52ee5c56579dbf02a85",
       "rs": "2",
       "appId": "097a7099af30d960",
       "brand": "10",

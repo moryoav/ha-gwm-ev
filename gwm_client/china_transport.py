@@ -79,6 +79,7 @@ type _ChinaOperation = Literal[
     "set_bean_tech_comfort_mode",
     "set_bean_tech_charge_soc",
     "set_bean_tech_cabin_clean_appointment",
+    "get_bean_tech_cabin_clean_appointment",
     "set_bean_tech_charge_window",
 ]
 
@@ -90,9 +91,9 @@ _BEAN_TECH_LOGIN_URL = (
     "https://gw-app-gateway.gwmapp-h.com/app-api/api/v1.0/userAuth/loginSSOAccount"
 )
 _BEAN_TECH_STATUS_URL = (
-    "https://gw-app-gateway.gwmapp-h.com/app-api/api/v2.0/vehicle/getLastStatus"
+    "https://gw-app-gateway.gwmapp-h.com/app-api/api/v3.0/vehicle/getLastStatus"
 )
-_BEAN_TECH_STATUS_PATH = "/app-api/api/v2.0/vehicle/getLastStatus"
+_BEAN_TECH_STATUS_PATH = "/app-api/api/v3.0/vehicle/getLastStatus"
 _NAVINFO_RESULT_URL = (
     "https://gw-app-gateway.gwmapp-h.com/app-api/api/v3.0/vehicle/remote-ctrl/result"
 )
@@ -361,6 +362,8 @@ class _ChinaTransportRequest:
             _validate_bean_tech_charge_soc_request(self, copied)
         elif self.operation == "set_bean_tech_cabin_clean_appointment":
             _validate_bean_tech_subscribe_request(self, copied)
+        elif self.operation == "get_bean_tech_cabin_clean_appointment":
+            _validate_bean_tech_subscribe_get_request(self, copied)
         elif self.operation == "set_bean_tech_charge_window":
             _validate_bean_tech_charge_setting_write_request(self, copied)
         else:  # pragma: no cover - the Literal is still a runtime boundary
@@ -2147,6 +2150,49 @@ def _validate_bean_tech_subscribe_request(
             headers["bt-auth-nonce"],
             headers["bt-auth-timestamp"],
             "json=" + raw_body,
+        )
+    ):
+        raise ValueError("route_invalid")
+
+
+def _validate_bean_tech_subscribe_get_request(
+    request: _ChinaTransportRequest,
+    headers: Mapping[str, str],
+) -> None:
+    vin = headers.get("vin", "")
+    try:
+        parsed = urlsplit(request.url)
+        if (
+            parsed.path != _BEAN_TECH_SUBSCRIBE_PATH + "/" + vin
+            or parsed.query != "cmds=CABIN_CLEANING_START&type=0"
+        ):
+            raise ValueError
+    except ValueError:
+        raise ValueError("route_invalid") from None
+    expected_url = (
+        _BEAN_TECH_SUBSCRIBE_URL
+        + "/"
+        + quote(vin, safe="", encoding="utf-8", errors="strict")
+        + "?cmds=CABIN_CLEANING_START&type=0"
+    )
+    if (
+        request.service != "bean_tech"
+        or request.method != "GET"
+        or request.body is not None
+        or request.url != expected_url
+        or parsed.scheme != "https"
+        or parsed.hostname != "gw-app-gateway.gwmapp-h.com"
+        or parsed.port is not None
+        or set(headers) != _BEAN_TECH_STATUS_HEADERS
+        or _VIN.fullmatch(vin) is None
+        or not _valid_bean_tech_authenticated_headers(headers)
+        or headers.get("bt-auth-sign")
+        != bean_tech_sign(
+            "GET",
+            _BEAN_TECH_SUBSCRIBE_PATH + "/" + vin,
+            headers["bt-auth-nonce"],
+            headers["bt-auth-timestamp"],
+            "cmds=CABIN_CLEANING_START&type=0",
         )
     ):
         raise ValueError("route_invalid")
