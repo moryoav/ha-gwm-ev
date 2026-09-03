@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
@@ -31,6 +32,10 @@ from .entity import GwmEntity, setup_vehicle_entities, vehicle_value
 from .errors import GwmCommandError
 
 PARALLEL_UPDATES = 0
+
+# How often an entity re-reads a car value the app can change, so an app-side
+# change is reflected without restarting Home Assistant.
+POLLED_READ_INTERVAL = 60.0
 
 CHARGING_STATUS_OPTIONS = [
     "disconnected",
@@ -573,6 +578,7 @@ class GwmLatestRemoteRecordSensor(GwmEntity, SensorEntity):
         self._attr_unique_id = f"{vin}_latest_remote_record"
         self._result_msg: str | None = None
         self._control_name: str | None = None
+        self._last_read_at = 0.0
 
     @property
     def available(self) -> bool:
@@ -591,6 +597,17 @@ class GwmLatestRemoteRecordSensor(GwmEntity, SensorEntity):
         if not self.available:
             return
         await self._async_refresh()
+
+    def _handle_coordinator_update(self) -> None:
+        """Re-read the latest remote record on a throttle so app state stays synced."""
+        super()._handle_coordinator_update()
+        if (
+            not self.available
+            or time.monotonic() - self._last_read_at < POLLED_READ_INTERVAL
+        ):
+            return
+        self._last_read_at = time.monotonic()
+        self.hass.async_create_task(self._async_refresh())
 
     async def _async_refresh(self) -> None:
         try:

@@ -544,6 +544,12 @@ class GwmCommandApi:
             identifier, time_ms=time_ms
         )
 
+    async def async_get_cabin_clean_appointment(self, vin: str) -> int | None:
+        """Read the scheduled BeanTech cabin-clean epoch-ms, or None if unset."""
+        self._ensure_china_vehicle_control_available()
+        identifier = _vehicle_identifier(vin, command_name="Cabin clean appointment")
+        return await self._cloud.async_get_bean_tech_cabin_clean_appointment(identifier)
+
     async def async_set_charge_window(
         self,
         vin: str,

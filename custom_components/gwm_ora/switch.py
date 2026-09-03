@@ -23,6 +23,10 @@ PARALLEL_UPDATES = 0
 # the value reported by the car.
 OPTIMISTIC_STATE_TIMEOUT = 120.0
 
+# How often an entity re-reads a car value that the app can change, so an
+# app-side toggle is reflected without restarting Home Assistant.
+POLLED_READ_INTERVAL = 60.0
+
 # Departure offset used when arming battery appointment heating without a
 # caller-supplied time; the car pre-heats the battery to be ready by then.
 DEFAULT_BATTERY_APPOINTMENT_OFFSET_MINUTES = 30
@@ -281,6 +285,7 @@ class GwmSmartChargeSwitch(GwmEntity, SwitchEntity):
         self._attr_unique_id = f"{vin}_smart_charge"
         self._start_time: str | None = None
         self._end_time: str | None = None
+        self._last_read_at = 0.0
 
     async def _async_read_state(self) -> None:
         """Read the charging mode and window from the car."""
@@ -302,6 +307,18 @@ class GwmSmartChargeSwitch(GwmEntity, SwitchEntity):
         if not self.charging_control_available or not self.is_china_beantech:
             return
         await self._async_read_state()
+
+    def _handle_coordinator_update(self) -> None:
+        """Re-read the charging mode on a throttle so app toggles stay synced."""
+        super()._handle_coordinator_update()
+        if (
+            not self.charging_control_available
+            or not self.is_china_beantech
+            or time.monotonic() - self._last_read_at < POLLED_READ_INTERVAL
+        ):
+            return
+        self._last_read_at = time.monotonic()
+        self.hass.async_create_task(self._async_read_state())
 
     @property
     def is_on(self) -> bool | None:
@@ -595,6 +612,7 @@ class GwmBatteryHeatSwitch(_OptimisticRemoteSwitch):
         self._turn_off_action = turn_off_action
         self._attr_translation_key = translation_key
         self._attr_unique_id = f"{vin}_{translation_key}"
+        self._last_read_at = 0.0
 
     def _actual_is_on(self) -> bool | None:
         """Return the last locally tracked heating state."""
@@ -617,6 +635,17 @@ class GwmBatteryHeatSwitch(_OptimisticRemoteSwitch):
         if not self.available:
             return
         await self._async_read_state()
+
+    def _handle_coordinator_update(self) -> None:
+        """Re-read battery-heat state on a throttle so app toggles stay synced."""
+        super()._handle_coordinator_update()
+        if (
+            not self.available
+            or time.monotonic() - self._last_read_at < POLLED_READ_INTERVAL
+        ):
+            return
+        self._last_read_at = time.monotonic()
+        self.hass.async_create_task(self._async_read_state())
 
     @property
     def available(self) -> bool:

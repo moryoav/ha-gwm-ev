@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 from homeassistant.components.select import SelectEntity
@@ -17,6 +18,10 @@ from .entity import GwmEntity, async_call_gwm_api, setup_vehicle_entities
 from .errors import GwmCommandError
 
 PARALLEL_UPDATES = 0
+
+# How often an entity re-reads a car value the app can change, so an app-side
+# change is reflected without restarting Home Assistant.
+POLLED_READ_INTERVAL = 60.0
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -39,6 +44,18 @@ def _clock_to_today_ms(value: str) -> int:
     if target < now_seconds:
         target += 24 * 3600
     return int(target * 1000)
+
+
+def _ms_to_clock(value_ms: int) -> str | None:
+    """Convert an epoch-ms timestamp into a 5-minute ``HH:MM`` selection."""
+    import time as _time
+
+    try:
+        local = _time.localtime(value_ms // 1000)
+    except (OverflowError, OSError, ValueError):
+        return None
+    minute = (local.tm_min // 5) * 5
+    return f"{local.tm_hour:02d}:{minute:02d}"
 
 
 async def async_setup_entry(
@@ -78,6 +95,7 @@ class _BeanTechTimeSelect(GwmEntity, SelectEntity):
         self._api = api
         self._attr_translation_key = translation_key
         self._attr_unique_id = f"{vin}_{translation_key}"
+        self._last_read_at = 0.0
 
     @property
     def available(self) -> bool:
@@ -86,6 +104,19 @@ class _BeanTechTimeSelect(GwmEntity, SelectEntity):
             and self.remote_commands_available
             and self.is_china_beantech
         )
+
+    def _handle_coordinator_update(self) -> None:
+        """Re-read the charge window on a throttle so app toggles stay synced."""
+        super()._handle_coordinator_update()
+        reader = getattr(self, "_async_read_window", None)
+        if (
+            reader is None
+            or not self.available
+            or time.monotonic() - self._last_read_at < POLLED_READ_INTERVAL
+        ):
+            return
+        self._last_read_at = time.monotonic()
+        self.hass.async_create_task(reader())
 
 
 class GwmChargeWindowStartSelect(_BeanTechTimeSelect):
@@ -219,6 +250,38 @@ class GwmCabinCleanAppointmentSelect(_BeanTechTimeSelect):
     def current_option(self) -> str | None:
         value = self.coordinator.local_flag(self.vin, "cabin_clean_appointment_time")
         return value if value in self._attr_options else "08:00"
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        if not self.available:
+            return
+        await self._async_read_state()
+
+    def _handle_coordinator_update(self) -> None:
+        """Re-read the scheduled cabin-clean time on a throttle."""
+        super()._handle_coordinator_update()
+        if (
+            not self.available
+            or time.monotonic() - self._last_read_at < POLLED_READ_INTERVAL
+        ):
+            return
+        self._last_read_at = time.monotonic()
+        self.hass.async_create_task(self._async_read_state())
+
+    async def _async_read_state(self) -> None:
+        """Read the scheduled cabin-clean time from the car."""
+        try:
+            time_ms = await self._api.async_get_cabin_clean_appointment(self.vin)
+        except (GwmCommandError, GwmClientError) as err:
+            _LOGGER.debug("Could not read cabin-clean appointment: %s", err)
+            return
+        if time_ms is None:
+            return
+        clock = _ms_to_clock(time_ms)
+        if clock is not None:
+            self.coordinator.set_local_flag(
+                self.vin, "cabin_clean_appointment_time", clock
+            )
 
     async def async_select_option(self, option: str) -> None:
         time_ms = _clock_to_today_ms(option)

@@ -45,7 +45,6 @@ from gwm_client import (
     GwmAuthenticationError,
     GwmClient,
     GwmClientConfig,
-    GwmClientError,
     GwmConfigurationError,
     GwmNetworkError,
     GwmOptionalEndpointError,
@@ -288,6 +287,11 @@ class _ChinaReadClient(Protocol):
         *,
         time_ms: int,
     ) -> None: ...
+
+    async def get_bean_tech_cabin_clean_appointment(
+        self,
+        identifier: VehicleIdentifier,
+    ) -> int | None: ...
 
     async def set_bean_tech_charge_window(
         self,
@@ -1028,6 +1032,19 @@ class GwmCloudClient:
             ).set_bean_tech_cabin_clean_appointment(identifier, time_ms=time_ms)
         )
 
+    async def async_get_bean_tech_cabin_clean_appointment(
+        self,
+        identifier: VehicleIdentifier,
+    ) -> int | None:
+        """Read the scheduled BeanTech cabin-clean epoch-ms through the client."""
+        if self.region != REGION_CHINA:
+            raise GwmRoutePolicyError(operation="get_bean_tech_cabin_clean_appointment")
+        return await self._async_with_session_renewal(
+            lambda: cast(
+                _ChinaReadClient, self._client
+            ).get_bean_tech_cabin_clean_appointment(identifier)
+        )
+
     async def async_set_bean_tech_charge_window(
         self,
         identifier: VehicleIdentifier,
@@ -1222,17 +1239,13 @@ class GwmCloudClient:
         self,
         identifier: VehicleIdentifier,
     ) -> CloudVehicleBasics:
+        # The app keeps the A/C set temperature as a local value and only
+        # persists it via POST remote-ctrl/config; it never reads it back
+        # through config/query. Mirror that: the set temperature is the local
+        # default, not a server-read signal.
         cached = self._china_climate_defaults.get(identifier.value)
         temperature = cached.temperature if cached is not None else "22"
         operation_time = cached.operation_time if cached is not None else "900"
-        try:
-            read_temp = await cast(
-                _ChinaReadClient, self._client
-            ).get_bean_tech_ac_temperature(identifier)
-            if read_temp is not None:
-                temperature = str(read_temp)
-        except GwmClientError:
-            pass
         climate = CloudClimateConfiguration(
             temperature=temperature,
             operation_time=operation_time,
