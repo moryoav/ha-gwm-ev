@@ -1915,6 +1915,9 @@ class ChinaClient:
                     await self._sleeper(_BEAN_TECH_COMMAND_RETRY_SECONDS)
                     continue
                 raise
+        # The loop returns on success or raises on the final 551210; this line
+        # is unreachable and only keeps mypy from seeing a fall-through.
+        raise GwmProtocolError(operation=operation)
 
     async def _send_vehicle_control_command_locked(
         self,

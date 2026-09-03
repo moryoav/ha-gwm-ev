@@ -17,6 +17,7 @@ from custom_components.gwm_ora.button import (
     GwmBeanTechComfortButton,
     GwmCabinCleanButton,
     GwmChinaRemoteButton,
+    GwmClimatePresetButton,
     GwmCloseWindowsButton,
 )
 from custom_components.gwm_ora.climate import GwmClimate
@@ -29,7 +30,6 @@ from custom_components.gwm_ora.sensor import (
     GwmSensor,
     _sensor_descriptions_for_vehicle,
 )
-from custom_components.gwm_ora.button import GwmClimatePresetButton
 from custom_components.gwm_ora.switch import (
     GwmBatteryHeatSwitch,
     GwmChargingScheduleSwitch,
