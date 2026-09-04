@@ -454,8 +454,6 @@ def test_china_vehicle_control_contract_is_closed_and_platform_filtered() -> Non
         "defrost_back_start",
         "defrost_back_stop",
         "cabin_clean",
-        "comfort_warm",
-        "comfort_cool",
         "comfort_off",
     } == BEANTECH_CHINA_VEHICLE_CONTROL_ACTIONS
     assert (

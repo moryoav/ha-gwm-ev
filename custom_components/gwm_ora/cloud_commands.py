@@ -44,8 +44,6 @@ from .errors import GwmCommandError, GwmCommandForbidden
 _DEFAULT_RESULT_TIMEOUT = timedelta(seconds=90)
 _RUSSIA_RESULT_TIMEOUT = timedelta(seconds=300)
 _SMART_CHARGE_COMMAND_NAME = "Smart charge"
-_BATTERY_APPOINTMENT_COMMAND_NAME = "Battery appointment heating"
-_CHARGE_SOC_COMMAND_NAME = "Charge SOC limit"
 _CHARGE_WINDOW_COMMAND_NAME = "Charge window"
 _LOGGER = logging.getLogger(__name__)
 
@@ -134,7 +132,7 @@ class GwmCommandApi:
             allowed_modes.update({"heat", "auto"})
         if normalized_mode not in allowed_modes:
             raise GwmCommandError(
-                "A/C mode must be 'cool', 'heat', or 'off' in mainland China"
+                "A/C mode must be 'cool', 'heat', 'auto', or 'off' in mainland China"
                 if self._cloud.region == "cn"
                 else "A/C mode must be 'cool' or 'off' in this region"
             )
@@ -843,6 +841,8 @@ def _expected_remote_type(command_name: str) -> str:
         return "0x0B"
     if command_name == "Air circulation":
         return "0x11"
+    if command_name == "Comfort mode":
+        return "china"
     if command_name in _CHINA_VEHICLE_CONTROL_NAMES.values():
         return "china"
     raise GwmCommandError(

@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import logging
 import time
+from datetime import timedelta
 
 from homeassistant.components.select import SelectEntity
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.util import dt as dt_util
 
 from gwm_client import GwmClientError
 
@@ -32,29 +34,22 @@ _FIVE_MINUTE_TIMES = [
 
 def _clock_to_today_ms(value: str) -> int:
     """Convert an ``HH:MM`` selection into today's epoch ms (tomorrow if passed)."""
-    import time as _time
-
     hour, minute = value.split(":", 1)
-    now = _time.localtime()
-    target = _time.mktime(
-        (now.tm_year, now.tm_mon, now.tm_mday, int(hour), int(minute), 0, 0, 0, -1)
-    )
-    now_seconds = _time.mktime(now)
-    if target < now_seconds:
-        target += 24 * 3600
-    return int(target * 1000)
+    now = dt_util.now()
+    target = now.replace(hour=int(hour), minute=int(minute), second=0, microsecond=0)
+    if target <= now:
+        target += timedelta(days=1)
+    return int(target.timestamp() * 1000)
 
 
 def _ms_to_clock(value_ms: int) -> str | None:
     """Convert an epoch-ms timestamp into a 5-minute ``HH:MM`` selection."""
-    import time as _time
-
     try:
-        local = _time.localtime(value_ms // 1000)
+        local = dt_util.as_local(dt_util.utc_from_timestamp(value_ms / 1000))
     except (OverflowError, OSError, ValueError):
         return None
-    minute = (local.tm_min // 5) * 5
-    return f"{local.tm_hour:02d}:{minute:02d}"
+    minute = (local.minute // 5) * 5
+    return f"{local.hour:02d}:{minute:02d}"
 
 
 async def async_setup_entry(
@@ -156,7 +151,7 @@ class GwmCabinCleanAppointmentSelect(_BeanTechTimeSelect):
 
     async def async_select_option(self, option: str) -> None:
         time_ms = _clock_to_today_ms(option)
-        self.coordinator.set_local_flag(self.vin, "cabin_clean_appointment_time", option)
         await async_call_gwm_api(
             self._api.async_set_cabin_clean_appointment(self.vin, time_ms=time_ms)
         )
+        self.coordinator.set_local_flag(self.vin, "cabin_clean_appointment_time", option)

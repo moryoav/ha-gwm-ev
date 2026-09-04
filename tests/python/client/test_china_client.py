@@ -1787,49 +1787,6 @@ async def test_beantech_cabin_clean_cmdbody_exact() -> None:
 
 
 @pytest.mark.asyncio
-async def test_beantech_comfort_warm_and_cool_cmdbody_exact() -> None:
-    transport = _FakeTransport(
-        acquire_vehicles=[FIXTURE["responses"]["discovery"]],
-        send_vehicle_control_command=[
-            {"code": "000000", "data": {}},
-            {"code": "000000", "data": {}},
-        ],
-    )
-    client = _client(transport)
-    assert isinstance(
-        await client.authenticate(_credentials(), state=_complete_state()),
-        ChinaAuthenticated,
-    )
-    identifier = VehicleIdentifier(BEAN_VIN)
-
-    await client.send_vehicle_control_command(
-        ChinaVehicleControlCommand(identifier, "comfort_warm")
-    )
-    await client.send_vehicle_control_command(
-        ChinaVehicleControlCommand(identifier, "comfort_cool")
-    )
-
-    sends = [
-        json.loads(request.body or b"null")
-        for request in transport.calls
-        if request.operation == "send_vehicle_control_command"
-    ]
-    assert [body["commands"][0] for body in sends] == [
-        {
-            "controlType": "COMFORT_MODE_CTRL",
-            "cmdBody": {"action": 1, "modeId": "4982234", "type": "1"},
-        },
-        {
-            "controlType": "COMFORT_MODE_CTRL",
-            "cmdBody": {"action": 1, "modeId": "4982235", "type": "2"},
-        },
-    ]
-    assert not any(
-        call.operation == "generate_security_token" for call in transport.calls
-    )
-
-
-@pytest.mark.asyncio
 async def test_beantech_comfort_off_multicommand_shape() -> None:
     transport = _FakeTransport(
         acquire_vehicles=[FIXTURE["responses"]["discovery"]],
@@ -1945,5 +1902,60 @@ async def test_beantech_cabin_clean_appointment_read_parses_time() -> None:
         + "?cmds=CABIN_CLEANING_START&type=0"
     )
     assert request.body is None
+
+
+@pytest.mark.asyncio
+async def test_beantech_comfort_modes_reject_non_mapping_entries() -> None:
+    transport = _FakeTransport(
+        acquire_vehicles=[FIXTURE["responses"]["discovery"]],
+        get_bean_tech_comfort_modes=[
+            {"code": "000000", "data": ["not-a-mapping"]},
+        ],
+    )
+    client = _client(transport)
+    assert isinstance(
+        await client.authenticate(_credentials(), state=_complete_state()),
+        ChinaAuthenticated,
+    )
+    with pytest.raises(GwmSchemaError):
+        await client.get_bean_tech_comfort_modes(VehicleIdentifier(BEAN_VIN))
+
+
+@pytest.mark.asyncio
+async def test_beantech_comfort_mode_rejects_missing_mode_id() -> None:
+    transport = _FakeTransport(
+        acquire_vehicles=[FIXTURE["responses"]["discovery"]],
+        get_bean_tech_comfort_modes=[
+            {"code": "000000", "data": [{"type": "1"}]},
+        ],
+    )
+    client = _client(transport)
+    assert isinstance(
+        await client.authenticate(_credentials(), state=_complete_state()),
+        ChinaAuthenticated,
+    )
+    with pytest.raises(GwmSchemaError):
+        await client.set_bean_tech_comfort_mode(
+            VehicleIdentifier(BEAN_VIN), mode_type="warm"
+        )
+
+
+@pytest.mark.asyncio
+async def test_beantech_cabin_clean_appointment_read_returns_none_when_unset() -> None:
+    transport = _FakeTransport(
+        acquire_vehicles=[FIXTURE["responses"]["discovery"]],
+        get_bean_tech_cabin_clean_appointment=[{"code": "000000", "data": []}],
+    )
+    client = _client(transport)
+    assert isinstance(
+        await client.authenticate(_credentials(), state=_complete_state()),
+        ChinaAuthenticated,
+    )
+    assert (
+        await client.get_bean_tech_cabin_clean_appointment(
+            VehicleIdentifier(BEAN_VIN)
+        )
+        is None
+    )
 
 

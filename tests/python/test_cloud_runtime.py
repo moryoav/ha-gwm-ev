@@ -870,7 +870,7 @@ async def test_china_runtime_handoff_maps_platform_capabilities_and_no_pin_write
     }
     assert snapshots[1]["capabilities"] == {
         "remote_commands": True,
-        "charging_control": True,
+        "charging_control": False,
         "climate_commands": True,
         "lock_window_commands": False,
         "china_vehicle_commands": True,

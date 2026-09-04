@@ -80,8 +80,6 @@ BEANTECH_CHINA_VEHICLE_CONTROL_ACTIONS: frozenset[ChinaVehicleControlAction] = f
         "defrost_back_start",
         "defrost_back_stop",
         "cabin_clean",
-        "comfort_warm",
-        "comfort_cool",
         "comfort_off",
     }
 )

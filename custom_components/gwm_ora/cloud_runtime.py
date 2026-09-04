@@ -555,7 +555,7 @@ class GwmCloudClient:
                 }
                 remote_commands_available = self._lock_window_commands_enabled and china_supported
                 charging_control_available = self._charging_control_enabled and (
-                    self.region != REGION_CHINA or china_supported
+                    self.region != REGION_CHINA or platform == "navinfo"
                 )
                 snapshot = map_vehicle_snapshot(
                     vehicle,
@@ -706,6 +706,8 @@ class GwmCloudClient:
         *,
         security_password_hash: str | None = None,
     ) -> RemoteCommandAcceptance:
+        if self.region == REGION_CHINA:
+            raise GwmRoutePolicyError(operation="send_lock_command")
         if not isinstance(security_password_hash, str):
             raise GwmConfigurationError(operation="send_lock_command")
         return await self._async_with_session_renewal(
@@ -721,6 +723,8 @@ class GwmCloudClient:
         *,
         security_password_hash: str | None = None,
     ) -> RemoteCommandAcceptance:
+        if self.region == REGION_CHINA:
+            raise GwmRoutePolicyError(operation="send_close_windows_command")
         if not isinstance(security_password_hash, str):
             raise GwmConfigurationError(operation="send_close_windows_command")
         return await self._async_with_session_renewal(

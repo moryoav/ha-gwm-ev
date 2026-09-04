@@ -1102,12 +1102,18 @@ class ChinaClient:
                 await self._sleep_before_retry(deadline, operation=operation)
         raise GwmProtocolError(operation=operation)  # pragma: no cover
 
-    async def _sleep_before_retry(self, deadline: _Deadline, *, operation: str) -> None:
+    async def _sleep_before_retry(
+        self,
+        deadline: _Deadline,
+        *,
+        operation: str,
+        seconds: float = _INIT_RETRY_SECONDS,
+    ) -> None:
         loop = asyncio.get_running_loop()
-        if deadline.remaining(loop.time()) <= _INIT_RETRY_SECONDS:
+        if deadline.remaining(loop.time()) <= seconds:
             raise GwmDeadlineExceededError(operation=operation)
         try:
-            await self._sleeper(_INIT_RETRY_SECONDS)
+            await self._sleeper(seconds)
         except asyncio.CancelledError:
             raise
         except GwmClientError:
@@ -1519,7 +1525,11 @@ class ChinaClient:
                     err.api_code == "551210"
                     and attempt < _MAX_BEAN_TECH_COMMAND_ATTEMPTS - 1
                 ):
-                    await self._sleeper(_BEAN_TECH_COMMAND_RETRY_SECONDS)
+                    await self._sleep_before_retry(
+                        deadline,
+                        operation=operation,
+                        seconds=_BEAN_TECH_COMMAND_RETRY_SECONDS,
+                    )
                     continue
                 raise
         # The loop returns on success or raises on the final 551210; this line
@@ -1641,13 +1651,14 @@ class ChinaClient:
         platform = (vehicle.platform or "").strip().casefold()
         if platform not in {"navinfo", "beantech"}:
             raise GwmRoutePolicyError(operation=operation)
-        request = (
-            self._build_navinfo_result_request(state, identifier, command_id)
-            if platform == "navinfo"
-            else self._build_bean_tech_result_request(
+        if platform == "navinfo":
+            if msg_type != "remote":
+                raise GwmRoutePolicyError(operation=operation)
+            request = self._build_navinfo_result_request(state, identifier, command_id)
+        else:
+            request = self._build_bean_tech_result_request(
                 state, identifier, command_id, msg_type=msg_type
             )
-        )
         response = await self._send_locked(
             request,
             deadline=deadline,
@@ -1724,9 +1735,11 @@ class ChinaClient:
             deadline=deadline,
         )
         data = _decode_g_app_envelope(response, operation=operation)
-        if not isinstance(data, list):
+        if not isinstance(data, list) or not all(
+            isinstance(mode, Mapping) for mode in data
+        ):
             raise GwmSchemaError(operation=operation)
-        return tuple(mode for mode in data if isinstance(mode, Mapping))
+        return tuple(data)
 
     async def _set_bean_tech_comfort_mode_locked(
         self,
@@ -1750,9 +1763,16 @@ class ChinaClient:
         else:
             want_type = "1" if mode_type == "warm" else "2"
             mode = next((m for m in modes if str(m.get("type")) == want_type), None)
-        mode_id = None if mode is None else mode.get("modeId")
-        mode_type_str = None if mode is None else mode.get("type")
-        if mode_id is None or mode_type_str is None:
+        try:
+            mode_id = None if mode is None else _scalar_text(mode.get("modeId"))
+            mode_type_str = None if mode is None else _scalar_text(mode.get("type"))
+        except ValueError:
+            raise GwmSchemaError(operation=operation) from None
+        if (
+            mode_id is None
+            or not mode_id.strip()
+            or mode_type_str not in {"1", "2"}
+        ):
             raise GwmSchemaError(operation=operation)
         sequence_number = self._bean_tech_sequence(operation=operation)
         response = await self._send_locked(
@@ -3127,10 +3147,6 @@ def _bean_tech_vehicle_control(
         return "DEFROST_BACK_STOP", None
     if command.action == "cabin_clean":
         return "CABIN_CLEANING_START", {"operationTime": 60}
-    if command.action == "comfort_warm":
-        return "COMFORT_MODE_CTRL", {"action": 1, "modeId": "4982234", "type": "1"}
-    if command.action == "comfort_cool":
-        return "COMFORT_MODE_CTRL", {"action": 1, "modeId": "4982235", "type": "2"}
     raise ValueError("vehicle_control_action_invalid")
 
 

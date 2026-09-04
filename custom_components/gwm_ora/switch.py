@@ -23,14 +23,6 @@ PARALLEL_UPDATES = 0
 # the value reported by the car.
 OPTIMISTIC_STATE_TIMEOUT = 120.0
 
-# How often an entity re-reads a car value that the app can change, so an
-# app-side toggle is reflected without restarting Home Assistant.
-POLLED_READ_INTERVAL = 60.0
-
-# Departure offset used when arming battery appointment heating without a
-# caller-supplied time; the car pre-heats the battery to be ready by then.
-DEFAULT_BATTERY_APPOINTMENT_OFFSET_MINUTES = 30
-
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -57,7 +49,14 @@ async def async_setup_entry(
             coordinator.region == "cn"
             and str(vehicle.get("platform") or "").lower() == "beantech"
         )
-        switches: list[GwmEntity] = [
+        if not is_beantech:
+            # The overseas charging-schedule and front-defroster switches have no
+            # BeanTech equivalent, so they are only created for non-BeanTech cars.
+            return [
+                GwmChargingScheduleSwitch(api, coordinator, vin),
+                GwmFrontDefrosterSwitch(api, coordinator, vin),
+            ]
+        return [
             GwmRemoteControlSwitch(
                 api,
                 coordinator,
@@ -122,15 +121,6 @@ async def async_setup_entry(
                 translation_key="defrost_back",
             ),
         ]
-        if not is_beantech:
-            # The overseas charging-schedule and front-defroster switches have no
-            # BeanTech equivalent, so they are only created for non-BeanTech cars.
-            switches = [
-                GwmChargingScheduleSwitch(api, coordinator, vin),
-                GwmFrontDefrosterSwitch(api, coordinator, vin),
-                *switches,
-            ]
-        return switches
 
     setup_vehicle_entities(entry, async_add_entities, switches_for_vehicle)
 
