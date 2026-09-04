@@ -50,6 +50,7 @@ class GwmDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._command_tasks: dict[str, asyncio.Task[None]] = {}
         self._command_statuses: dict[str, str] = {}
         self._charging_plan_active: dict[str, bool] = {}
+        self._local_flags: dict[tuple[str, str], Any] = {}
 
     async def _async_update_data(self) -> dict[str, Any]:
         try:
@@ -133,6 +134,20 @@ class GwmDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def set_charging_plan_active(self, vin: str, active: bool) -> None:
         """Update a vehicle's locally known charging-plan state."""
         self._charging_plan_active[vin] = active
+        self.async_update_listeners()
+
+    def local_flag(self, vin: str, key: str) -> Any:
+        """Return a locally tracked value for a vehicle.
+
+        For features the vehicle accepts commands for but never reports back in
+        the polled snapshot, so the entity can at least show what was last sent
+        from Home Assistant.
+        """
+        return self._local_flags.get((vin, key))
+
+    def set_local_flag(self, vin: str, key: str, value: Any) -> None:
+        """Update a locally tracked value."""
+        self._local_flags[(vin, key)] = value
         self.async_update_listeners()
 
     def async_track_command(self, command: dict[str, Any]) -> None:

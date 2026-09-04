@@ -53,15 +53,15 @@ class GwmClimateRunTimeNumber(GwmEntity, NumberEntity):
         super().__init__(coordinator, vin)
         self._api = api
         self._attr_unique_id = f"{vin}_climate_run_time"
+        # BeanTech only accepts whole 5-minute steps (5/10/.../30); other
+        # platforms keep the upstream 1-minute step.
+        if self.is_china_beantech:
+            self._attr_native_step = 5
 
     @property
     def available(self) -> bool:
         """Return whether the climate run-time setting is available."""
-        return (
-            super().available
-            and self.climate_commands_available
-            and not self.is_china_beantech
-        )
+        return super().available and self.climate_commands_available
 
     @property
     def native_value(self) -> float | None:

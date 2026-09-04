@@ -248,6 +248,9 @@
     "number": {
       "climate_run_time": { "name": "Climate run time" }
     },
+    "select": {
+      "cabin_clean_appointment_time": { "name": "Cabin clean appointment" }
+    },
     "lock": {
       "door_lock": { "name": "Door lock" }
     },
@@ -266,11 +269,25 @@
       "half_open_sunroof": { "name": "Half open sunroof" },
       "fully_open_sunroof": { "name": "Fully open sunroof" },
       "cabin_purge": { "name": "Cabin purge" },
-      "force_refresh": { "name": "Force refresh" }
+      "force_refresh": { "name": "Force refresh" },
+      "cabin_clean": { "name": "Cabin clean" },
+      "comfort_warm": { "name": "Comfort warm" },
+      "comfort_cool": { "name": "Comfort cool" },
+      "comfort_last": { "name": "Comfort (last used)" },
+      "comfort_off": { "name": "Comfort off" },
+      "fast_cool": { "name": "Fast cool" },
+      "fast_heat": { "name": "Fast heat" }
     },
     "switch": {
       "front_defroster": { "name": "Front defroster" },
-      "charging_schedule": { "name": "Scheduled charging" }
+      "charging_schedule": { "name": "Scheduled charging" },
+      "seat_heating": { "name": "Driver seat heating" },
+      "seat_heating_passenger": { "name": "Passenger seat heating" },
+      "seat_ventilation": { "name": "Driver seat ventilation" },
+      "seat_ventilation_passenger": { "name": "Passenger seat ventilation" },
+      "steering_wheel_heating": { "name": "Steering wheel heating" },
+      "defrost_front": { "name": "Front defrost" },
+      "defrost_back": { "name": "Rear defrost" }
     }
   },
   "services": {

@@ -439,11 +439,22 @@ def test_china_vehicle_control_contract_is_closed_and_platform_filtered() -> Non
     identifier = VehicleIdentifier(_fixture()["vin"])
     assert len(NAVINFO_CHINA_VEHICLE_CONTROL_ACTIONS) == 13
     assert {
-        "remote_start",
-        "remote_stop",
-        "horn",
-        "flash_lights",
-        "sunroof_close",
+        "seat_heating_start",
+        "seat_heating_stop",
+        "seat_heating_start_passenger",
+        "seat_heating_stop_passenger",
+        "seat_ventilation_start",
+        "seat_ventilation_stop",
+        "seat_ventilation_start_passenger",
+        "seat_ventilation_stop_passenger",
+        "steering_wheel_heating",
+        "steering_wheel_heatless",
+        "defrost_front_start",
+        "defrost_front_stop",
+        "defrost_back_start",
+        "defrost_back_stop",
+        "cabin_clean",
+        "comfort_off",
     } == BEANTECH_CHINA_VEHICLE_CONTROL_ACTIONS
     assert (
         ChinaVehicleControlCommand(
