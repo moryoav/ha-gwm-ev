@@ -76,9 +76,9 @@ _BEAN_TECH_LOGIN_URL = (
     "https://gw-app-gateway.gwmapp-h.com/app-api/api/v1.0/userAuth/loginSSOAccount"
 )
 _BEAN_TECH_STATUS_URL = (
-    "https://gw-app-gateway.gwmapp-h.com/app-api/api/v2.0/vehicle/getLastStatus"
+    "https://gw-app-gateway.gwmapp-h.com/app-api/api/v3.0/vehicle/getLastStatus"
 )
-_BEAN_TECH_STATUS_PATH = "/app-api/api/v2.0/vehicle/getLastStatus"
+_BEAN_TECH_STATUS_PATH = "/app-api/api/v3.0/vehicle/getLastStatus"
 _NAVINFO_RESULT_URL = (
     "https://gw-app-gateway.gwmapp-h.com/app-api/api/v3.0/vehicle/remote-ctrl/result"
 )
