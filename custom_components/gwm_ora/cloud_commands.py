@@ -289,10 +289,13 @@ class GwmCommandApi:
             raise GwmCommandError("Door lock action must be 'lock' or 'unlock'")
         command_name = "Door lock" if normalized_action == "lock" else "Door unlock"
         command = DoorLockCommand(identifier, normalized_action == "lock")
-        acceptance = await self._cloud.async_send_lock_command(
-            command,
-            security_password_hash=_security_password_hash(self._security_pin),
-        )
+        if self._cloud.region == "cn":
+            acceptance = await self._cloud.async_send_lock_command(command)  # type: ignore[call-arg]
+        else:
+            acceptance = await self._cloud.async_send_lock_command(
+                command,
+                security_password_hash=_security_password_hash(self._security_pin),
+            )
         return await self._record_acceptance(
             identifier, command_name, acceptance.command_id
         )
@@ -303,10 +306,13 @@ class GwmCommandApi:
         self._ensure_available()
         identifier = _vehicle_identifier(vin, command_name="Window close")
         command = CloseWindowsCommand(identifier)
-        acceptance = await self._cloud.async_send_close_windows_command(
-            command,
-            security_password_hash=_security_password_hash(self._security_pin),
-        )
+        if self._cloud.region == "cn":
+            acceptance = await self._cloud.async_send_close_windows_command(command)  # type: ignore[call-arg]
+        else:
+            acceptance = await self._cloud.async_send_close_windows_command(
+                command,
+                security_password_hash=_security_password_hash(self._security_pin),
+            )
         return await self._record_acceptance(
             identifier, "Window close", acceptance.command_id
         )

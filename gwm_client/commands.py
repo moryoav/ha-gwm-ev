@@ -65,6 +65,9 @@ NAVINFO_CHINA_VEHICLE_CONTROL_ACTIONS: frozenset[ChinaVehicleControlAction] = fr
 )
 BEANTECH_CHINA_VEHICLE_CONTROL_ACTIONS: frozenset[ChinaVehicleControlAction] = frozenset(
     {
+        "remote_start",
+        "remote_stop",
+        "sunroof_close",
         "seat_heating_start",
         "seat_heating_stop",
         "seat_heating_start_passenger",

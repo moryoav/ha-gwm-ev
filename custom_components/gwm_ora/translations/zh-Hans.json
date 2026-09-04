@@ -102,6 +102,7 @@
           "enable_remote_commands": "启用远程命令",
           "enable_charging_control": "启用充电控制",
           "security_pin": "车辆安全 PIN",
+          "beantech_encrypted_security_pin": "BeanTech 安全 PIN 加密值",
           "log_level": "日志级别"
         },
         "data_description": {
@@ -109,6 +110,7 @@
           "enable_remote_commands": "明确选择启用支持的远程命令控制。",
           "enable_charging_control": "定时充电的独立明确开关。",
           "security_pin": "中国大陆以外的远程命令需要此 PIN。已存储的值会显示在带掩码的密码字段中，并在诊断信息中保持隐藏。",
+          "beantech_encrypted_security_pin": "仅中国大陆 BeanTech 车辆。填写 App 加密后的结果，不是 PIN 数字本身。留空则维持原有命令路径。",
           "log_level": "此集成的诊断日志详细程度。"
         }
       }
@@ -135,6 +137,9 @@
     },
     "invalid_climate_run_time": {
       "message": "空调运行时长必须是 5 到 30 分钟之间的整数。"
+    },
+    "invalid_remote_start_run_time": {
+      "message": "远程启动时长必须是 5 到 30 分钟之间、且为 5 的倍数。"
     }
   },
   "entity": {
@@ -246,7 +251,8 @@
       "ac_climate": { "name": "空调" }
     },
     "number": {
-      "climate_run_time": { "name": "空调运行时长" }
+      "climate_run_time": { "name": "空调运行时长" },
+      "remote_start_run_time": { "name": "远程启动时长" }
     },
     "select": {
       "cabin_clean_appointment_time": { "name": "车内清洁预约时间" }

@@ -733,6 +733,63 @@ async def test_china_vehicle_control_is_no_pin_journaled_and_restart_safe(
 
 
 @pytest.mark.asyncio
+async def test_china_no_pin_lifecycle_journals_heat_lock_window_and_extended_controls(
+    tmp_path: Path,
+) -> None:
+    clock = _Clock()
+    first_cloud = _Cloud()
+    first, store, credentials = await _china_api(tmp_path, first_cloud, clock)
+
+    accepted = (
+        await first.async_set_climate(_VIN, mode="heat", temperature=26),
+        await first.async_lock(_VIN, "unlock"),
+        await first.async_close_windows(_VIN),
+        await first.async_vehicle_control(_VIN, "sunroof_close"),
+    )
+    assert [
+        entry.command_name
+        for entry in await store.async_get_command_journal(
+            cloud_entry_data(credentials)
+        )
+    ] == [
+        "A/C",
+        "Door unlock",
+        "Window close",
+        "Sunroof close",
+    ]
+
+    second_cloud = _Cloud()
+    second_cloud.region = "cn"
+    command_ids = (
+        "provider-command-1",
+        "provider-command-lock",
+        "provider-command-windows",
+        "provider-command-control",
+    )
+    second_cloud.poll_results = [
+        (RemoteCommandResultItem(command_id, None, "0", "Success"),)
+        for command_id in command_ids
+    ]
+    second = GwmCommandApi(
+        second_cloud,  # type: ignore[arg-type]
+        store,
+        credentials,
+        enabled=True,
+        security_pin=None,
+        clock=clock,
+    )
+
+    restored = await second.async_restore(cloud_entry_data(credentials))
+    assert {item["id"] for item in restored} == {item["id"] for item in accepted}
+    for item in accepted:
+        assert (await second.async_get_command(str(item["id"])))["state"] == "completed"
+    assert second_cloud.sent == []
+    assert second_cloud.lock_sent == []
+    assert second_cloud.windows_sent == []
+    assert second_cloud.vehicle_controls_sent == []
+
+
+@pytest.mark.asyncio
 async def test_china_vehicle_control_validation_rejection_and_region_gate_are_local(
     tmp_path: Path,
 ) -> None:

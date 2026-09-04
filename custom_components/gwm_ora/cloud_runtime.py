@@ -71,6 +71,7 @@ from .cloud_auth import (
 from .const import (
     CONF_ACCOUNT,
     CONF_AUTHENTICATION_METHOD,
+    CONF_BEANTECH_ENCRYPTED_SECURITY_PIN,
     CONF_COUNTRY,
     CONF_PASSWORD,
     CONF_REGION,
@@ -84,6 +85,14 @@ from .const import (
 _HANDOFF_TTL_SECONDS = 5 * 60
 _HANDOFF_DATA_KEY = f"{DOMAIN}_cloud_handoffs"
 _ACCOUNT_BINDING = re.compile(r"[0-9a-f]{64}")
+
+
+def _optional_option_text(data: Mapping[str, Any], key: str) -> str | None:
+    value = data.get(key)
+    if not isinstance(value, str):
+        return None
+    stripped = value.strip()
+    return stripped or None
 
 
 class _OverseasReadClient(Protocol):
@@ -200,6 +209,16 @@ class _ChinaReadClient(Protocol):
     async def send_climate_command(
         self,
         command: ClimateCommand,
+    ) -> RemoteCommandAcceptance: ...
+
+    async def send_lock_command(
+        self,
+        command: DoorLockCommand,
+    ) -> RemoteCommandAcceptance: ...
+
+    async def send_close_windows_command(
+        self,
+        command: CloseWindowsCommand,
     ) -> RemoteCommandAcceptance: ...
 
     async def send_vehicle_control_command(
@@ -443,6 +462,7 @@ class GwmCloudClient:
         bootstrap: GwmCloudBootstrap,
         *,
         state_store: _AuthStateStore | None = None,
+        options: Mapping[str, Any] | None = None,
         climate_commands_enabled: bool = False,
         lock_window_commands_enabled: bool = False,
         charging_control_enabled: bool = False,
@@ -474,6 +494,9 @@ class GwmCloudClient:
             client = ChinaClient(
                 ChinaClientConfig(),
                 authenticated_state=bootstrap.state,
+                bean_tech_security_password=_optional_option_text(
+                    options or {}, CONF_BEANTECH_ENCRYPTED_SECURITY_PIN
+                ),
             )
             return cls(
                 credentials.region,
@@ -573,7 +596,7 @@ class GwmCloudClient:
                     self.region != REGION_CHINA or china_supported
                 )
                 capabilities["lock_window_commands"] = self._lock_window_commands_enabled and (
-                    self.region != REGION_CHINA
+                    self.region != REGION_CHINA or china_supported
                 )
                 capabilities["charging_control"] = charging_control_available
                 capabilities["china_vehicle_commands"] = self._lock_window_commands_enabled and china_supported
@@ -707,7 +730,9 @@ class GwmCloudClient:
         security_password_hash: str | None = None,
     ) -> RemoteCommandAcceptance:
         if self.region == REGION_CHINA:
-            raise GwmRoutePolicyError(operation="send_lock_command")
+            return await self._async_with_session_renewal(
+                lambda: cast(_ChinaReadClient, self._client).send_lock_command(command)
+            )
         if not isinstance(security_password_hash, str):
             raise GwmConfigurationError(operation="send_lock_command")
         return await self._async_with_session_renewal(
@@ -724,7 +749,9 @@ class GwmCloudClient:
         security_password_hash: str | None = None,
     ) -> RemoteCommandAcceptance:
         if self.region == REGION_CHINA:
-            raise GwmRoutePolicyError(operation="send_close_windows_command")
+            return await self._async_with_session_renewal(
+                lambda: cast(_ChinaReadClient, self._client).send_close_windows_command(command)
+            )
         if not isinstance(security_password_hash, str):
             raise GwmConfigurationError(operation="send_close_windows_command")
         return await self._async_with_session_renewal(

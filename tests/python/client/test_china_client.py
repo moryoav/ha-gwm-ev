@@ -35,6 +35,9 @@ from gwm_client.china_transport import (
 from gwm_client.commands import (
     ChinaVehicleControlCommand,
     ClimateCommand,
+    CloseWindowsCommand,
+    DoorLockCommand,
+    RemoteCommandResultItem,
 )
 from gwm_client.config import RequestTimeouts
 from gwm_client.errors import (
@@ -165,6 +168,7 @@ def _client(
     clock: Any = lambda: CLOCK,
     sleeper: Any = None,
     config: ChinaClientConfig | None = None,
+    bean_tech_security_password: str | None = None,
 ) -> ChinaClient:
     return ChinaClient(
         config or ChinaClientConfig(),
@@ -174,6 +178,7 @@ def _client(
         nonce_source=lambda: FIXTURE["nonce"],
         sequence_source=lambda: BEAN_COMMAND_ID,
         sleeper=sleeper,
+        bean_tech_security_password=bean_tech_security_password,
     )
 
 
@@ -1959,3 +1964,435 @@ async def test_beantech_cabin_clean_appointment_read_returns_none_when_unset() -
     )
 
 
+
+
+@pytest.mark.asyncio
+async def test_navinfo_lock_unlock_close_windows_and_result_need_no_pin() -> None:
+    transactions = ("TX-LOCK-1", "TX-UNLOCK-2", "TX-WINDOW-3")
+    transport = _FakeTransport(
+        acquire_vehicles=[FIXTURE["responses"]["discovery"]],
+        send_lock_command=[
+            {"header": {"c": "0"}, "body": {"transactionId": transactions[0]}},
+            {"header": {"c": "0"}, "body": {"transactionId": transactions[1]}},
+        ],
+        send_close_windows_command=[
+            {"header": {"c": "0"}, "body": {"transactionId": transactions[2]}}
+        ],
+        get_remote_command_result=[
+            {
+                "code": "000000",
+                "data": {
+                    "messageList": [
+                        {
+                            "messageType": "remote",
+                            "messageData": json.dumps(
+                                {
+                                    "transactionId": transactions[2],
+                                    "resultCode": "0",
+                                    "resultMessage": "Success",
+                                },
+                                separators=(",", ":"),
+                            ),
+                        }
+                    ]
+                },
+            }
+        ],
+    )
+    client = _client(transport)
+    assert isinstance(
+        await client.authenticate(_credentials(), state=_complete_state()),
+        ChinaAuthenticated,
+    )
+    identifier = VehicleIdentifier(VIN)
+
+    locked = await client.send_lock_command(DoorLockCommand(identifier, True))
+    unlocked = await client.send_lock_command(DoorLockCommand(identifier, False))
+    closed = await client.send_close_windows_command(CloseWindowsCommand(identifier))
+    results = await client.get_remote_command_results(identifier, closed.command_id)
+
+    assert (locked.command_id, unlocked.command_id, closed.command_id) == transactions
+    requests = [
+        request
+        for request in transport.calls
+        if request.operation in {"send_lock_command", "send_close_windows_command"}
+    ]
+    assert [_auto_ai_payload(request)["body"]["cmdCode"] for request in requests] == [2, 1, 3]
+    assert all(
+        _auto_ai_payload(request)["header"]["fn"] == "GW.M.SEND_COMMON_COMMAND"
+        for request in requests
+    )
+    assert results[0].command_id == transactions[2]
+    assert results[0].result_code == "0"
+
+
+@pytest.mark.asyncio
+async def test_beantech_lock_and_windows_use_timely_with_token() -> None:
+    transport = _FakeTransport(
+        acquire_vehicles=[FIXTURE["responses"]["discovery"]],
+        generate_security_token=[
+            {"code": "000000", "data": "JWT"} for _ in range(3)
+        ],
+        send_lock_command=[{"code": "000000", "data": {}} for _ in range(2)],
+        send_close_windows_command=[{"code": "000000", "data": {}}],
+    )
+    client = _client(transport, bean_tech_security_password="ENCRYPTED==")
+    assert isinstance(
+        await client.authenticate(_credentials(), state=_complete_state()),
+        ChinaAuthenticated,
+    )
+    identifier = VehicleIdentifier(BEAN_VIN)
+    await client.send_lock_command(DoorLockCommand(identifier, lock=False))
+    await client.send_lock_command(DoorLockCommand(identifier, lock=True))
+    await client.send_close_windows_command(CloseWindowsCommand(identifier))
+
+    bodies = [
+        json.loads(call.body or b"null")
+        for call in transport.calls
+        if call.operation in {"send_lock_command", "send_close_windows_command"}
+    ]
+    assert [body["commands"][0] for body in bodies] == [
+        {"controlType": "VEHICLE_UNLOCK"},
+        {"controlType": "VEHICLE_LOCK"},
+        {
+            "controlType": "WINDOW_CLOSE",
+            "cmdBody": {
+                "leftFront": 0,
+                "leftBack": 0,
+                "rightFront": 0,
+                "rightBack": 0,
+            },
+        },
+    ]
+    assert sum(
+        1 for call in transport.calls if call.operation == "generate_security_token"
+    ) == 3
+
+
+@pytest.mark.asyncio
+async def test_beantech_result_polling_parses_v3_message_list_when_password_configured() -> None:
+    transport = _FakeTransport(
+        acquire_vehicles=[FIXTURE["responses"]["discovery"]],
+        generate_security_token=[{"code": "000000", "data": "JWT"}],
+        send_lock_command=[{"code": "000000", "data": {}}],
+        get_remote_command_result=[
+            {
+                "code": "000000",
+                "data": {
+                    "messageList": [
+                        {
+                            "messageType": "remote",
+                            "messageData": {
+                                "resultCode": "0",
+                                "resultMessage": "闭锁成功",
+                            },
+                        }
+                    ]
+                },
+            }
+        ],
+    )
+    client = _client(transport, bean_tech_security_password="ENCRYPTED==")
+    assert isinstance(
+        await client.authenticate(_credentials(), state=_complete_state()),
+        ChinaAuthenticated,
+    )
+    identifier = VehicleIdentifier(BEAN_VIN)
+    locked = await client.send_lock_command(DoorLockCommand(identifier, True))
+    results = await client.get_remote_command_results(identifier, locked.command_id)
+
+    assert results == (
+        RemoteCommandResultItem(BEAN_COMMAND_ID, "remote", "0", "闭锁成功"),
+    )
+
+
+@pytest.mark.asyncio
+async def test_beantech_result_polling_normalises_pending_v3_result() -> None:
+    transport = _FakeTransport(
+        acquire_vehicles=[FIXTURE["responses"]["discovery"]],
+        generate_security_token=[{"code": "000000", "data": "JWT"}],
+        send_lock_command=[{"code": "000000", "data": {}}],
+        get_remote_command_result=[
+            {
+                "code": "000000",
+                "data": {
+                    "messageList": [
+                        {
+                            "messageType": "remote",
+                            "messageData": {"resultCode": "2"},
+                        }
+                    ]
+                },
+            }
+        ],
+    )
+    client = _client(transport, bean_tech_security_password="ENCRYPTED==")
+    assert isinstance(
+        await client.authenticate(_credentials(), state=_complete_state()),
+        ChinaAuthenticated,
+    )
+    identifier = VehicleIdentifier(BEAN_VIN)
+    locked = await client.send_lock_command(DoorLockCommand(identifier, True))
+    results = await client.get_remote_command_results(identifier, locked.command_id)
+
+    assert results[0].result_code == "2000"
+    assert results[0].result_message == "Command is still running"
+
+
+@pytest.mark.asyncio
+async def test_task18_commands_reject_unknown_china_platform_before_transport() -> None:
+    transport = _FakeTransport(acquire_vehicles=[FIXTURE["responses"]["discovery"]])
+    client = _client(transport)
+    assert isinstance(
+        await client.authenticate(_credentials(), state=_complete_state()),
+        ChinaAuthenticated,
+    )
+    before = len(transport.calls)
+
+    with pytest.raises(GwmRoutePolicyError):
+        await client.send_lock_command(
+            DoorLockCommand(VehicleIdentifier(UNSUPPORTED_VIN), True)
+        )
+
+    assert len(transport.calls) == before
+
+
+@pytest.mark.asyncio
+async def test_beantech_extended_controls_are_exact_and_unsupported_actions_fail_locally() -> None:
+    transport = _FakeTransport(
+        acquire_vehicles=[FIXTURE["responses"]["discovery"]],
+        generate_security_token=[
+            {"code": "000000", "data": "JWT"} for _ in range(3)
+        ],
+        send_vehicle_control_command=[
+            {"code": "000000", "data": {}} for _ in range(3)
+        ],
+    )
+    client = _client(transport, bean_tech_security_password="ENCRYPTED==")
+    assert isinstance(
+        await client.authenticate(_credentials(), state=_complete_state()),
+        ChinaAuthenticated,
+    )
+    identifier = VehicleIdentifier(BEAN_VIN)
+
+    for action, run_time in (
+        ("remote_start", 10),
+        ("remote_stop", None),
+        ("sunroof_close", None),
+    ):
+        accepted = await client.send_vehicle_control_command(
+            ChinaVehicleControlCommand(identifier, action, run_time)  # type: ignore[arg-type]
+        )
+        assert accepted.command_id == BEAN_COMMAND_ID
+
+    sends = [
+        json.loads(request.body or b"null")
+        for request in transport.calls
+        if request.operation == "send_vehicle_control_command"
+    ]
+    assert [body["commands"][0] for body in sends] == [
+        {"controlType": "ENGINE_START", "cmdBody": {"operationTime": 600}},
+        {"controlType": "ENGINE_STOP"},
+        {"controlType": "SKYLIGNT_CLOSE", "cmdBody": {"skyLight": 0}},
+    ]
+
+    before = len(transport.calls)
+    with pytest.raises(GwmRoutePolicyError):
+        await client.send_vehicle_control_command(
+            ChinaVehicleControlCommand(identifier, "tailgate_open")
+        )
+    assert len(transport.calls) == before
+
+
+@pytest.mark.asyncio
+async def test_beantech_uses_timely_path_with_token_when_password_configured() -> None:
+    transport = _FakeTransport(
+        acquire_vehicles=[FIXTURE["responses"]["discovery"]],
+        generate_security_token=[{"code": "000000", "data": "JWT"}],
+        send_vehicle_control_command=[{"code": "000000", "data": {}}],
+    )
+    client = _client(transport, bean_tech_security_password="ENCRYPTED==")
+    assert isinstance(
+        await client.authenticate(_credentials(), state=_complete_state()),
+        ChinaAuthenticated,
+    )
+    await client.send_vehicle_control_command(
+        ChinaVehicleControlCommand(VehicleIdentifier(BEAN_VIN), "remote_stop")
+    )
+    sent = next(
+        call for call in transport.calls if call.operation == "send_vehicle_control_command"
+    )
+    assert sent.url.endswith("/app-api/api/v3.0/vehicle/remote-ctrl/timely")
+    assert sent.headers["securityToken"] == "JWT"
+    assert sum(
+        1 for call in transport.calls if call.operation == "generate_security_token"
+    ) == 1
+
+
+@pytest.mark.asyncio
+async def test_beantech_pin_exempt_commands_skip_token_generation() -> None:
+    actions = (
+        "seat_heating_start",
+        "seat_heating_stop",
+        "seat_heating_start_passenger",
+        "seat_heating_stop_passenger",
+        "seat_ventilation_start",
+        "seat_ventilation_stop",
+        "seat_ventilation_start_passenger",
+        "seat_ventilation_stop_passenger",
+        "steering_wheel_heating",
+        "steering_wheel_heatless",
+        "defrost_front_start",
+        "defrost_front_stop",
+        "defrost_back_start",
+        "defrost_back_stop",
+        "cabin_clean",
+    )
+    transport = _FakeTransport(
+        acquire_vehicles=[FIXTURE["responses"]["discovery"]],
+        send_vehicle_control_command=[
+            {"code": "000000", "data": {}} for _ in actions
+        ],
+    )
+    client = _client(transport, bean_tech_security_password="ENCRYPTED==")
+    assert isinstance(
+        await client.authenticate(_credentials(), state=_complete_state()),
+        ChinaAuthenticated,
+    )
+    for action in actions:
+        await client.send_vehicle_control_command(
+            ChinaVehicleControlCommand(VehicleIdentifier(BEAN_VIN), action)  # type: ignore[arg-type]
+        )
+    assert not any(
+        call.operation == "generate_security_token" for call in transport.calls
+    )
+    for call in transport.calls:
+        if call.operation == "send_vehicle_control_command":
+            assert call.url.endswith("/app-api/api/v3.0/vehicle/remote-ctrl/timely")
+            assert "securityToken" not in call.headers
+
+
+@pytest.mark.asyncio
+async def test_beantech_security_token_is_read_from_plain_data_string() -> None:
+    token = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJhIjoxfQ.sig"
+    transport = _FakeTransport(
+        acquire_vehicles=[FIXTURE["responses"]["discovery"]],
+        generate_security_token=[{"code": "000000", "data": token}],
+    )
+    client = _client(transport, bean_tech_security_password="ENCRYPTED==")
+    assert isinstance(
+        await client.authenticate(_credentials(), state=_complete_state()),
+        ChinaAuthenticated,
+    )
+    resolved = await client._generate_bean_tech_security_token(
+        client._required_session(operation="send_lock_command"),
+        VehicleIdentifier(BEAN_VIN),
+        operation="send_lock_command",
+        deadline=_deadline(),
+    )
+    assert resolved == token
+
+    request = next(
+        call for call in transport.calls if call.operation == "generate_security_token"
+    )
+    assert request.url.endswith("/app-api/api/v3.0/vehicle/security/generate-token")
+    assert json.loads(request.body or b"null") == {
+        "securityPwd": "ENCRYPTED==",
+        "eventType": 2,
+        "version": 1,
+    }
+
+
+@pytest.mark.asyncio
+async def test_beantech_security_token_rejects_non_string_data() -> None:
+    transport = _FakeTransport(
+        acquire_vehicles=[FIXTURE["responses"]["discovery"]],
+        generate_security_token=[{"code": "000000", "data": {"securityToken": "x"}}],
+    )
+    client = _client(transport, bean_tech_security_password="ENCRYPTED==")
+    assert isinstance(
+        await client.authenticate(_credentials(), state=_complete_state()),
+        ChinaAuthenticated,
+    )
+    with pytest.raises(GwmSchemaError):
+        await client._generate_bean_tech_security_token(
+            client._required_session(operation="send_lock_command"),
+            VehicleIdentifier(BEAN_VIN),
+            operation="send_lock_command",
+            deadline=_deadline(),
+        )
+
+
+def test_beantech_timely_request_omits_security_token_header_when_exempt() -> None:
+    client = _client(_FakeTransport())
+    request = client._build_bean_tech_timely_request(
+        _complete_state(),
+        VehicleIdentifier(BEAN_VIN),
+        sequence_number="0" * 32 + "9359",
+        operation="send_vehicle_control_command",
+        control_type="STEERING_WHEEL_HEATLESS",
+        command_body=None,
+        security_token=None,
+    )
+    assert "securityToken" not in request.headers
+
+
+def test_beantech_timely_request_windows_close_shape() -> None:
+    client = _client(_FakeTransport())
+    request = client._build_bean_tech_timely_request(
+        _complete_state(),
+        VehicleIdentifier(BEAN_VIN),
+        sequence_number="0" * 32 + "9359",
+        operation="send_close_windows_command",
+        control_type="WINDOW_CLOSE",
+        command_body={"leftFront": 0, "leftBack": 0, "rightFront": 0, "rightBack": 0},
+        security_token="JWT",
+    )
+    assert request.url.endswith("/app-api/api/v3.0/vehicle/remote-ctrl/timely")
+    assert request.headers["securityToken"] == "JWT"
+    assert json.loads(request.body or b"null") == {
+        "vin": BEAN_VIN,
+        "seqNo": "0" * 32 + "9359",
+        "sendType": 0,
+        "commands": [
+            {
+                "controlType": "WINDOW_CLOSE",
+                "cmdBody": {"leftFront": 0, "leftBack": 0, "rightFront": 0, "rightBack": 0},
+            }
+        ],
+    }
+
+
+def test_beantech_timely_request_engine_start_shape() -> None:
+    client = _client(_FakeTransport())
+    request = client._build_bean_tech_timely_request(
+        _complete_state(),
+        VehicleIdentifier(BEAN_VIN),
+        sequence_number="0" * 32 + "9359",
+        operation="send_vehicle_control_command",
+        control_type="ENGINE_START",
+        command_body={"operationTime": 600},
+        security_token="JWT",
+    )
+    assert request.url.endswith("/app-api/api/v3.0/vehicle/remote-ctrl/timely")
+    assert request.headers["securityToken"] == "JWT"
+    assert json.loads(request.body or b"null") == {
+        "vin": BEAN_VIN,
+        "seqNo": "0" * 32 + "9359",
+        "sendType": 0,
+        "commands": [{"controlType": "ENGINE_START", "cmdBody": {"operationTime": 600}}],
+    }
+
+
+def test_beantech_timely_request_rejects_engine_start_without_body() -> None:
+    client = _client(_FakeTransport())
+    with pytest.raises(ValueError):
+        client._build_bean_tech_timely_request(
+            _complete_state(),
+            VehicleIdentifier(BEAN_VIN),
+            sequence_number="0" * 32 + "9359",
+            operation="send_vehicle_control_command",
+            control_type="ENGINE_START",
+            command_body=None,
+            security_token="JWT",
+        )

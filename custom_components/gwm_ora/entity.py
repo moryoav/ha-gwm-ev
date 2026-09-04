@@ -13,7 +13,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from gwm_client import GwmAuthenticationError, GwmClientError
 
-from .const import DOMAIN
+from .const import CONF_BEANTECH_ENCRYPTED_SECURITY_PIN, DOMAIN
 from .coordinator import GwmDataUpdateCoordinator
 from .errors import GwmCommandError, GwmCommandForbidden
 
@@ -117,6 +117,14 @@ class GwmEntity(CoordinatorEntity[GwmDataUpdateCoordinator]):
         return _vehicle_charging_control_available(
             self.vehicle,
         )
+
+    @property
+    def security_pin_configured(self) -> bool:
+        """Whether a BeanTech encrypted security PIN is configured."""
+        value = self.coordinator.config_entry.options.get(
+            CONF_BEANTECH_ENCRYPTED_SECURITY_PIN
+        )
+        return isinstance(value, str) and bool(value.strip())
 
 
 def _vehicle_charging_control_available(

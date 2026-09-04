@@ -27,6 +27,13 @@ CHINA_REMOTE_BUTTONS: tuple[tuple[str, str], ...] = (
     ("force_refresh", "force_refresh"),
 )
 
+BEANTECH_REMOTE_ACTIONS = {
+    "remote_start",
+    "remote_stop",
+    "sunroof_close",
+}
+
+
 def _china_remote_buttons_for_vehicle(
     vehicle: dict,
 ) -> tuple[tuple[str, str], ...]:
@@ -34,8 +41,10 @@ def _china_remote_buttons_for_vehicle(
     platform = str(vehicle.get("platform") or "").lower()
     if platform == "navinfo":
         return CHINA_REMOTE_BUTTONS
-    # BeanTech horn/flash/remote/sunroof buttons arrive in the horn and
-    # PIN-gated PRs (④⑤); PR ② only exposes A/C and comfort controls.
+    if platform == "beantech":
+        return tuple(
+            item for item in CHINA_REMOTE_BUTTONS if item[0] in BEANTECH_REMOTE_ACTIONS
+        )
     return ()
 
 
@@ -179,6 +188,7 @@ class GwmChinaRemoteButton(GwmEntity, ButtonEntity):
                     self.vehicle or {}
                 )
             }
+            and (self._action != "remote_start" or self.security_pin_configured)
         )
 
     async def async_press(self) -> None:
@@ -194,7 +204,7 @@ class GwmBeanTechComfortButton(GwmEntity, ButtonEntity):
 
     Covers the fixed-duration cabin clean and the one-touch comfort modes
     (warm, cool, and all-off). All of these travel the PIN-less timely path
-    introduced by PR ② and only need the capability and platform gates.
+    and only need the capability and platform gates.
     """
 
     def __init__(

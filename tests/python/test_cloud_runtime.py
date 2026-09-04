@@ -863,7 +863,7 @@ async def test_china_runtime_handoff_maps_platform_capabilities_and_no_pin_write
         "remote_commands": True,
         "charging_control": True,
         "climate_commands": True,
-        "lock_window_commands": False,
+        "lock_window_commands": True,
         "china_vehicle_commands": True,
         "front_defroster_commands": False,
         "cabin_clean_commands": False,
@@ -872,7 +872,7 @@ async def test_china_runtime_handoff_maps_platform_capabilities_and_no_pin_write
         "remote_commands": True,
         "charging_control": False,
         "climate_commands": True,
-        "lock_window_commands": False,
+        "lock_window_commands": True,
         "china_vehicle_commands": True,
         "front_defroster_commands": False,
         "cabin_clean_commands": False,
@@ -921,3 +921,56 @@ async def test_china_runtime_handoff_maps_platform_capabilities_and_no_pin_write
     assert beantech_updated.basics.climate == CloudClimateConfiguration("25", "1200")
     await runtime.aclose()
     assert client.closed
+
+
+@pytest.mark.asyncio
+async def test_china_client_receives_beantech_pin_from_options(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    credentials = GwmCloudCredentials(
+        "cn",
+        "CN",
+        "13800138000",
+        None,
+        _DEVICE_ID,
+    )
+    regional = credentials.client_credentials()
+    state = replace(
+        ChinaAuthState.for_credentials(regional),
+        g_token="synthetic-g-token",
+        g_refresh_token="synthetic-g-refresh-token",
+        user_id="synthetic-g-user",
+        bean_id="synthetic-g-bean",
+        bean_tech_access_token="synthetic-bean-access-token",
+        auto_ai_token_id="synthetic-auto-token",
+        auto_ai_user_id="synthetic-auto-user",
+    )
+    bootstrap = GwmCloudBootstrap.from_authentication(
+        credentials,
+        ChinaAuthenticated(state),
+    )
+
+    captured: dict[str, object] = {}
+
+    def create_china_client(*args: object, **kwargs: object) -> object:
+        del args
+        captured.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(cloud_runtime, "ChinaClient", create_china_client)
+
+    GwmCloudClient.from_entry_data(
+        cloud_entry_data(credentials),
+        cloud_unique_id(credentials),
+        bootstrap,
+        options={"beantech_encrypted_security_pin": "  X==  "},
+    )
+    assert captured["bean_tech_security_password"] == "X=="
+
+    GwmCloudClient.from_entry_data(
+        cloud_entry_data(credentials),
+        cloud_unique_id(credentials),
+        bootstrap,
+        options={"beantech_encrypted_security_pin": "   "},
+    )
+    assert captured["bean_tech_security_password"] is None

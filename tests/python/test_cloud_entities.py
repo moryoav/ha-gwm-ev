@@ -22,7 +22,7 @@ from custom_components.gwm_ora.button import (
 )
 from custom_components.gwm_ora.climate import GwmClimate
 from custom_components.gwm_ora.coordinator import GwmDataUpdateCoordinator
-from custom_components.gwm_ora.entity import setup_vehicle_entities
+from custom_components.gwm_ora.entity import GwmEntity, setup_vehicle_entities
 from custom_components.gwm_ora.lock import GwmDoorLock
 from custom_components.gwm_ora.number import GwmClimateRunTimeNumber
 from custom_components.gwm_ora.sensor import (
@@ -367,14 +367,14 @@ async def test_task19_china_buttons_are_capability_and_platform_filtered() -> No
         "tailgate_open",
         "open_tailgate",
     ).available
-    # BeanTech no longer exposes remote/horn/flash/sunroof buttons (they arrive
-    # in a later PR); the NavInfo ``remote_start`` button above is unaffected.
-    assert not GwmChinaRemoteButton(
+    # BeanTech exposes only its mapped remote actions (remote start/stop and
+    # sunroof close); the remaining remote buttons stay NavInfo-only.
+    assert GwmChinaRemoteButton(
         api,
         coordinator,
         "SYNTHETIC-BEANTECH",
-        "remote_start",
-        "remote_start",
+        "sunroof_close",
+        "close_sunroof",
     ).available
     assert not GwmChinaRemoteButton(
         api,
@@ -561,8 +561,7 @@ async def test_beantech_comfort_switches_and_buttons_are_pin_exempt_and_dispatch
     )
     assert cabin_clean.available
 
-    # Comfort controls are PIN-exempt under PR ②, so the one-touch comfort-off
-    # multi-command is available alongside the other BeanTech comfort buttons.
+    # comfort-off's sub-commands are all PIN-exempt, so it is exposed without a PIN.
     comfort_off = GwmBeanTechComfortButton(
         api, coordinator, "SYNTHETIC-BEANTECH", "comfort_off", "comfort_off"
     )
@@ -581,3 +580,92 @@ async def test_beantech_comfort_switches_and_buttons_are_pin_exempt_and_dispatch
     api.async_set_climate.assert_awaited_once_with(
         "SYNTHETIC-BEANTECH", mode="auto", temperature=17
     )
+
+
+def _beantech_entity(options: dict[str, Any] | None = None) -> GwmEntity:
+    config_entry = SimpleNamespace(
+        options=options or {},
+        async_on_unload=lambda callback: None,
+    )
+    coordinator = GwmDataUpdateCoordinator(
+        HomeAssistant("synthetic-config"),
+        SimpleNamespace(),
+        cloud_client=SimpleNamespace(),  # type: ignore[arg-type]
+        config_entry=config_entry,  # type: ignore[arg-type]
+    )
+    return GwmEntity(coordinator, "SYNTHETIC-BEANTECH")
+
+
+@pytest.mark.asyncio
+async def test_security_pin_configured_reflects_option() -> None:
+    entity = _beantech_entity({})
+    assert entity.security_pin_configured is False
+
+    entity = _beantech_entity({"beantech_encrypted_security_pin": "X=="})
+    assert entity.security_pin_configured is True
+
+    entity = _beantech_entity({"beantech_encrypted_security_pin": "   "})
+    assert entity.security_pin_configured is False
+
+
+@pytest.mark.asyncio
+async def test_beantech_pin_required_buttons_stay_gated() -> None:
+    api = SimpleNamespace()
+    config_entry = SimpleNamespace(
+        options={},
+        async_on_unload=lambda callback: None,
+    )
+    coordinator = GwmDataUpdateCoordinator(
+        HomeAssistant("synthetic-config"),
+        api,
+        cloud_client=SimpleNamespace(),  # type: ignore[arg-type]
+        config_entry=config_entry,  # type: ignore[arg-type]
+    )
+
+    def china_vehicle(vin: str, platform: str) -> dict[str, Any]:
+        return {
+            "vin": vin,
+            "platform": platform,
+            "name": f"Vehicle {vin[-1]}",
+            "manufacturer": "GWM",
+            "model": "Synthetic",
+            "serial_number": f"SERIAL-{vin[-1]}",
+            "capabilities": {
+                "remote_commands": True,
+                "climate_commands": True,
+                "china_vehicle_commands": True,
+            },
+            "values": {},
+            "timestamps": {},
+            "climate": {"mode": "auto", "target_temperature_c": 17},
+            "raw_items": {},
+        }
+
+    coordinator.async_set_updated_data(
+        {
+            "region": "cn",
+            "vehicles": [china_vehicle("SYNTHETIC-BEANTECH", "beantech")],
+        }
+    )
+
+    remote_start = GwmChinaRemoteButton(
+        api, coordinator, "SYNTHETIC-BEANTECH", "remote_start", "remote_start"
+    )
+    comfort_off = GwmBeanTechComfortButton(
+        api, coordinator, "SYNTHETIC-BEANTECH", "comfort_off", "comfort_off"
+    )
+    cabin_clean = GwmBeanTechComfortButton(
+        api, coordinator, "SYNTHETIC-BEANTECH", "cabin_clean", "cabin_clean"
+    )
+
+    # Remote start (engine) requires a configured PIN before it is exposed;
+    # comfort-off and cabin clean are PIN-exempt.
+    assert not remote_start.available
+    assert comfort_off.available
+    assert cabin_clean.available
+
+    config_entry.options = {"beantech_encrypted_security_pin": "X=="}
+
+    assert remote_start.available
+    assert comfort_off.available
+    assert cabin_clean.available

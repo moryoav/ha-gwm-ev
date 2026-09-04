@@ -57,6 +57,7 @@ from .const import (
     CONF_ACCOUNT,
     CONF_ALLOW_SESSION_RECLAIM,
     CONF_AUTHENTICATION_METHOD,
+    CONF_BEANTECH_ENCRYPTED_SECURITY_PIN,
     CONF_CONNECTION_TYPE,
     CONF_COUNTRY,
     CONF_ENABLE_CHARGING_CONTROL,
@@ -218,6 +219,13 @@ def _cloud_options_schema(entry: ConfigEntry, defaults: dict[str, Any] | None = 
                 # The password selector masks this value while still allowing
                 # an administrator to reveal or replace the configured PIN.
                 default=current.get(CONF_SECURITY_PIN, ""),
+            )
+        ] = _password_selector(autocomplete="off")
+    else:
+        fields[
+            vol.Optional(
+                CONF_BEANTECH_ENCRYPTED_SECURITY_PIN,
+                default=current.get(CONF_BEANTECH_ENCRYPTED_SECURITY_PIN, ""),
             )
         ] = _password_selector(autocomplete="off")
     return vol.Schema(fields)

@@ -48,6 +48,8 @@ from .commands import (
     NAVINFO_CHINA_VEHICLE_CONTROL_ACTIONS,
     ChinaVehicleControlCommand,
     ClimateCommand,
+    CloseWindowsCommand,
+    DoorLockCommand,
     RemoteCommandAcceptance,
     RemoteCommandResultItem,
     parse_remote_command_results,
@@ -91,7 +93,9 @@ __all__ = [
     "ChargingPlanCommand",
     "ChargingPlanInfo",
     "ChargingPlanItem",
+    "CloseWindowsCommand",
     "ClimateCommand",
+    "DoorLockCommand",
     "RemoteCommandAcceptance",
     "RemoteCommandResultItem",
 ]
@@ -113,6 +117,8 @@ _NAVINFO_CLIMATE_CONFIG_PATH = "/app-api/api/v3.0/vehicle/remote-ctrl/config"
 _NAVINFO_CLIMATE_CONFIG_URL = (
     _BEAN_TECH_BASE.rstrip("/") + _NAVINFO_CLIMATE_CONFIG_PATH
 )
+_BEAN_TECH_SECURITY_TOKEN_PATH = "/app-api/api/v3.0/vehicle/security/generate-token"
+_BEAN_TECH_SECURITY_TOKEN_URL = _BEAN_TECH_BASE.rstrip("/") + _BEAN_TECH_SECURITY_TOKEN_PATH
 _BEAN_TECH_TIMELY_PATH = "/app-api/api/v3.0/vehicle/remote-ctrl/timely"
 _BEAN_TECH_TIMELY_URL = _BEAN_TECH_BASE.rstrip("/") + _BEAN_TECH_TIMELY_PATH
 _BEAN_TECH_TIMELY_RESULT_PATH = "/app-api/api/v3.0/vehicle/remote-ctrl/result"
@@ -123,6 +129,31 @@ _BEAN_TECH_SUBSCRIBE_PATH = "/app-api/api/v3.0/vehicle/remote-ctrl/subscribe"
 _BEAN_TECH_SUBSCRIBE_URL = _BEAN_TECH_BASE.rstrip("/") + _BEAN_TECH_SUBSCRIBE_PATH
 _BEAN_TECH_ONE_TOUCH_MODE_PATH = "/app-api/api/v3.0/vehicle/one-touch/mode"
 _BEAN_TECH_ONE_TOUCH_MODE_URL = _BEAN_TECH_BASE.rstrip("/") + _BEAN_TECH_ONE_TOUCH_MODE_PATH
+_BEAN_TECH_PIN_EXEMPT_CONTROL_TYPES = frozenset(
+    {
+        "FLASH",
+        "WHISTLE",
+        "WHISTLE_FLASH",
+        "AIR_CONDITIONER_START",
+        "AIR_CONDITIONER_STOP",
+        "SEAT_HEATING_START",
+        "SEAT_HEATING_STOP",
+        "SEAT_VENTILATION_START",
+        "SEAT_VENTILATION_STOP",
+        "STEERING_WHEEL_HEATING",
+        "STEERING_WHEEL_HEATLESS",
+        "DEFROST_FRONT_START",
+        "DEFROST_FRONT_STOP",
+        "DEFROST_BACK_START",
+        "DEFROST_BACK_STOP",
+        "CABIN_CLEANING_START",
+        "COMFORT_MODE_CTRL",
+        "BATTERY_GUN_HEAT_START",
+        "BATTERY_GUN_HEAT_STOP",
+        "BATTERY_INITIATIVE_HEAT_START",
+        "BATTERY_INITIATIVE_HEAT_STOP",
+    }
+)
 _AUTO_AI_LOGIN_URL = _G_APP_BASE + "tsp/v1/proxy/navinfo/GW.M.APP_LOGIN"
 _DISCOVERY_URL = _G_APP_BASE + "gcar/v1/app/android/vehicle/query-vehicle-list"
 _SOURCE_APP_VERSION = "2.1.5"
@@ -412,6 +443,7 @@ class ChinaClient:
         config: ChinaClientConfig,
         *,
         authenticated_state: ChinaAuthState | None = None,
+        bean_tech_security_password: str | None = None,
         transport: _ChinaAsyncTransport | None = None,
         clock: Callable[[], datetime] | None = None,
         salt_source: Callable[[], bytes] | None = None,
@@ -429,6 +461,12 @@ class ChinaClient:
             or not authenticated_state.complete
         ):
             raise GwmConfigurationError(operation="login")
+        if bean_tech_security_password is not None and (
+            not isinstance(bean_tech_security_password, str)
+            or not bean_tech_security_password.strip()
+        ):
+            raise GwmConfigurationError(operation="login")
+        self._bean_tech_security_password = bean_tech_security_password
         self._config = config
         self._clock = clock or _utc_now
         self._salt_source = salt_source or (lambda: secrets.token_bytes(8))
@@ -615,6 +653,49 @@ class ChinaClient:
             action=lambda deadline: self._send_climate_command_locked(command, deadline=deadline),
         )
 
+    async def send_lock_command(
+        self,
+        command: DoorLockCommand,
+        *,
+        timeout: float | None = None,
+    ) -> RemoteCommandAcceptance:
+        """Send a platform-routed China lock or unlock command without a PIN."""
+
+        operation: Literal["send_lock_command"] = "send_lock_command"
+        if type(command) is not DoorLockCommand:
+            raise GwmConfigurationError(operation=operation)
+        return await self._run_read(
+            operation,
+            timeout=timeout,
+            action=lambda deadline: self._send_lock_window_command_locked(
+                command,
+                operation=operation,
+                command_code=2 if command.lock else 1,
+                deadline=deadline,
+            ),
+        )
+
+    async def send_close_windows_command(
+        self,
+        command: CloseWindowsCommand,
+        *,
+        timeout: float | None = None,
+    ) -> RemoteCommandAcceptance:
+        """Send a platform-routed China close-all-windows command without a PIN."""
+
+        operation: Literal["send_close_windows_command"] = "send_close_windows_command"
+        if type(command) is not CloseWindowsCommand:
+            raise GwmConfigurationError(operation=operation)
+        return await self._run_read(
+            operation,
+            timeout=timeout,
+            action=lambda deadline: self._send_lock_window_command_locked(
+                command,
+                operation=operation,
+                command_code=3,
+                deadline=deadline,
+            ),
+        )
 
     async def send_vehicle_control_command(
         self,
@@ -1477,6 +1558,71 @@ class ChinaClient:
                 )
         return acceptance
 
+    async def _send_lock_window_command_locked(
+        self,
+        command: DoorLockCommand | CloseWindowsCommand,
+        *,
+        operation: Literal["send_lock_command", "send_close_windows_command"],
+        command_code: int,
+        deadline: _Deadline,
+    ) -> RemoteCommandAcceptance:
+        state = self._required_session(operation=operation)
+        vehicle = self._vehicles.get(command.identifier.value.casefold())
+        if vehicle is None:
+            raise GwmRoutePolicyError(operation=operation)
+        platform = None if vehicle.platform is None else vehicle.platform.strip().casefold()
+        if platform not in {"navinfo", "beantech"}:
+            raise GwmRoutePolicyError(operation=operation)
+
+        if platform == "beantech":
+            control_type, command_body = _bean_tech_lock_window_control(command_code)
+            return await self._send_bean_tech_control(
+                state,
+                command.identifier,
+                operation=operation,
+                commands=[(control_type, command_body)],
+                deadline=deadline,
+            )
+
+        if state.auto_ai_token_id is None or state.auto_ai_user_id is None:
+            raise GwmAuthenticationError(operation=operation)
+        body = {
+            "flag": 1,
+            "signStr": hashlib.md5(
+                (command.identifier.value + state.auto_ai_token_id).encode("utf-8"),
+                usedforsecurity=False,
+            ).hexdigest(),
+            "userId": state.auto_ai_user_id,
+            "userType": "0",
+            "vin": command.identifier.value,
+            "cmdCode": command_code,
+        }
+        response = await self._send_locked(
+            self._build_auto_ai_request(
+                operation=operation,
+                state=state,
+                function="GW.M.SEND_COMMON_COMMAND",
+                body=body,
+                url=_AUTO_AI_DIRECT,
+                include_token=True,
+            ),
+            deadline=deadline,
+        )
+        try:
+            result = _decode_auto_ai_envelope(response, operation=operation)
+            command_id = _scalar_text(_property(result, "transactionId"))
+            if (
+                command_id is None
+                or not command_id
+                or len(command_id) > 512
+                or any(ord(character) < 0x21 or ord(character) > 0x7E for character in command_id)
+            ):
+                raise ValueError("command_acceptance_invalid")
+            return RemoteCommandAcceptance(command_id)
+        except GwmClientError:
+            raise
+        except (RecursionError, OverflowError, TypeError, ValueError):
+            raise GwmSchemaError(operation=operation) from None
 
     async def _send_bean_tech_control(
         self,
@@ -1484,6 +1630,8 @@ class ChinaClient:
         identifier: VehicleIdentifier,
         *,
         operation: Literal[
+            "send_lock_command",
+            "send_close_windows_command",
             "send_vehicle_control_command",
             "send_climate_command",
             "set_bean_tech_comfort_mode",
@@ -1503,9 +1651,17 @@ class ChinaClient:
             ):
                 raise GwmConfigurationError(operation=operation)
 
-            # The PIN-less timely path carries every BeanTech control command and
-            # never attaches a security token (PR ⑤ reintroduces the PIN-gated
-            # variant).
+            security_token: str | None = None
+            if any(
+                control_type not in _BEAN_TECH_PIN_EXEMPT_CONTROL_TYPES
+                for control_type, _command_body in commands
+            ):
+                security_token = await self._generate_bean_tech_security_token(
+                    state,
+                    identifier,
+                    operation=operation,
+                    deadline=deadline,
+                )
             request = self._build_bean_tech_timely_request_for_commands(
                 state,
                 identifier,
@@ -1513,7 +1669,7 @@ class ChinaClient:
                 operation=operation,
                 commands=commands,
                 send_type=send_type,
-                security_token=None,
+                security_token=security_token,
             )
 
             response = await self._send_locked(request, deadline=deadline)
@@ -2190,6 +2346,8 @@ class ChinaClient:
         *,
         sequence_number: str,
         operation: Literal[
+            "send_lock_command",
+            "send_close_windows_command",
             "send_vehicle_control_command",
             "send_climate_command",
             "set_bean_tech_comfort_mode",
@@ -2215,6 +2373,8 @@ class ChinaClient:
         *,
         sequence_number: str,
         operation: Literal[
+            "send_lock_command",
+            "send_close_windows_command",
             "send_vehicle_control_command",
             "send_climate_command",
             "set_bean_tech_comfort_mode",
@@ -2290,6 +2450,38 @@ class ChinaClient:
             body=None,
         )
 
+    def _build_bean_tech_security_token_request(
+        self,
+        state: ChinaAuthState,
+        identifier: VehicleIdentifier,
+        *,
+        operation: str,
+        security_password: str,
+    ) -> _ChinaTransportRequest:
+        body = encode_dotnet_json(
+            {
+                "securityPwd": security_password,
+                "eventType": 2,
+                "version": 1,
+            }
+        )
+        headers = self._bean_tech_authenticated_headers(
+            state,
+            identifier,
+            operation=operation,
+            method="POST",
+            path=_BEAN_TECH_SECURITY_TOKEN_PATH,
+            parameter="json=" + body,
+        )
+        headers["Content-Type"] = "application/json; charset=UTF-8"
+        return _ChinaTransportRequest(
+            operation="generate_security_token",
+            service="bean_tech",
+            method="POST",
+            url=_BEAN_TECH_SECURITY_TOKEN_URL,
+            headers=headers,
+            body=body.encode("utf-8"),
+        )
 
     def _build_bean_tech_config_query_request(
         self,
@@ -2466,6 +2658,35 @@ class ChinaClient:
             body=body.encode("utf-8"),
         )
 
+    async def _generate_bean_tech_security_token(
+        self,
+        state: ChinaAuthState,
+        identifier: VehicleIdentifier,
+        *,
+        operation: str,
+        deadline: _Deadline,
+    ) -> str:
+        password = self._bean_tech_security_password
+        if password is None:
+            raise GwmConfigurationError(operation=operation)
+        response = await self._send_locked(
+            self._build_bean_tech_security_token_request(
+                state,
+                identifier,
+                operation=operation,
+                security_password=password,
+            ),
+            deadline=deadline,
+        )
+        result = _decode_g_app_envelope(response, operation=operation)
+        # 服务器把 JWT 直接放在 data 上，不是 {"securityToken": ...} 对象。
+        try:
+            token = _scalar_text(result)
+        except (TypeError, ValueError):
+            raise GwmSchemaError(operation=operation) from None
+        if token is None or not token or len(token) > 4096:
+            raise GwmSchemaError(operation=operation)
+        return token
 
     def _bean_tech_authenticated_headers(
         self,
@@ -2517,6 +2738,8 @@ class ChinaClient:
             "get_charging_plan",
             "set_charging_plan",
             "send_climate_command",
+            "send_lock_command",
+            "send_close_windows_command",
             "send_vehicle_control_command",
         ],
         state: ChinaAuthState,
@@ -3058,6 +3281,26 @@ def _parse_bean_tech_command_results(
     )
 
 
+def _bean_tech_lock_window_control(
+    command_code: int,
+) -> tuple[str, Mapping[str, object] | None]:
+    if command_code == 1:
+        return "VEHICLE_UNLOCK", None
+    if command_code == 2:
+        return "VEHICLE_LOCK", None
+    if command_code == 3:
+        return (
+            "WINDOW_CLOSE",
+            {
+                "leftFront": 0,
+                "leftBack": 0,
+                "rightFront": 0,
+                "rightBack": 0,
+            },
+        )
+    raise ValueError("command_code_invalid")
+
+
 def _navinfo_vehicle_control(
     command: ChinaVehicleControlCommand,
 ) -> tuple[int | None, str]:
@@ -3093,6 +3336,15 @@ def _navinfo_vehicle_control(
 def _bean_tech_vehicle_control(
     command: ChinaVehicleControlCommand,
 ) -> tuple[str, Mapping[str, object] | None]:
+    if command.action == "remote_start":
+        return (
+            "ENGINE_START",
+            {"operationTime": (command.run_time_minutes or 15) * 60},
+        )
+    if command.action == "remote_stop":
+        return "ENGINE_STOP", None
+    if command.action == "sunroof_close":
+        return "SKYLIGNT_CLOSE", {"skyLight": 0}
     if command.action == "seat_heating_start":
         return (
             "SEAT_HEATING_START",
