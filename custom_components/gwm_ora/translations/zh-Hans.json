@@ -135,6 +135,9 @@
     },
     "invalid_climate_run_time": {
       "message": "空调运行时长必须是 5 到 30 分钟之间的整数。"
+    },
+    "invalid_charge_soc_limit": {
+      "message": "充电上限必须是 50、60、70、80、90 或 100 之一。"
     }
   },
   "entity": {
@@ -246,7 +249,14 @@
       "ac_climate": { "name": "空调" }
     },
     "number": {
-      "climate_run_time": { "name": "空调运行时长" }
+      "climate_run_time": { "name": "空调运行时长" },
+      "charge_soc_limit": { "name": "充电上限" }
+    },
+    "select": {
+      "charge_window_start": { "name": "充电开始时间" },
+      "charge_window_end": { "name": "充电结束时间" },
+      "battery_appointment_time": { "name": "电池预约加热出发时间" },
+      "cabin_clean_appointment_time": { "name": "车内清洁预约时间" }
     },
     "lock": {
       "door_lock": { "name": "门锁" }
@@ -266,11 +276,29 @@
       "half_open_sunroof": { "name": "天窗半开" },
       "fully_open_sunroof": { "name": "天窗全开" },
       "cabin_purge": { "name": "座舱净化" },
-      "force_refresh": { "name": "强制刷新" }
+      "force_refresh": { "name": "强制刷新" },
+      "cabin_clean": { "name": "座舱清洁" },
+      "comfort_warm": { "name": "一键舒适（温暖）" },
+      "comfort_cool": { "name": "一键舒适（凉爽）" },
+      "comfort_last": { "name": "一键舒适（常用）" },
+      "comfort_off": { "name": "一键舒适关闭" },
+      "fast_cool": { "name": "快速降温" },
+      "fast_heat": { "name": "快速升温" }
     },
     "switch": {
       "front_defroster": { "name": "前除霜" },
-      "charging_schedule": { "name": "定时充电" }
+      "charging_schedule": { "name": "定时充电" },
+      "seat_heating": { "name": "主驾座椅加热" },
+      "seat_heating_passenger": { "name": "副驾座椅加热" },
+      "seat_ventilation": { "name": "主驾座椅通风" },
+      "seat_ventilation_passenger": { "name": "副驾座椅通风" },
+      "steering_wheel_heating": { "name": "方向盘加热" },
+      "defrost_front": { "name": "前除霜" },
+      "defrost_back": { "name": "后除霜" },
+      "battery_gun_heat": { "name": "电池包插枪保温" },
+      "battery_initiative_heat": { "name": "电池包主动保温" },
+      "smart_charge": { "name": "智能预约充电" },
+      "battery_appointment_heating": { "name": "电池预约加热" }
     }
   },
   "services": {

@@ -10,7 +10,7 @@ from typing import Literal
 from .models import VehicleIdentifier
 from .regions import Region
 
-type ClimateMode = Literal["cool", "heat", "off"]
+type ClimateMode = Literal["cool", "heat", "off", "auto"]
 type ChinaVehicleControlAction = Literal[
     "remote_start",
     "remote_stop",
@@ -25,6 +25,28 @@ type ChinaVehicleControlAction = Literal[
     "sunroof_full",
     "cabin_purge",
     "force_refresh",
+    "seat_heating_start",
+    "seat_heating_stop",
+    "seat_heating_start_passenger",
+    "seat_heating_stop_passenger",
+    "seat_ventilation_start",
+    "seat_ventilation_stop",
+    "seat_ventilation_start_passenger",
+    "seat_ventilation_stop_passenger",
+    "steering_wheel_heating",
+    "steering_wheel_heatless",
+    "defrost_front_start",
+    "defrost_front_stop",
+    "defrost_back_start",
+    "defrost_back_stop",
+    "cabin_clean",
+    "comfort_warm",
+    "comfort_cool",
+    "comfort_off",
+    "battery_gun_heat",
+    "battery_gun_heat_stop",
+    "battery_initiative_heat",
+    "battery_initiative_heat_stop",
 ]
 type RemoteCommandState = Literal["pending", "completed", "failed"]
 
@@ -47,11 +69,26 @@ NAVINFO_CHINA_VEHICLE_CONTROL_ACTIONS: frozenset[ChinaVehicleControlAction] = fr
 )
 BEANTECH_CHINA_VEHICLE_CONTROL_ACTIONS: frozenset[ChinaVehicleControlAction] = frozenset(
     {
-        "remote_start",
-        "remote_stop",
-        "horn",
-        "flash_lights",
-        "sunroof_close",
+        "seat_heating_start",
+        "seat_heating_stop",
+        "seat_heating_start_passenger",
+        "seat_heating_stop_passenger",
+        "seat_ventilation_start",
+        "seat_ventilation_stop",
+        "seat_ventilation_start_passenger",
+        "seat_ventilation_stop_passenger",
+        "steering_wheel_heating",
+        "steering_wheel_heatless",
+        "defrost_front_start",
+        "defrost_front_stop",
+        "defrost_back_start",
+        "defrost_back_stop",
+        "cabin_clean",
+        "comfort_off",
+        "battery_gun_heat",
+        "battery_gun_heat_stop",
+        "battery_initiative_heat",
+        "battery_initiative_heat_stop",
     }
 )
 
@@ -73,7 +110,7 @@ class ClimateCommand:
     def __post_init__(self) -> None:
         if (
             type(self.identifier) is not VehicleIdentifier
-            or self.mode not in {"cool", "heat", "off"}
+            or self.mode not in {"cool", "heat", "off", "auto"}
             or isinstance(self.temperature, bool)
             or not isinstance(self.temperature, int)
             or not 16 <= self.temperature <= 32
@@ -147,7 +184,10 @@ class ChinaVehicleControlCommand:
         )
         if (
             type(self.identifier) is not VehicleIdentifier
-            or self.action not in NAVINFO_CHINA_VEHICLE_CONTROL_ACTIONS
+            or (
+                self.action not in NAVINFO_CHINA_VEHICLE_CONTROL_ACTIONS
+                and self.action not in BEANTECH_CHINA_VEHICLE_CONTROL_ACTIONS
+            )
             or not valid_run_time
             or (self.action != "remote_start" and self.run_time_minutes is not None)
         ):

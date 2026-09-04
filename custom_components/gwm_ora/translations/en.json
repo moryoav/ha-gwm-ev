@@ -135,6 +135,9 @@
     },
     "invalid_climate_run_time": {
       "message": "Climate run time must be a whole number from 5 to 30 minutes."
+    },
+    "invalid_charge_soc_limit": {
+      "message": "Charge limit must be one of 50, 60, 70, 80, 90 or 100 percent."
     }
   },
   "entity": {
@@ -246,7 +249,14 @@
       "ac_climate": { "name": "A/C climate" }
     },
     "number": {
-      "climate_run_time": { "name": "Climate run time" }
+      "climate_run_time": { "name": "Climate run time" },
+      "charge_soc_limit": { "name": "Charge limit" }
+    },
+    "select": {
+      "charge_window_start": { "name": "Charge window start" },
+      "charge_window_end": { "name": "Charge window end" },
+      "battery_appointment_time": { "name": "Battery appointment departure" },
+      "cabin_clean_appointment_time": { "name": "Cabin clean appointment" }
     },
     "lock": {
       "door_lock": { "name": "Door lock" }
@@ -266,11 +276,29 @@
       "half_open_sunroof": { "name": "Half open sunroof" },
       "fully_open_sunroof": { "name": "Fully open sunroof" },
       "cabin_purge": { "name": "Cabin purge" },
-      "force_refresh": { "name": "Force refresh" }
+      "force_refresh": { "name": "Force refresh" },
+      "cabin_clean": { "name": "Cabin clean" },
+      "comfort_warm": { "name": "Comfort warm" },
+      "comfort_cool": { "name": "Comfort cool" },
+      "comfort_last": { "name": "Comfort (last used)" },
+      "comfort_off": { "name": "Comfort off" },
+      "fast_cool": { "name": "Fast cool" },
+      "fast_heat": { "name": "Fast heat" }
     },
     "switch": {
       "front_defroster": { "name": "Front defroster" },
-      "charging_schedule": { "name": "Scheduled charging" }
+      "charging_schedule": { "name": "Scheduled charging" },
+      "seat_heating": { "name": "Driver seat heating" },
+      "seat_heating_passenger": { "name": "Passenger seat heating" },
+      "seat_ventilation": { "name": "Driver seat ventilation" },
+      "seat_ventilation_passenger": { "name": "Passenger seat ventilation" },
+      "steering_wheel_heating": { "name": "Steering wheel heating" },
+      "defrost_front": { "name": "Front defrost" },
+      "defrost_back": { "name": "Rear defrost" },
+      "battery_gun_heat": { "name": "Battery pack heating while plugged in" },
+      "battery_initiative_heat": { "name": "Battery pack active heating" },
+      "smart_charge": { "name": "Smart scheduled charging" },
+      "battery_appointment_heating": { "name": "Battery appointment heating" }
     }
   },
   "services": {
