@@ -1,0 +1,54 @@
+name: Remove obsolete Codecov test branch
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/cleanup-codecov-test-branch.yml
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete obsolete validation branch
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const branch = "test/codecov-patch-failure";
+            const expectedSha = "b855ad72a7663bdde5a0fca13318853047b215d5";
+
+            const { data } = await github.rest.repos.getBranch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              branch,
+            });
+
+            if (data.commit.sha !== expectedSha) {
+              core.setFailed(`Refusing to delete ${branch}: branch changed unexpectedly.`);
+              return;
+            }
+
+            const pulls = await github.paginate(github.rest.pulls.list, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "closed",
+              head: `${context.repo.owner}:${branch}`,
+              per_page: 100,
+            });
+
+            if (!pulls.some((pull) => pull.number === 22 && pull.merged_at === null)) {
+              core.setFailed(`Refusing to delete ${branch}: expected closed test PR #22 was not found.`);
+              return;
+            }
+
+            await github.rest.git.deleteRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: `heads/${branch}`,
+            });
+
+            core.info(`Deleted ${branch}`);
