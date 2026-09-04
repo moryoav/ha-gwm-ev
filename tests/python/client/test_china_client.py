@@ -1959,3 +1959,38 @@ async def test_beantech_cabin_clean_appointment_read_returns_none_when_unset() -
     )
 
 
+@pytest.mark.asyncio
+async def test_beantech_horn_and_lights_map_to_whistle_flash() -> None:
+    transport = _FakeTransport(
+        acquire_vehicles=[FIXTURE["responses"]["discovery"]],
+        send_vehicle_control_command=[
+            {"code": "000000", "data": {}},
+            {"code": "000000", "data": {}},
+            {"code": "000000", "data": {}},
+        ],
+    )
+    client = _client(transport)
+    assert isinstance(
+        await client.authenticate(_credentials(), state=_complete_state()),
+        ChinaAuthenticated,
+    )
+    identifier = VehicleIdentifier(BEAN_VIN)
+
+    for action in ("horn", "flash_lights", "horn_and_lights"):
+        await client.send_vehicle_control_command(
+            ChinaVehicleControlCommand(identifier, action)
+        )
+
+    sends = [
+        json.loads(request.body or b"null")
+        for request in transport.calls
+        if request.operation == "send_vehicle_control_command"
+    ]
+    assert [body["commands"][0]["controlType"] for body in sends] == [
+        "WHISTLE",
+        "FLASH",
+        "WHISTLE_FLASH",
+    ]
+    assert all(body["commands"][0].get("cmdBody") is None for body in sends)
+
+

@@ -3093,6 +3093,12 @@ def _navinfo_vehicle_control(
 def _bean_tech_vehicle_control(
     command: ChinaVehicleControlCommand,
 ) -> tuple[str, Mapping[str, object] | None]:
+    if command.action == "horn":
+        return "WHISTLE", None
+    if command.action == "flash_lights":
+        return "FLASH", None
+    if command.action == "horn_and_lights":
+        return "WHISTLE_FLASH", None
     if command.action == "seat_heating_start":
         return (
             "SEAT_HEATING_START",

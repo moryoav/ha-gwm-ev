@@ -439,6 +439,9 @@ def test_china_vehicle_control_contract_is_closed_and_platform_filtered() -> Non
     identifier = VehicleIdentifier(_fixture()["vin"])
     assert len(NAVINFO_CHINA_VEHICLE_CONTROL_ACTIONS) == 13
     assert {
+        "horn",
+        "flash_lights",
+        "horn_and_lights",
         "seat_heating_start",
         "seat_heating_stop",
         "seat_heating_start_passenger",

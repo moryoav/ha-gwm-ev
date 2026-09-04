@@ -1263,6 +1263,9 @@ def _valid_air_conditioner_start_body(cmd_body: object) -> bool:
 
 
 _BEAN_TECH_VEHICLE_CONTROL_BODIES: dict[str, object] = {
+    "WHISTLE": None,
+    "FLASH": None,
+    "WHISTLE_FLASH": None,
     "SEAT_HEATING_START": (
         {"leftFront": 3, "operationTime": 600},
         {"rightFront": 3, "operationTime": 600},
