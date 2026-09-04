@@ -172,6 +172,11 @@ def map_bean_tech_status(
         "windows",
         "charge",
         "lighting",
+        # v3.0 flat pack/power fields, so a sparse response carrying only these
+        # still passes the schema gate and maps normally.
+        "efficiency",
+        "battpackcurr",
+        "battpackvolt",
     }
     if not any(status.get(name) is not None for name in recognizable):
         raise ValueError("status_schema_invalid")
@@ -281,7 +286,6 @@ def map_bean_tech_status(
         (door, "backdoorsts", "9000010"),
         (charge, "charginggunmodel", "9000012"),
         (status, "hcupowertrainsts", "9000013"),
-        (status, "power", "9000014"),
         (status, "batterypacksts", "9000015"),
         (status, "accbnclnoff", "9000016"),
         (status, "tboxstate", "9000017"),
@@ -297,6 +301,15 @@ def map_bean_tech_status(
         _add(items, code, _value(node, property_name))
     charge_soc, charge_soc_unit = _split_number_unit(charge, "chargesoc")
     _add_percentage(items, "9000011", charge_soc, charge_soc_unit or "%")
+
+    # ``efficiency`` is the live charging power in watts (== pack current *
+    # voltage) and converts to kW. A v2-shaped response omits it, so fall back
+    # to the legacy raw ``power`` field (which stays 0 while parked).
+    efficiency = _object_number(_get(status, "efficiency"))
+    if efficiency is not None:
+        _add(items, "9000014", _format_three_decimals(efficiency / 1000.0), "kW")
+    else:
+        _add(items, "9000014", _value(status, "power"))
 
     latitude = _double(body.get("latitude"))
     longitude = _double(body.get("longitude"))

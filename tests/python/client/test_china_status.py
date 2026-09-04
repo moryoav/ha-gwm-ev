@@ -77,9 +77,42 @@ def test_bean_tech_fixture_maps_released_and_platform_specific_signals() -> None
     assert items["9000011"] == ("82.5", "%")
     assert items["9000026"] == ("23.4", None)
     assert items["9000027"] == ("398.7", None)
+    assert items["9000014"] == ("5.916", "kW")
     assert items["9000023"] == ("3", None)
     assert items["2310001"] == ("1", None)
     assert _BEAN_FIXTURE["vin"] not in repr(status)
+
+
+def test_bean_tech_sparse_v3_pack_fields_map() -> None:
+    status = _map_bean(
+        {
+            "data": {
+                "vehicleStatusInfo": {
+                    "efficiency": 5916.0,
+                    "battPackCurr": 17,
+                    "battPackVolt": 348,
+                }
+            }
+        }
+    )
+    items = _items(status)
+    assert items["9000014"] == ("5.916", "kW")
+    assert items["9000026"] == ("17", None)
+    assert items["9000027"] == ("348", None)
+
+
+def test_bean_tech_power_falls_back_when_efficiency_absent() -> None:
+    status = _map_bean(
+        {
+            "data": {
+                "vehicleStatusInfo": {
+                    "mileage": "1, km",
+                    "power": 12.5,
+                }
+            }
+        }
+    )
+    assert _items(status)["9000014"] == ("12.5", None)
 
 
 @pytest.mark.parametrize(
