@@ -18,6 +18,7 @@ CONF_ALLOW_SESSION_RECLAIM = "allow_session_reclaim"
 CONF_ENABLE_REMOTE_COMMANDS = "enable_remote_commands"
 CONF_ENABLE_CHARGING_CONTROL = "enable_charging_control"
 CONF_SECURITY_PIN = "security_pin"
+CONF_BEANTECH_ENCRYPTED_SECURITY_PIN = "beantech_encrypted_security_pin"
 CONF_POLL_INTERVAL_SECONDS = "poll_interval_seconds"
 CONF_LOG_LEVEL = "log_level"
 
@@ -45,6 +46,7 @@ PLATFORMS: list[Platform] = [
     Platform.LOCK,
     Platform.BUTTON,
     Platform.NUMBER,
+    Platform.SELECT,
     Platform.SWITCH,
 ]
 

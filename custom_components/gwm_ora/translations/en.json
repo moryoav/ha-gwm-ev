@@ -102,6 +102,7 @@
           "enable_remote_commands": "Enable remote commands",
           "enable_charging_control": "Enable charging control",
           "security_pin": "Vehicle security PIN",
+          "beantech_encrypted_security_pin": "BeanTech encrypted security PIN",
           "log_level": "Log level"
         },
         "data_description": {
@@ -109,6 +110,7 @@
           "enable_remote_commands": "Explicit opt-in for supported remote command controls.",
           "enable_charging_control": "Independent explicit opt-in for charging schedules.",
           "security_pin": "Required for remote commands outside mainland China. The stored value is shown in a masked password field and remains redacted from diagnostics.",
+          "beantech_encrypted_security_pin": "Mainland China BeanTech vehicles only. Paste the encrypted value produced by the app, not your PIN digits. Leave empty to keep the existing command path.",
           "log_level": "Integration-specific diagnostic verbosity."
         }
       }
@@ -135,6 +137,9 @@
     },
     "invalid_climate_run_time": {
       "message": "Climate run time must be a whole number from 5 to 30 minutes."
+    },
+    "invalid_remote_start_run_time": {
+      "message": "Remote start run time must be a multiple of 5 from 5 to 30 minutes."
     }
   },
   "entity": {
@@ -246,7 +251,11 @@
       "ac_climate": { "name": "A/C climate" }
     },
     "number": {
-      "climate_run_time": { "name": "Climate run time" }
+      "climate_run_time": { "name": "Climate run time" },
+      "remote_start_run_time": { "name": "Remote start run time" }
+    },
+    "select": {
+      "cabin_clean_appointment_time": { "name": "Cabin clean appointment" }
     },
     "lock": {
       "door_lock": { "name": "Door lock" }
@@ -266,11 +275,25 @@
       "half_open_sunroof": { "name": "Half open sunroof" },
       "fully_open_sunroof": { "name": "Fully open sunroof" },
       "cabin_purge": { "name": "Cabin purge" },
-      "force_refresh": { "name": "Force refresh" }
+      "force_refresh": { "name": "Force refresh" },
+      "cabin_clean": { "name": "Cabin clean" },
+      "comfort_warm": { "name": "Comfort warm" },
+      "comfort_cool": { "name": "Comfort cool" },
+      "comfort_last": { "name": "Comfort (last used)" },
+      "comfort_off": { "name": "Comfort off" },
+      "fast_cool": { "name": "Fast cool" },
+      "fast_heat": { "name": "Fast heat" }
     },
     "switch": {
       "front_defroster": { "name": "Front defroster" },
-      "charging_schedule": { "name": "Scheduled charging" }
+      "charging_schedule": { "name": "Scheduled charging" },
+      "seat_heating": { "name": "Driver seat heating" },
+      "seat_heating_passenger": { "name": "Passenger seat heating" },
+      "seat_ventilation": { "name": "Driver seat ventilation" },
+      "seat_ventilation_passenger": { "name": "Passenger seat ventilation" },
+      "steering_wheel_heating": { "name": "Steering wheel heating" },
+      "defrost_front": { "name": "Front defrost" },
+      "defrost_back": { "name": "Rear defrost" }
     }
   },
   "services": {

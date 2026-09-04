@@ -126,6 +126,8 @@ class _Cloud:
         self,
         identifier: VehicleIdentifier,
         command_id: str,
+        *,
+        msg_type: str = "remote",
     ) -> tuple[RemoteCommandResultItem, ...]:
         assert identifier.value == _VIN
         assert command_id.startswith("provider-command-")
@@ -426,11 +428,14 @@ async def test_runtime_only_and_temperature_while_off_save_without_command(
     api, _store, _credentials_value = await _api(tmp_path, cloud, clock)
 
     runtime = await api.async_set_climate(_VIN, operation_time_minutes=20)
-    temperature = await api.async_set_climate(_VIN, temperature=24)
     assert runtime["state"] == "completed"
-    assert temperature["state"] == "completed"
-    assert cloud.updated == [(22, 20), (24, 20)]
+    assert cloud.updated == [(22, 20)]
     assert cloud.sent == []
+
+    temperature = await api.async_set_climate(_VIN, temperature=24)
+    assert temperature["state"] == "in_progress"
+    assert cloud.updated == [(22, 20), (24, 20)]
+    assert len(cloud.sent) == 1
 
 
 @pytest.mark.asyncio
@@ -728,6 +733,63 @@ async def test_china_vehicle_control_is_no_pin_journaled_and_restart_safe(
 
 
 @pytest.mark.asyncio
+async def test_china_no_pin_lifecycle_journals_heat_lock_window_and_extended_controls(
+    tmp_path: Path,
+) -> None:
+    clock = _Clock()
+    first_cloud = _Cloud()
+    first, store, credentials = await _china_api(tmp_path, first_cloud, clock)
+
+    accepted = (
+        await first.async_set_climate(_VIN, mode="heat", temperature=26),
+        await first.async_lock(_VIN, "unlock"),
+        await first.async_close_windows(_VIN),
+        await first.async_vehicle_control(_VIN, "sunroof_close"),
+    )
+    assert [
+        entry.command_name
+        for entry in await store.async_get_command_journal(
+            cloud_entry_data(credentials)
+        )
+    ] == [
+        "A/C",
+        "Door unlock",
+        "Window close",
+        "Sunroof close",
+    ]
+
+    second_cloud = _Cloud()
+    second_cloud.region = "cn"
+    command_ids = (
+        "provider-command-1",
+        "provider-command-lock",
+        "provider-command-windows",
+        "provider-command-control",
+    )
+    second_cloud.poll_results = [
+        (RemoteCommandResultItem(command_id, None, "0", "Success"),)
+        for command_id in command_ids
+    ]
+    second = GwmCommandApi(
+        second_cloud,  # type: ignore[arg-type]
+        store,
+        credentials,
+        enabled=True,
+        security_pin=None,
+        clock=clock,
+    )
+
+    restored = await second.async_restore(cloud_entry_data(credentials))
+    assert {item["id"] for item in restored} == {item["id"] for item in accepted}
+    for item in accepted:
+        assert (await second.async_get_command(str(item["id"])))["state"] == "completed"
+    assert second_cloud.sent == []
+    assert second_cloud.lock_sent == []
+    assert second_cloud.windows_sent == []
+    assert second_cloud.vehicle_controls_sent == []
+
+
+@pytest.mark.asyncio
 async def test_china_vehicle_control_validation_rejection_and_region_gate_are_local(
     tmp_path: Path,
 ) -> None:
@@ -838,63 +900,6 @@ async def test_overseas_write_lifecycle_matrix_resumes_every_family_without_rese
 
 
 @pytest.mark.asyncio
-async def test_china_no_pin_lifecycle_journals_heat_lock_window_and_extended_controls(
-    tmp_path: Path,
-) -> None:
-    clock = _Clock()
-    first_cloud = _Cloud()
-    first, store, credentials = await _china_api(tmp_path, first_cloud, clock)
-
-    accepted = (
-        await first.async_set_climate(_VIN, mode="heat", temperature=26),
-        await first.async_lock(_VIN, "unlock"),
-        await first.async_close_windows(_VIN),
-        await first.async_vehicle_control(_VIN, "sunroof_close"),
-    )
-    assert [
-        entry.command_name
-        for entry in await store.async_get_command_journal(
-            cloud_entry_data(credentials)
-        )
-    ] == [
-        "A/C",
-        "Door unlock",
-        "Window close",
-        "Sunroof close",
-    ]
-
-    second_cloud = _Cloud()
-    second_cloud.region = "cn"
-    command_ids = (
-        "provider-command-1",
-        "provider-command-lock",
-        "provider-command-windows",
-        "provider-command-control",
-    )
-    second_cloud.poll_results = [
-        (RemoteCommandResultItem(command_id, None, "0", "Success"),)
-        for command_id in command_ids
-    ]
-    second = GwmCommandApi(
-        second_cloud,  # type: ignore[arg-type]
-        store,
-        credentials,
-        enabled=True,
-        security_pin=None,
-        clock=clock,
-    )
-
-    restored = await second.async_restore(cloud_entry_data(credentials))
-    assert {item["id"] for item in restored} == {item["id"] for item in accepted}
-    for item in accepted:
-        assert (await second.async_get_command(str(item["id"])))["state"] == "completed"
-    assert second_cloud.sent == []
-    assert second_cloud.lock_sent == []
-    assert second_cloud.windows_sent == []
-    assert second_cloud.vehicle_controls_sent == []
-
-
-@pytest.mark.asyncio
 async def test_china_climate_uses_captured_temperature_range(tmp_path: Path) -> None:
     clock = _Clock()
     cloud = _Cloud(currently_on=False)
@@ -905,8 +910,9 @@ async def test_china_climate_uses_captured_temperature_range(tmp_path: Path) -> 
             await api.async_set_climate(_VIN, temperature=temperature)
 
     saved = await api.async_set_climate(_VIN, temperature=17)
-    assert saved["state"] == "completed"
+    assert saved["state"] == "in_progress"
     assert cloud.updated == [(17, 15)]
+    assert len(cloud.sent) == 1
 
 
 @pytest.mark.asyncio

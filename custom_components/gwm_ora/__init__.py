@@ -222,6 +222,7 @@ async def _async_setup_cloud_entry(
             entry.unique_id,
             bootstrap,
             state_store=state_store,
+            options=entry.options,
             climate_commands_enabled=commands_available,
             lock_window_commands_enabled=commands_available,
             charging_control_enabled=charging_enabled,

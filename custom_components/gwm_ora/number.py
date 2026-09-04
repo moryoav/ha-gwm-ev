@@ -33,6 +33,11 @@ async def async_setup_entry(
                 entry.runtime_data.coordinator,
                 vehicle["vin"],
             ),
+            GwmRemoteStartRunTimeNumber(
+                entry.runtime_data.api,
+                entry.runtime_data.coordinator,
+                vehicle["vin"],
+            ),
         ),
     )
 
@@ -53,15 +58,15 @@ class GwmClimateRunTimeNumber(GwmEntity, NumberEntity):
         super().__init__(coordinator, vin)
         self._api = api
         self._attr_unique_id = f"{vin}_climate_run_time"
+        # BeanTech only accepts whole 5-minute steps (5/10/.../30); other
+        # platforms keep the upstream 1-minute step.
+        if self.is_china_beantech:
+            self._attr_native_step = 5
 
     @property
     def available(self) -> bool:
         """Return whether the climate run-time setting is available."""
-        return (
-            super().available
-            and self.climate_commands_available
-            and not self.is_china_beantech
-        )
+        return super().available and self.climate_commands_available
 
     @property
     def native_value(self) -> float | None:
@@ -85,3 +90,42 @@ class GwmClimateRunTimeNumber(GwmEntity, NumberEntity):
             self._api.async_set_climate(self.vin, operation_time_minutes=int(value))
         )
         self.coordinator.async_track_command(command)
+
+
+class GwmRemoteStartRunTimeNumber(GwmEntity, NumberEntity):
+    """BeanTech remote-engine-start run time (5-30 minutes, 5-minute steps)."""
+
+    _attr_translation_key = "remote_start_run_time"
+    _attr_entity_category = EntityCategory.CONFIG
+    _attr_mode = NumberMode.SLIDER
+    _attr_native_min_value = 5
+    _attr_native_max_value = 30
+    _attr_native_step = 5
+    _attr_native_unit_of_measurement = UnitOfTime.MINUTES
+
+    def __init__(self, api, coordinator, vin: str) -> None:
+        super().__init__(coordinator, vin)
+        self._api = api
+        self._attr_unique_id = f"{vin}_remote_start_run_time"
+
+    @property
+    def available(self) -> bool:
+        return (
+            super().available
+            and self.remote_commands_available
+            and self.is_china_beantech
+        )
+
+    @property
+    def native_value(self) -> float | None:
+        value = self.coordinator.local_flag(self.vin, "remote_start_run_time")
+        return float(value) if value else 15.0
+
+    async def async_set_native_value(self, value: float) -> None:
+        minutes = int(value)
+        if minutes < 5 or minutes > 30 or minutes % 5 != 0:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="invalid_remote_start_run_time",
+            )
+        self.coordinator.set_local_flag(self.vin, "remote_start_run_time", minutes)

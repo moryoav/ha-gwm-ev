@@ -617,7 +617,12 @@ async def test_cloud_diagnostics_redact_current_and_future_account_state() -> No
         "vin": "private-vin",
         "location": "private-location",
     }
-    entry = _cloud_entry(data_updates=secrets, options={CONF_SECURITY_PIN: "private-pin"})
+    entry = _cloud_entry(
+        data_updates=secrets,
+        options={
+            CONF_SECURITY_PIN: "private-pin",
+        },
+    )
     entry.runtime_data = SimpleNamespace(
         coordinator=SimpleNamespace(data={"vehicles": [secrets]}),
         state_store={

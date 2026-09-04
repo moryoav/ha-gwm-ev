@@ -1020,6 +1020,35 @@ async def test_cloud_options_show_masked_pin_and_enforce_opt_in() -> None:
 
 
 @pytest.mark.asyncio
+async def test_china_options_expose_beantech_encrypted_security_pin() -> None:
+    entry = _entry(
+        data={CONF_CONNECTION_TYPE: CONNECTION_TYPE_CLOUD, CONF_REGION: "cn"},
+    )
+    flow = config_flow.GwmOptionsFlow()
+    flow.hass = _Hass(entry)  # type: ignore[assignment]
+    flow.handler = entry.entry_id
+
+    form = await flow.async_step_init()
+    schema_keys = {str(key) for key in form["data_schema"].schema}
+    assert "beantech_encrypted_security_pin" in schema_keys
+    assert "security_pin" not in schema_keys
+
+
+@pytest.mark.asyncio
+async def test_non_china_options_hide_beantech_encrypted_security_pin() -> None:
+    entry = _entry(
+        data={CONF_CONNECTION_TYPE: CONNECTION_TYPE_CLOUD, CONF_REGION: "eu"},
+    )
+    flow = config_flow.GwmOptionsFlow()
+    flow.hass = _Hass(entry)  # type: ignore[assignment]
+    flow.handler = entry.entry_id
+
+    form = await flow.async_step_init()
+    schema_keys = {str(key) for key in form["data_schema"].schema}
+    assert "beantech_encrypted_security_pin" not in schema_keys
+
+
+@pytest.mark.asyncio
 async def test_legacy_addon_options_require_a_fresh_entry() -> None:
     entry = _entry(data={CONF_CONNECTION_TYPE: "addon"})
     flow = config_flow.GwmOptionsFlow()
