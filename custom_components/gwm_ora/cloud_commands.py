@@ -43,6 +43,10 @@ from .errors import GwmCommandError, GwmCommandForbidden
 
 _DEFAULT_RESULT_TIMEOUT = timedelta(seconds=90)
 _RUSSIA_RESULT_TIMEOUT = timedelta(seconds=300)
+_SMART_CHARGE_COMMAND_NAME = "Smart charge"
+_BATTERY_APPOINTMENT_COMMAND_NAME = "Battery appointment heating"
+_CHARGE_SOC_COMMAND_NAME = "Charge SOC limit"
+_CHARGE_WINDOW_COMMAND_NAME = "Charge window"
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -127,7 +131,7 @@ class GwmCommandApi:
         normalized_mode = mode.strip().lower() if isinstance(mode, str) else None
         allowed_modes = {None, "cool", "off"}
         if self._cloud.region == "cn":
-            allowed_modes.add("heat")
+            allowed_modes.update({"heat", "auto"})
         if normalized_mode not in allowed_modes:
             raise GwmCommandError(
                 "A/C mode must be 'cool', 'heat', or 'off' in mainland China"
@@ -204,7 +208,7 @@ class GwmCommandApi:
         currently_on = _climate_is_on(context.status)
 
         if (
-            normalized_mode in {"cool", "heat"}
+            normalized_mode in {"cool", "heat", "auto"}
             or temperature is not None
             or operation_time_minutes is not None
         ):
@@ -218,17 +222,12 @@ class GwmCommandApi:
                 effective_operation_time,
             )
 
-        should_send = (
-            normalized_mode is not None or temperature is not None and currently_on
-        )
+        should_send = normalized_mode is not None or temperature is not None
         command_name = "A/C run time" if run_time_only else "A/C"
         if not should_send:
-            message = (
-                f"{command_name}: saved; applies to the next A/C command"
-                if run_time_only
-                else f"{command_name}: saved; A/C is off so no remote command was sent"
+            return _local_completed_command(
+                identifier.value, f"{command_name}: saved; applies to the next A/C command"
             )
-            return _local_completed_command(identifier.value, message)
 
         command = ClimateCommand(
             identifier=identifier,
@@ -292,13 +291,10 @@ class GwmCommandApi:
             raise GwmCommandError("Door lock action must be 'lock' or 'unlock'")
         command_name = "Door lock" if normalized_action == "lock" else "Door unlock"
         command = DoorLockCommand(identifier, normalized_action == "lock")
-        if self._cloud.region == "cn":
-            acceptance = await self._cloud.async_send_lock_command(command)  # type: ignore[call-arg]
-        else:
-            acceptance = await self._cloud.async_send_lock_command(
-                command,
-                security_password_hash=_security_password_hash(self._security_pin),
-            )
+        acceptance = await self._cloud.async_send_lock_command(
+            command,
+            security_password_hash=_security_password_hash(self._security_pin),
+        )
         return await self._record_acceptance(
             identifier, command_name, acceptance.command_id
         )
@@ -309,13 +305,10 @@ class GwmCommandApi:
         self._ensure_available()
         identifier = _vehicle_identifier(vin, command_name="Window close")
         command = CloseWindowsCommand(identifier)
-        if self._cloud.region == "cn":
-            acceptance = await self._cloud.async_send_close_windows_command(command)  # type: ignore[call-arg]
-        else:
-            acceptance = await self._cloud.async_send_close_windows_command(
-                command,
-                security_password_hash=_security_password_hash(self._security_pin),
-            )
+        acceptance = await self._cloud.async_send_close_windows_command(
+            command,
+            security_password_hash=_security_password_hash(self._security_pin),
+        )
         return await self._record_acceptance(
             identifier, "Window close", acceptance.command_id
         )
@@ -391,6 +384,44 @@ class GwmCommandApi:
             acceptance.command_id,
         )
 
+
+    async def async_set_comfort_mode(
+        self,
+        vin: str,
+        *,
+        mode_type: str,
+    ) -> dict[str, object]:
+        """Execute a BeanTech one-touch comfort mode (warm/cool/common)."""
+        self._ensure_china_vehicle_control_available()
+        if mode_type not in {"warm", "cool", "common"}:
+            raise GwmCommandError("Unsupported comfort mode")
+        identifier = _vehicle_identifier(vin, command_name="Comfort mode")
+        seq_no = await self._cloud.async_set_bean_tech_comfort_mode(
+            identifier, mode_type=mode_type
+        )
+        return await self._record_acceptance(identifier, "Comfort mode", seq_no)
+
+
+    async def async_set_cabin_clean_appointment(
+        self,
+        vin: str,
+        *,
+        time_ms: int,
+    ) -> None:
+        """Schedule one BeanTech cabin-clean run."""
+        self._ensure_china_vehicle_control_available()
+        identifier = _vehicle_identifier(vin, command_name="Cabin clean appointment")
+        await self._cloud.async_set_bean_tech_cabin_clean_appointment(
+            identifier, time_ms=time_ms
+        )
+
+    async def async_get_cabin_clean_appointment(self, vin: str) -> int | None:
+        """Read the scheduled BeanTech cabin-clean epoch-ms, or None if unset."""
+        self._ensure_china_vehicle_control_available()
+        identifier = _vehicle_identifier(vin, command_name="Cabin clean appointment")
+        return await self._cloud.async_get_bean_tech_cabin_clean_appointment(identifier)
+
+
     async def async_get_command(self, command_id: str) -> dict[str, object]:
         """Poll one accepted provider ID and persist every terminal transition."""
 
@@ -412,6 +443,12 @@ class GwmCommandApi:
             results = await self._cloud.async_get_remote_command_results(
                 VehicleIdentifier(entry.vehicle_id),
                 entry.cloud_command_id,
+                msg_type=(
+                    "charge"
+                    if entry.command_name
+                    in {_SMART_CHARGE_COMMAND_NAME, _CHARGE_WINDOW_COMMAND_NAME}
+                    else "remote"
+                ),
             )
         except GwmClientError:
             raise
@@ -794,6 +831,8 @@ def _vehicle_identifier(vin: object, *, command_name: str) -> VehicleIdentifier:
 
 
 def _expected_remote_type(command_name: str) -> str:
+    if command_name == _SMART_CHARGE_COMMAND_NAME:
+        return "charge"
     if command_name in {"A/C", "A/C run time"}:
         return "0x04"
     if command_name in {"Door lock", "Door unlock"}:
@@ -835,6 +874,24 @@ _CHINA_VEHICLE_CONTROL_NAMES = {
     "sunroof_full": "Sunroof fully open",
     "cabin_purge": "Cabin purge",
     "force_refresh": "Force refresh",
+    "seat_heating_start": "Driver seat heating",
+    "seat_heating_stop": "Driver seat heating off",
+    "seat_heating_start_passenger": "Passenger seat heating",
+    "seat_heating_stop_passenger": "Passenger seat heating off",
+    "seat_ventilation_start": "Driver seat ventilation",
+    "seat_ventilation_stop": "Driver seat ventilation off",
+    "seat_ventilation_start_passenger": "Passenger seat ventilation",
+    "seat_ventilation_stop_passenger": "Passenger seat ventilation off",
+    "steering_wheel_heating": "Steering wheel heating",
+    "steering_wheel_heatless": "Steering wheel heating off",
+    "defrost_front_start": "Front defrost",
+    "defrost_front_stop": "Front defrost off",
+    "defrost_back_start": "Rear defrost",
+    "defrost_back_stop": "Rear defrost off",
+    "cabin_clean": "Cabin clean",
+    "comfort_warm": "Comfort warm",
+    "comfort_cool": "Comfort cool",
+    "comfort_off": "Comfort off",
 }
 
 
