@@ -31,6 +31,7 @@ from custom_components.gwm_ora.sensor import (
     _sensor_descriptions_for_vehicle,
 )
 from custom_components.gwm_ora.switch import (
+    GwmBatteryHeatSwitch,
     GwmChargingScheduleSwitch,
     GwmFrontDefrosterSwitch,
     GwmRemoteControlSwitch,
@@ -581,3 +582,78 @@ async def test_beantech_comfort_switches_and_buttons_are_pin_exempt_and_dispatch
     api.async_set_climate.assert_awaited_once_with(
         "SYNTHETIC-BEANTECH", mode="auto", temperature=17
     )
+
+
+@pytest.mark.asyncio
+async def test_beantech_battery_heat_switch_dispatches_and_stays_china_only() -> None:
+    api = SimpleNamespace(
+        async_vehicle_control=AsyncMock(
+            return_value={"id": "heat", "state": "in_progress"}
+        ),
+        async_get_battery_heat_status=AsyncMock(
+            return_value={"gun_warm": False, "active_warm": False}
+        ),
+    )
+    config_entry = SimpleNamespace(
+        options={},
+        async_on_unload=lambda callback: None,
+    )
+    coordinator = GwmDataUpdateCoordinator(
+        HomeAssistant("synthetic-config"),
+        api,
+        cloud_client=SimpleNamespace(),  # type: ignore[arg-type]
+        config_entry=config_entry,  # type: ignore[arg-type]
+    )
+
+    def china_vehicle(vin: str, platform: str) -> dict[str, Any]:
+        return {
+            "vin": vin,
+            "platform": platform,
+            "name": f"Vehicle {vin[-1]}",
+            "manufacturer": "GWM",
+            "model": "Synthetic",
+            "serial_number": f"SERIAL-{vin[-1]}",
+            "capabilities": {"remote_commands": True, "china_vehicle_commands": True},
+            "values": {},
+            "timestamps": {},
+            "climate": {},
+            "raw_items": {},
+        }
+
+    coordinator.async_set_updated_data(
+        {
+            "region": "cn",
+            "vehicles": [
+                china_vehicle("SYNTHETIC-BEANTECH", "beantech"),
+                china_vehicle("SYNTHETIC-NAVINFO", "navinfo"),
+            ],
+        }
+    )
+    coordinator.async_track_command = Mock()  # type: ignore[method-assign]
+
+    battery_heat = GwmBatteryHeatSwitch(
+        api,
+        coordinator,
+        "SYNTHETIC-BEANTECH",
+        turn_on_action="battery_gun_heat",
+        turn_off_action="battery_gun_heat_stop",
+        translation_key="battery_gun_heat",
+    )
+    assert battery_heat.available
+    assert not GwmBatteryHeatSwitch(
+        api,
+        coordinator,
+        "SYNTHETIC-NAVINFO",
+        turn_on_action="battery_gun_heat",
+        turn_off_action="battery_gun_heat_stop",
+        translation_key="battery_gun_heat",
+    ).available
+
+    with patch.object(battery_heat, "async_write_ha_state"):
+        await battery_heat.async_turn_on()
+        await battery_heat.async_turn_off()
+
+    assert api.async_vehicle_control.await_args_list == [
+        call("SYNTHETIC-BEANTECH", "battery_gun_heat"),
+        call("SYNTHETIC-BEANTECH", "battery_gun_heat_stop"),
+    ]

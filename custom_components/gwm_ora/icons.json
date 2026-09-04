@@ -201,6 +201,18 @@
       },
       "defrost_back": {
         "default": "mdi:car-defrost-rear"
+      },
+      "battery_gun_heat": {
+        "default": "mdi:ev-plug-type2"
+      },
+      "battery_initiative_heat": {
+        "default": "mdi:battery-heart-variant"
+      },
+      "smart_charge": {
+        "default": "mdi:calendar-clock"
+      },
+      "battery_appointment_heating": {
+        "default": "mdi:battery-heart-variant"
       }
     }
   }

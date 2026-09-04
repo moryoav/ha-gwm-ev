@@ -117,10 +117,14 @@ _BEAN_TECH_TIMELY_PATH = "/app-api/api/v3.0/vehicle/remote-ctrl/timely"
 _BEAN_TECH_TIMELY_URL = _BEAN_TECH_BASE.rstrip("/") + _BEAN_TECH_TIMELY_PATH
 _BEAN_TECH_TIMELY_RESULT_PATH = "/app-api/api/v3.0/vehicle/remote-ctrl/result"
 _BEAN_TECH_TIMELY_RESULT_URL = _BEAN_TECH_BASE.rstrip("/") + _BEAN_TECH_TIMELY_RESULT_PATH
+_BEAN_TECH_CHARGE_SETTING_PATH = "/app-api/api/v3.0/vehicle/charge/setting"
+_BEAN_TECH_CHARGE_SETTING_URL = _BEAN_TECH_BASE.rstrip("/") + _BEAN_TECH_CHARGE_SETTING_PATH
 _BEAN_TECH_CONFIG_QUERY_PATH = "/app-api/api/v3.0/vehicle/remote-ctrl/config/query"
 _BEAN_TECH_CONFIG_QUERY_URL = _BEAN_TECH_BASE.rstrip("/") + _BEAN_TECH_CONFIG_QUERY_PATH
 _BEAN_TECH_SUBSCRIBE_PATH = "/app-api/api/v3.0/vehicle/remote-ctrl/subscribe"
 _BEAN_TECH_SUBSCRIBE_URL = _BEAN_TECH_BASE.rstrip("/") + _BEAN_TECH_SUBSCRIBE_PATH
+_BEAN_TECH_SWITCH_STATUS_PATH = "/app-api/api/v3.0/vehicle/switch/status"
+_BEAN_TECH_SWITCH_STATUS_URL = _BEAN_TECH_BASE.rstrip("/") + _BEAN_TECH_SWITCH_STATUS_PATH
 _BEAN_TECH_ONE_TOUCH_MODE_PATH = "/app-api/api/v3.0/vehicle/one-touch/mode"
 _BEAN_TECH_ONE_TOUCH_MODE_URL = _BEAN_TECH_BASE.rstrip("/") + _BEAN_TECH_ONE_TOUCH_MODE_PATH
 _AUTO_AI_LOGIN_URL = _G_APP_BASE + "tsp/v1/proxy/navinfo/GW.M.APP_LOGIN"
@@ -674,6 +678,84 @@ class ChinaClient:
         )
 
 
+    async def get_bean_tech_charge_setting(
+        self,
+        identifier: VehicleIdentifier,
+        *,
+        timeout: float | None = None,
+    ) -> Mapping[str, object]:
+        """Read one BeanTech vehicle's smart-charge setting.
+
+        The endpoint returns the raw ``data`` mapping carrying ``chargingMode``
+        (0 = scheduled charging, 1 = plug-and-charge), ``chargeStrategy`` and
+        ``chargeSetParam`` (``customTime`` / ``drivingPlanTimes``).
+        """
+
+        operation = "get_bean_tech_charge_setting"
+        if type(identifier) is not VehicleIdentifier:
+            raise GwmConfigurationError(operation=operation)
+        return await self._run_read(
+            operation,
+            timeout=timeout,
+            action=lambda deadline: self._get_bean_tech_charge_setting_locked(
+                identifier,
+                deadline=deadline,
+            ),
+        )
+
+    async def set_bean_tech_charging_mode(
+        self,
+        identifier: VehicleIdentifier,
+        *,
+        enable: bool,
+        timeout: float | None = None,
+    ) -> str:
+        """Set one BeanTech smart-charge mode and return the seqNo to poll.
+
+        The vehicle reports the setting with inverted ``chargingMode`` semantics
+        (0 = scheduled, 1 = immediate). The current setting is always read first
+        and only ``chargingMode`` is written back, preserving ``chargeSetParam``
+        verbatim so the app-configured ``customTime`` window and
+        ``drivingPlanTimes`` are never overwritten.
+        """
+
+        operation = "set_bean_tech_charging_mode"
+        if type(identifier) is not VehicleIdentifier or type(enable) is not bool:
+            raise GwmConfigurationError(operation=operation)
+        return await self._run_read(
+            operation,
+            timeout=timeout,
+            action=lambda deadline: self._set_bean_tech_charging_mode_locked(
+                identifier,
+                enable=enable,
+                deadline=deadline,
+            ),
+        )
+
+    async def get_bean_tech_battery_heating_appointment(
+        self,
+        identifier: VehicleIdentifier,
+        *,
+        timeout: float | None = None,
+    ) -> bool:
+        """Read whether BeanTech battery appointment heating is switched on.
+
+        The ``remote-ctrl/config/query`` endpoint returns ``cmdContent.switchType``
+        (1 = appointment heating armed, 0 = disarmed).
+        """
+
+        operation = "get_bean_tech_battery_heating_appointment"
+        if type(identifier) is not VehicleIdentifier:
+            raise GwmConfigurationError(operation=operation)
+        return await self._run_read(
+            operation,
+            timeout=timeout,
+            action=lambda deadline: self._get_bean_tech_battery_heating_appointment_locked(
+                identifier,
+                deadline=deadline,
+            ),
+        )
+
     async def get_bean_tech_ac_temperature(
         self,
         identifier: VehicleIdentifier,
@@ -695,6 +777,26 @@ class ChinaClient:
         )
 
 
+    async def get_bean_tech_switch_status(
+        self,
+        identifier: VehicleIdentifier,
+        *,
+        timeout: float | None = None,
+    ) -> Mapping[str, object]:
+        """Read the BeanTech ``switch/status`` switch block (battery heating)."""
+
+        operation = "get_bean_tech_switch_status"
+        if type(identifier) is not VehicleIdentifier:
+            raise GwmConfigurationError(operation=operation)
+        return await self._run_read(
+            operation,
+            timeout=timeout,
+            action=lambda deadline: self._get_bean_tech_switch_status_locked(
+                identifier,
+                deadline=deadline,
+            ),
+        )
+
     async def get_bean_tech_comfort_modes(
         self,
         identifier: VehicleIdentifier,
@@ -711,6 +813,35 @@ class ChinaClient:
             timeout=timeout,
             action=lambda deadline: self._get_bean_tech_comfort_modes_locked(
                 identifier,
+                deadline=deadline,
+            ),
+        )
+
+    async def set_bean_tech_battery_heating_appointment(
+        self,
+        identifier: VehicleIdentifier,
+        *,
+        enable: bool,
+        use_car_time_ms: int | None = None,
+        timeout: float | None = None,
+    ) -> str:
+        """Arm or disarm BeanTech battery appointment heating, returning the seqNo.
+
+        ``enable=True`` sends ``BATTERY_HEATING_APPOINTMENT`` with the departure
+        time ``use_car_time_ms`` (epoch milliseconds); ``enable=False`` sends
+        ``BATTERY_TC_STOP``. Both are PIN-exempt.
+        """
+
+        operation = "set_bean_tech_battery_heating_appointment"
+        if type(identifier) is not VehicleIdentifier or type(enable) is not bool:
+            raise GwmConfigurationError(operation=operation)
+        return await self._run_read(
+            operation,
+            timeout=timeout,
+            action=lambda deadline: self._set_bean_tech_battery_heating_appointment_locked(
+                identifier,
+                enable=enable,
+                use_car_time_ms=use_car_time_ms,
                 deadline=deadline,
             ),
         )
@@ -737,6 +868,32 @@ class ChinaClient:
             ),
         )
 
+
+    async def set_bean_tech_charge_soc(
+        self,
+        identifier: VehicleIdentifier,
+        *,
+        percent: int,
+        timeout: float | None = None,
+    ) -> str:
+        """Set the BeanTech charge limit (50-100, step 10), returning the seqNo.
+
+        Sends ``CTRL_CHARGE_SOC`` with ``chargeSoc``. The vehicle does not report
+        the current limit in the polled snapshot, so this is command-only.
+        """
+
+        operation = "set_bean_tech_charge_soc"
+        if type(identifier) is not VehicleIdentifier:
+            raise GwmConfigurationError(operation=operation)
+        return await self._run_read(
+            operation,
+            timeout=timeout,
+            action=lambda deadline: self._set_bean_tech_charge_soc_locked(
+                identifier,
+                percent=percent,
+                deadline=deadline,
+            ),
+        )
 
     async def set_bean_tech_cabin_clean_appointment(
         self,
@@ -780,6 +937,30 @@ class ChinaClient:
             ),
         )
 
+
+    async def set_bean_tech_charge_window(
+        self,
+        identifier: VehicleIdentifier,
+        *,
+        start_time: str,
+        end_time: str,
+        timeout: float | None = None,
+    ) -> str:
+        """Write the BeanTech smart-charge time window (HH:MM), returning seqNo."""
+
+        operation = "set_bean_tech_charge_window"
+        if type(identifier) is not VehicleIdentifier:
+            raise GwmConfigurationError(operation=operation)
+        return await self._run_read(
+            operation,
+            timeout=timeout,
+            action=lambda deadline: self._set_bean_tech_charge_window_locked(
+                identifier,
+                start_time=start_time,
+                end_time=end_time,
+                deadline=deadline,
+            ),
+        )
 
     async def get_charging_plan(
         self,
@@ -1486,7 +1667,9 @@ class ChinaClient:
         operation: Literal[
             "send_vehicle_control_command",
             "send_climate_command",
+            "set_bean_tech_battery_heating_appointment",
             "set_bean_tech_comfort_mode",
+            "set_bean_tech_charge_soc",
         ],
         commands: Sequence[tuple[str, Mapping[str, object] | None]],
         send_type: int = 0,
@@ -1676,6 +1859,108 @@ class ChinaClient:
             raise GwmSchemaError(operation=operation) from None
 
 
+    async def _get_bean_tech_charge_setting_locked(
+        self,
+        identifier: VehicleIdentifier,
+        *,
+        deadline: _Deadline,
+    ) -> Mapping[str, object]:
+        operation = "get_bean_tech_charge_setting"
+        state = self._required_session(operation=operation)
+        vehicle = self._vehicles.get(identifier.value.casefold())
+        if vehicle is None or (vehicle.platform or "").strip().casefold() != "beantech":
+            raise GwmRoutePolicyError(operation=operation)
+        response = await self._send_locked(
+            self._build_bean_tech_charge_setting_request(state, identifier),
+            deadline=deadline,
+        )
+        data = _decode_g_app_envelope(response, operation=operation)
+        if not isinstance(data, Mapping):
+            raise GwmSchemaError(operation=operation)
+        return cast(Mapping[str, object], data)
+
+    async def _set_bean_tech_charging_mode_locked(
+        self,
+        identifier: VehicleIdentifier,
+        *,
+        enable: bool,
+        deadline: _Deadline,
+    ) -> str:
+        operation = "set_bean_tech_charging_mode"
+        state = self._required_session(operation=operation)
+        vehicle = self._vehicles.get(identifier.value.casefold())
+        if vehicle is None or (vehicle.platform or "").strip().casefold() != "beantech":
+            raise GwmRoutePolicyError(operation=operation)
+
+        current = await self._get_bean_tech_charge_setting_locked(
+            identifier, deadline=deadline
+        )
+        charge_set_param = _property(current, "chargeSetParam")
+        if not isinstance(charge_set_param, Mapping):
+            raise GwmSchemaError(operation=operation)
+        try:
+            charge_strategy = _bean_tech_charge_strategy(current)
+        except (TypeError, ValueError):
+            raise GwmSchemaError(operation=operation) from None
+
+        try:
+            sequence_number = self._sequence_source()
+        except Exception:
+            raise GwmConfigurationError(operation=operation) from None
+        if (
+            not isinstance(sequence_number, str)
+            or _BEAN_TECH_SEQUENCE.fullmatch(sequence_number) is None
+        ):
+            raise GwmConfigurationError(operation=operation)
+
+        response = await self._send_locked(
+            self._build_bean_tech_charge_setting_write_request(
+                state,
+                identifier,
+                sequence_number=sequence_number,
+                charge_strategy=charge_strategy,
+                charge_set_param=charge_set_param,
+                charging_mode=0 if enable else 1,
+            ),
+            deadline=deadline,
+        )
+        _decode_g_app_envelope(response, operation=operation)
+        return sequence_number
+
+    async def _get_bean_tech_battery_heating_appointment_locked(
+        self,
+        identifier: VehicleIdentifier,
+        *,
+        deadline: _Deadline,
+    ) -> bool:
+        operation: Literal["get_bean_tech_battery_heating_appointment"] = (
+            "get_bean_tech_battery_heating_appointment"
+        )
+        state = self._required_session(operation=operation)
+        vehicle = self._vehicles.get(identifier.value.casefold())
+        if vehicle is None or (vehicle.platform or "").strip().casefold() != "beantech":
+            raise GwmRoutePolicyError(operation=operation)
+        response = await self._send_locked(
+            self._build_bean_tech_config_query_request(
+                state,
+                identifier,
+                types=["BATTERY_HEATING_APPOINTMENT"],
+                operation=operation,
+            ),
+            deadline=deadline,
+        )
+        data = _decode_g_app_envelope(response, operation=operation)
+        if not isinstance(data, list) or not data or not isinstance(data[0], Mapping):
+            raise GwmSchemaError(operation=operation)
+        cmd_content = data[0].get("cmdContent")
+        if not isinstance(cmd_content, Mapping):
+            raise GwmSchemaError(operation=operation)
+        switch_type = cmd_content.get("switchType")
+        if switch_type not in {0, 1} and switch_type not in {"0", "1"}:
+            raise GwmSchemaError(operation=operation)
+        # switchType=0 means the appointment is armed; switchType=1 means off.
+        return int(switch_type) == 0
+
     async def _get_bean_tech_ac_temperature_locked(
         self,
         identifier: VehicleIdentifier,
@@ -1712,6 +1997,33 @@ class ChinaClient:
         except (TypeError, ValueError):
             raise GwmSchemaError(operation=operation) from None
 
+
+    async def _get_bean_tech_switch_status_locked(
+        self,
+        identifier: VehicleIdentifier,
+        *,
+        deadline: _Deadline,
+    ) -> Mapping[str, object]:
+        operation: Literal["get_bean_tech_switch_status"] = "get_bean_tech_switch_status"
+        state = self._required_session(operation=operation)
+        vehicle = self._vehicles.get(identifier.value.casefold())
+        if vehicle is None or (vehicle.platform or "").strip().casefold() != "beantech":
+            raise GwmRoutePolicyError(operation=operation)
+        response = await self._send_locked(
+            self._build_bean_tech_simple_get_request(
+                state,
+                identifier,
+                operation=operation,
+                path=_BEAN_TECH_SWITCH_STATUS_PATH,
+                url=_BEAN_TECH_SWITCH_STATUS_URL,
+            ),
+            deadline=deadline,
+        )
+        data = _decode_g_app_envelope(response, operation=operation)
+        switch_status = _property(data, "switchStatus") if isinstance(data, Mapping) else None
+        if not isinstance(switch_status, Mapping):
+            raise GwmSchemaError(operation=operation)
+        return cast(Mapping[str, object], switch_status)
 
     async def _get_bean_tech_comfort_modes_locked(
         self,
@@ -1800,6 +2112,71 @@ class ChinaClient:
         return sequence_number
 
 
+    async def _set_bean_tech_battery_heating_appointment_locked(
+        self,
+        identifier: VehicleIdentifier,
+        *,
+        enable: bool,
+        use_car_time_ms: int | None,
+        deadline: _Deadline,
+    ) -> str:
+        operation = "set_bean_tech_battery_heating_appointment"
+        state = self._required_session(operation=operation)
+        vehicle = self._vehicles.get(identifier.value.casefold())
+        if vehicle is None or (vehicle.platform or "").strip().casefold() != "beantech":
+            raise GwmRoutePolicyError(operation=operation)
+        if enable and (
+            isinstance(use_car_time_ms, bool)
+            or not isinstance(use_car_time_ms, int)
+            or use_car_time_ms <= 0
+        ):
+            raise GwmConfigurationError(operation=operation)
+        sequence_number = self._bean_tech_sequence(operation=operation)
+        response = await self._send_locked(
+            self._build_bean_tech_battery_heating_appointment_request(
+                state,
+                identifier,
+                sequence_number=sequence_number,
+                enable=enable,
+                use_car_time_ms=use_car_time_ms,
+            ),
+            deadline=deadline,
+        )
+        _decode_g_app_envelope(response, operation=operation)
+        return sequence_number
+
+    async def _set_bean_tech_charge_soc_locked(
+        self,
+        identifier: VehicleIdentifier,
+        *,
+        percent: int,
+        deadline: _Deadline,
+    ) -> str:
+        operation = "set_bean_tech_charge_soc"
+        state = self._required_session(operation=operation)
+        vehicle = self._vehicles.get(identifier.value.casefold())
+        if vehicle is None or (vehicle.platform or "").strip().casefold() != "beantech":
+            raise GwmRoutePolicyError(operation=operation)
+        if (
+            isinstance(percent, bool)
+            or not isinstance(percent, int)
+            or not 50 <= percent <= 100
+            or percent % 10 != 0
+        ):
+            raise GwmConfigurationError(operation=operation)
+        sequence_number = self._bean_tech_sequence(operation=operation)
+        response = await self._send_locked(
+            self._build_bean_tech_charge_soc_request(
+                state,
+                identifier,
+                sequence_number=sequence_number,
+                percent=percent,
+            ),
+            deadline=deadline,
+        )
+        _decode_g_app_envelope(response, operation=operation)
+        return sequence_number
+
     async def _set_bean_tech_cabin_clean_appointment_locked(
         self,
         identifier: VehicleIdentifier,
@@ -1849,6 +2226,57 @@ class ChinaClient:
             raise GwmSchemaError(operation=operation)
         return time_ms
 
+
+    async def _set_bean_tech_charge_window_locked(
+        self,
+        identifier: VehicleIdentifier,
+        *,
+        start_time: str,
+        end_time: str,
+        deadline: _Deadline,
+    ) -> str:
+        operation = "set_bean_tech_charge_window"
+        state = self._required_session(operation=operation)
+        vehicle = self._vehicles.get(identifier.value.casefold())
+        if vehicle is None or (vehicle.platform or "").strip().casefold() != "beantech":
+            raise GwmRoutePolicyError(operation=operation)
+        if _CLOCK_TIME.fullmatch(start_time) is None or _CLOCK_TIME.fullmatch(end_time) is None:
+            raise GwmConfigurationError(operation=operation)
+
+        current = await self._get_bean_tech_charge_setting_locked(
+            identifier, deadline=deadline
+        )
+        charge_set_param = _property(current, "chargeSetParam")
+        if not isinstance(charge_set_param, Mapping):
+            raise GwmSchemaError(operation=operation)
+        try:
+            charge_strategy = _bean_tech_charge_strategy(current)
+            charging_mode = _bean_tech_charging_mode(current)
+        except (TypeError, ValueError):
+            raise GwmSchemaError(operation=operation) from None
+
+        new_param = dict(charge_set_param)
+        custom_time = new_param.get("customTime")
+        new_custom_time = dict(custom_time) if isinstance(custom_time, Mapping) else {}
+        new_custom_time["startTime"] = start_time
+        new_custom_time["endTime"] = end_time
+        new_param["customTime"] = new_custom_time
+
+        sequence_number = self._bean_tech_sequence(operation=operation)
+        response = await self._send_locked(
+            self._build_bean_tech_charge_setting_write_request(
+                state,
+                identifier,
+                sequence_number=sequence_number,
+                charge_strategy=charge_strategy,
+                charge_set_param=new_param,
+                charging_mode=charging_mode,
+                operation="set_bean_tech_charge_window",
+            ),
+            deadline=deadline,
+        )
+        _decode_g_app_envelope(response, operation=operation)
+        return sequence_number
 
     def _bean_tech_sequence(self, *, operation: str) -> str:
         try:
@@ -2192,7 +2620,9 @@ class ChinaClient:
         operation: Literal[
             "send_vehicle_control_command",
             "send_climate_command",
+            "set_bean_tech_battery_heating_appointment",
             "set_bean_tech_comfort_mode",
+            "set_bean_tech_charge_soc",
         ],
         control_type: str,
         command_body: Mapping[str, object] | None,
@@ -2217,7 +2647,9 @@ class ChinaClient:
         operation: Literal[
             "send_vehicle_control_command",
             "send_climate_command",
+            "set_bean_tech_battery_heating_appointment",
             "set_bean_tech_comfort_mode",
+            "set_bean_tech_charge_soc",
         ],
         commands: Sequence[tuple[str, Mapping[str, object] | None]],
         send_type: int,
@@ -2291,13 +2723,83 @@ class ChinaClient:
         )
 
 
+    def _build_bean_tech_charge_setting_request(
+        self,
+        state: ChinaAuthState,
+        identifier: VehicleIdentifier,
+    ) -> _ChinaTransportRequest:
+        operation: Literal["get_bean_tech_charge_setting"] = "get_bean_tech_charge_setting"
+        # Unlike the status endpoint (vin in the query), the charge/setting route
+        # carries the VIN in the URL path, so the signed path includes it and the
+        # canonical sign parameter is just ``strategy=5``.
+        path = _BEAN_TECH_CHARGE_SETTING_PATH + "/" + identifier.value
+        headers = self._bean_tech_authenticated_headers(
+            state,
+            identifier,
+            operation=operation,
+            method="GET",
+            path=path,
+            parameter="strategy=5",
+        )
+        return _ChinaTransportRequest(
+            operation=operation,
+            service="bean_tech",
+            method="GET",
+            url=_BEAN_TECH_CHARGE_SETTING_URL + "/" + identifier.encoded + "?strategy=5",
+            headers=headers,
+            body=None,
+        )
+
+    def _build_bean_tech_charge_setting_write_request(
+        self,
+        state: ChinaAuthState,
+        identifier: VehicleIdentifier,
+        *,
+        sequence_number: str,
+        charge_strategy: int,
+        charge_set_param: Mapping[str, object],
+        charging_mode: int,
+        operation: Literal[
+            "set_bean_tech_charging_mode", "set_bean_tech_charge_window"
+        ] = "set_bean_tech_charging_mode",
+    ) -> _ChinaTransportRequest:
+        body = encode_dotnet_json(
+            {
+                "vin": identifier.value,
+                "chargingMode": charging_mode,
+                "chargeStrategy": charge_strategy,
+                "chargeSetParam": dict(charge_set_param),
+                "seqNo": sequence_number,
+            }
+        )
+        headers = self._bean_tech_authenticated_headers(
+            state,
+            identifier,
+            operation=operation,
+            method="POST",
+            path=_BEAN_TECH_CHARGE_SETTING_PATH,
+            parameter="json=" + body,
+        )
+        headers["Content-Type"] = "application/json; charset=UTF-8"
+        return _ChinaTransportRequest(
+            operation=operation,
+            service="bean_tech",
+            method="POST",
+            url=_BEAN_TECH_CHARGE_SETTING_URL,
+            headers=headers,
+            body=body.encode("utf-8"),
+        )
+
     def _build_bean_tech_config_query_request(
         self,
         state: ChinaAuthState,
         identifier: VehicleIdentifier,
         *,
         types: Sequence[str],
-        operation: Literal["get_bean_tech_ac_temperature"],
+        operation: Literal[
+            "get_bean_tech_battery_heating_appointment",
+            "get_bean_tech_ac_temperature",
+        ],
     ) -> _ChinaTransportRequest:
         if state.auto_ai_user_id is None:
             raise GwmAuthenticationError(operation=operation)
@@ -2327,6 +2829,55 @@ class ChinaClient:
             body=body.encode("utf-8"),
         )
 
+
+    def _build_bean_tech_battery_heating_appointment_request(
+        self,
+        state: ChinaAuthState,
+        identifier: VehicleIdentifier,
+        *,
+        sequence_number: str,
+        enable: bool,
+        use_car_time_ms: int | None,
+    ) -> _ChinaTransportRequest:
+        operation: Literal["set_bean_tech_battery_heating_appointment"] = (
+            "set_bean_tech_battery_heating_appointment"
+        )
+        if enable:
+            control_type = "BATTERY_HEATING_APPOINTMENT"
+            command_body: Mapping[str, object] | None = {
+                "useCarTime": use_car_time_ms
+            }
+        else:
+            control_type = "BATTERY_TC_STOP"
+            command_body = None
+        return self._build_bean_tech_timely_request_for_commands(
+            state,
+            identifier,
+            sequence_number=sequence_number,
+            operation=operation,
+            commands=[(control_type, command_body)],
+            send_type=0,
+            security_token=None,
+        )
+
+    def _build_bean_tech_charge_soc_request(
+        self,
+        state: ChinaAuthState,
+        identifier: VehicleIdentifier,
+        *,
+        sequence_number: str,
+        percent: int,
+    ) -> _ChinaTransportRequest:
+        operation: Literal["set_bean_tech_charge_soc"] = "set_bean_tech_charge_soc"
+        return self._build_bean_tech_timely_request_for_commands(
+            state,
+            identifier,
+            sequence_number=sequence_number,
+            operation=operation,
+            commands=[("CTRL_CHARGE_SOC", {"chargeSoc": percent})],
+            send_type=0,
+            security_token=None,
+        )
 
     def _build_bean_tech_subscribe_request(
         self,
@@ -2401,7 +2952,9 @@ class ChinaClient:
         state: ChinaAuthState,
         identifier: VehicleIdentifier,
         *,
-        operation: Literal["get_bean_tech_comfort_modes"],
+        operation: Literal[
+            "get_bean_tech_switch_status", "get_bean_tech_comfort_modes"
+        ],
         path: str,
         url: str,
     ) -> _ChinaTransportRequest:
@@ -3147,6 +3700,14 @@ def _bean_tech_vehicle_control(
         return "DEFROST_BACK_STOP", None
     if command.action == "cabin_clean":
         return "CABIN_CLEANING_START", {"operationTime": 60}
+    if command.action == "battery_gun_heat":
+        return "BATTERY_GUN_HEAT_START", None
+    if command.action == "battery_gun_heat_stop":
+        return "BATTERY_GUN_HEAT_STOP", None
+    if command.action == "battery_initiative_heat":
+        return "BATTERY_INITIATIVE_HEAT_START", None
+    if command.action == "battery_initiative_heat_stop":
+        return "BATTERY_INITIATIVE_HEAT_STOP", None
     raise ValueError("vehicle_control_action_invalid")
 
 
@@ -3191,6 +3752,37 @@ def _bean_tech_climate_control(
             "temperature": command.temperature,
         },
     )
+
+
+def _bean_tech_charge_strategy(data: Mapping[str, object]) -> int:
+    """Return the BeanTech ``chargeStrategy`` integer from a charge setting.
+
+    The read must be complete before a write is attempted; a missing or
+    non-numeric value raises so the caller aborts instead of guessing.
+    """
+
+    raw = _property(data, "chargeStrategy")
+    if isinstance(raw, bool):
+        raise ValueError("charge_strategy_invalid")
+    if isinstance(raw, int):
+        return raw
+    text = _scalar_text(raw)
+    if text is None or not text.strip():
+        raise ValueError("charge_strategy_invalid")
+    return int(text)
+
+
+def _bean_tech_charging_mode(data: Mapping[str, object]) -> int:
+    """Return the BeanTech ``chargingMode`` integer from a charge setting."""
+    raw = _property(data, "chargingMode")
+    if isinstance(raw, bool):
+        raise ValueError("charging_mode_invalid")
+    if isinstance(raw, int):
+        return raw
+    text = _scalar_text(raw)
+    if text is None or not text.strip():
+        raise ValueError("charging_mode_invalid")
+    return int(text)
 
 
 def _optional_bool(value: object, *, default: bool) -> bool:

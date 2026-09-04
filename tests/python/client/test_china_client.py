@@ -35,6 +35,7 @@ from gwm_client.china_transport import (
 from gwm_client.commands import (
     ChinaVehicleControlCommand,
     ClimateCommand,
+    RemoteCommandResultItem,
 )
 from gwm_client.config import RequestTimeouts
 from gwm_client.errors import (
@@ -1957,5 +1958,388 @@ async def test_beantech_cabin_clean_appointment_read_returns_none_when_unset() -
         )
         is None
     )
+
+
+@pytest.mark.asyncio
+async def test_beantech_battery_heat_commands_have_empty_cmdbody() -> None:
+    transport = _FakeTransport(
+        acquire_vehicles=[FIXTURE["responses"]["discovery"]],
+        send_vehicle_control_command=[
+            {"code": "000000", "data": {}} for _ in range(4)
+        ],
+    )
+    client = _client(transport)
+    assert isinstance(
+        await client.authenticate(_credentials(), state=_complete_state()),
+        ChinaAuthenticated,
+    )
+    identifier = VehicleIdentifier(BEAN_VIN)
+
+    for action in (
+        "battery_gun_heat",
+        "battery_gun_heat_stop",
+        "battery_initiative_heat",
+        "battery_initiative_heat_stop",
+    ):
+        await client.send_vehicle_control_command(
+            ChinaVehicleControlCommand(identifier, action)  # type: ignore[arg-type]
+        )
+
+    sends = [
+        json.loads(request.body or b"null")
+        for request in transport.calls
+        if request.operation == "send_vehicle_control_command"
+    ]
+    assert [body["commands"][0] for body in sends] == [
+        {"controlType": "BATTERY_GUN_HEAT_START"},
+        {"controlType": "BATTERY_GUN_HEAT_STOP"},
+        {"controlType": "BATTERY_INITIATIVE_HEAT_START"},
+        {"controlType": "BATTERY_INITIATIVE_HEAT_STOP"},
+    ]
+    for call in transport.calls:
+        if call.operation == "send_vehicle_control_command":
+            assert call.url.endswith("/app-api/api/v3.0/vehicle/remote-ctrl/timely")
+            assert "securityToken" not in call.headers
+
+
+def test_beantech_charge_setting_read_request_shape_and_signature() -> None:
+    client = _client(_FakeTransport())
+    request = client._build_bean_tech_charge_setting_request(
+        _complete_state(),
+        VehicleIdentifier(BEAN_VIN),
+    )
+    assert request.method == "GET"
+    assert request.service == "bean_tech"
+    assert request.url == (
+        "https://gw-app-gateway.gwmapp-h.com/app-api/api/v3.0/vehicle/charge/setting/"
+        + BEAN_VIN
+        + "?strategy=5"
+    )
+    assert request.body is None
+    assert request.headers["bt-auth-sign"] == bean_tech_sign(
+        "GET",
+        "/app-api/api/v3.0/vehicle/charge/setting/" + BEAN_VIN,
+        request.headers["bt-auth-nonce"],
+        request.headers["bt-auth-timestamp"],
+        "strategy=5",
+    )
+
+
+@pytest.mark.asyncio
+async def test_beantech_charging_mode_write_reads_then_preserves_charge_set_param() -> None:
+    charge_setting = {
+        "chargingMode": 1,
+        "chargeStrategy": 5,
+        "chargeSetParam": {
+            "customTime": {"startTime": "23:00", "endTime": "07:00"},
+            "drivingPlanTimes": [{"day": 1}],
+        },
+    }
+    transport = _FakeTransport(
+        acquire_vehicles=[FIXTURE["responses"]["discovery"]],
+        get_bean_tech_charge_setting=[{"code": "000000", "data": charge_setting}],
+        set_bean_tech_charging_mode=[
+            {"code": "000000", "data": BEAN_COMMAND_ID},
+        ],
+    )
+    client = _client(transport)
+    assert isinstance(
+        await client.authenticate(_credentials(), state=_complete_state()),
+        ChinaAuthenticated,
+    )
+    identifier = VehicleIdentifier(BEAN_VIN)
+
+    seq_no = await client.set_bean_tech_charging_mode(identifier, enable=True)
+
+    assert seq_no == BEAN_COMMAND_ID
+    read_request = next(
+        call
+        for call in transport.calls
+        if call.operation == "get_bean_tech_charge_setting"
+    )
+    assert (
+        urlsplit(read_request.url).path
+        == "/app-api/api/v3.0/vehicle/charge/setting/" + BEAN_VIN
+    )
+    assert urlsplit(read_request.url).query == "strategy=5"
+
+    write_request = next(
+        call
+        for call in transport.calls
+        if call.operation == "set_bean_tech_charging_mode"
+    )
+    assert urlsplit(write_request.url).path == "/app-api/api/v3.0/vehicle/charge/setting"
+    body = json.loads(write_request.body or b"null")
+    assert body["vin"] == BEAN_VIN
+    assert body["seqNo"] == BEAN_COMMAND_ID
+    assert body["chargingMode"] == 0
+    assert body["chargeStrategy"] == 5
+    assert body["chargeSetParam"] == {
+        "customTime": {"startTime": "23:00", "endTime": "07:00"},
+        "drivingPlanTimes": [{"day": 1}],
+    }
+
+
+@pytest.mark.asyncio
+async def test_beantech_charging_mode_write_aborts_when_setting_incomplete() -> None:
+    transport = _FakeTransport(
+        acquire_vehicles=[FIXTURE["responses"]["discovery"]],
+        get_bean_tech_charge_setting=[
+            {"code": "000000", "data": {"chargingMode": 1}},
+        ],
+    )
+    client = _client(transport)
+    assert isinstance(
+        await client.authenticate(_credentials(), state=_complete_state()),
+        ChinaAuthenticated,
+    )
+    before = len(transport.calls)
+    with pytest.raises(GwmSchemaError):
+        await client.set_bean_tech_charging_mode(
+            VehicleIdentifier(BEAN_VIN), enable=True
+        )
+    assert [call.operation for call in transport.calls[before:]] == [
+        "get_bean_tech_charge_setting"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_beantech_charge_setting_rejects_non_beantech_before_transport() -> None:
+    transport = _FakeTransport(acquire_vehicles=[FIXTURE["responses"]["discovery"]])
+    client = _client(transport)
+    assert isinstance(
+        await client.authenticate(_credentials(), state=_complete_state()),
+        ChinaAuthenticated,
+    )
+    before = len(transport.calls)
+    with pytest.raises(GwmRoutePolicyError):
+        await client.get_bean_tech_charge_setting(VehicleIdentifier(VIN))
+    with pytest.raises(GwmRoutePolicyError):
+        await client.set_bean_tech_charging_mode(VehicleIdentifier(VIN), enable=True)
+    assert len(transport.calls) == before
+
+
+@pytest.mark.asyncio
+async def test_beantech_battery_heating_appointment_read_parses_switch_type() -> None:
+    transport = _FakeTransport(
+        acquire_vehicles=[FIXTURE["responses"]["discovery"]],
+        get_bean_tech_battery_heating_appointment=[
+            {
+                "code": "000000",
+                "data": [
+                    {
+                        "type": "BATTERY_HEATING_APPOINTMENT",
+                        "cmd": "BATTERY_HEATING_APPOINTMENT",
+                        "cmdContent": {"switchType": 0},
+                    }
+                ],
+            }
+        ],
+    )
+    client = _client(transport)
+    assert isinstance(
+        await client.authenticate(_credentials(), state=_complete_state()),
+        ChinaAuthenticated,
+    )
+
+    enabled = await client.get_bean_tech_battery_heating_appointment(
+        VehicleIdentifier(BEAN_VIN)
+    )
+
+    assert enabled is True
+    request = next(
+        call
+        for call in transport.calls
+        if call.operation == "get_bean_tech_battery_heating_appointment"
+    )
+    assert json.loads(request.body or b"null") == {
+        "sendType": 0,
+        "types": ["BATTERY_HEATING_APPOINTMENT"],
+        "userId": "SYNTHETIC-AUTO-USER",
+        "vin": BEAN_VIN,
+    }
+    assert request.headers["bt-auth-sign"] == bean_tech_sign(
+        "POST",
+        "/app-api/api/v3.0/vehicle/remote-ctrl/config/query",
+        request.headers["bt-auth-nonce"],
+        request.headers["bt-auth-timestamp"],
+        "json=" + (request.body or b"").decode(),
+    )
+
+
+@pytest.mark.asyncio
+async def test_beantech_battery_heating_appointment_set_cmdbody() -> None:
+    transport = _FakeTransport(
+        acquire_vehicles=[FIXTURE["responses"]["discovery"]],
+        set_bean_tech_battery_heating_appointment=[
+            {"code": "000000", "data": {}},
+            {"code": "000000", "data": {}},
+        ],
+    )
+    client = _client(transport)
+    assert isinstance(
+        await client.authenticate(_credentials(), state=_complete_state()),
+        ChinaAuthenticated,
+    )
+    identifier = VehicleIdentifier(BEAN_VIN)
+
+    await client.set_bean_tech_battery_heating_appointment(
+        identifier, enable=True, use_car_time_ms=1735689600000
+    )
+    await client.set_bean_tech_battery_heating_appointment(identifier, enable=False)
+
+    sends = [
+        json.loads(request.body or b"null")
+        for request in transport.calls
+        if request.operation == "set_bean_tech_battery_heating_appointment"
+    ]
+    assert [body["commands"][0] for body in sends] == [
+        {
+            "controlType": "BATTERY_HEATING_APPOINTMENT",
+            "cmdBody": {"useCarTime": 1735689600000},
+        },
+        {"controlType": "BATTERY_TC_STOP"},
+    ]
+    for request in transport.calls:
+        if request.operation == "set_bean_tech_battery_heating_appointment":
+            assert "securityToken" not in request.headers
+
+
+@pytest.mark.asyncio
+async def test_beantech_charge_soc_cmdbody() -> None:
+    transport = _FakeTransport(
+        acquire_vehicles=[FIXTURE["responses"]["discovery"]],
+        set_bean_tech_charge_soc=[{"code": "000000", "data": {}}],
+    )
+    client = _client(transport)
+    assert isinstance(
+        await client.authenticate(_credentials(), state=_complete_state()),
+        ChinaAuthenticated,
+    )
+
+    await client.set_bean_tech_charge_soc(VehicleIdentifier(BEAN_VIN), percent=80)
+
+    request = next(
+        call for call in transport.calls if call.operation == "set_bean_tech_charge_soc"
+    )
+    body = json.loads(request.body or b"null")
+    assert body["commands"][0] == {
+        "controlType": "CTRL_CHARGE_SOC",
+        "cmdBody": {"chargeSoc": 80},
+    }
+    assert "securityToken" not in request.headers
+
+
+@pytest.mark.asyncio
+async def test_beantech_charge_window_write_updates_custom_time() -> None:
+    charge_setting = {
+        "chargingMode": 0,
+        "chargeStrategy": 5,
+        "chargeSetParam": {
+            "customTime": {"startTime": "23:00", "endTime": "07:00"},
+            "drivingPlanTimes": [{"day": 1}],
+        },
+    }
+    transport = _FakeTransport(
+        acquire_vehicles=[FIXTURE["responses"]["discovery"]],
+        get_bean_tech_charge_setting=[{"code": "000000", "data": charge_setting}],
+        set_bean_tech_charge_window=[{"code": "000000", "data": BEAN_COMMAND_ID}],
+    )
+    client = _client(transport)
+    assert isinstance(
+        await client.authenticate(_credentials(), state=_complete_state()),
+        ChinaAuthenticated,
+    )
+
+    seq_no = await client.set_bean_tech_charge_window(
+        VehicleIdentifier(BEAN_VIN), start_time="22:00", end_time="06:30"
+    )
+
+    assert seq_no == BEAN_COMMAND_ID
+    write_request = next(
+        call for call in transport.calls if call.operation == "set_bean_tech_charge_window"
+    )
+    body = json.loads(write_request.body or b"null")
+    assert body["chargingMode"] == 0
+    assert body["chargeStrategy"] == 5
+    assert body["chargeSetParam"]["customTime"] == {
+        "startTime": "22:00",
+        "endTime": "06:30",
+    }
+    assert body["chargeSetParam"]["drivingPlanTimes"] == [{"day": 1}]
+
+
+@pytest.mark.asyncio
+async def test_beantech_charge_window_rejects_malformed_clock_time() -> None:
+    transport = _FakeTransport(acquire_vehicles=[FIXTURE["responses"]["discovery"]])
+    client = _client(transport)
+    assert isinstance(
+        await client.authenticate(_credentials(), state=_complete_state()),
+        ChinaAuthenticated,
+    )
+    before = len(transport.calls)
+    with pytest.raises(GwmConfigurationError):
+        await client.set_bean_tech_charge_window(
+            VehicleIdentifier(BEAN_VIN), start_time="25:00", end_time="07:00"
+        )
+    assert len(transport.calls) == before
+
+
+def test_beantech_charge_result_request_uses_msg_type_charge() -> None:
+    client = _client(_FakeTransport())
+    command_id = "0" * 32 + "9359"
+    request = client._build_bean_tech_result_request(
+        _complete_state(),
+        VehicleIdentifier(BEAN_VIN),
+        command_id,
+        msg_type="charge",
+    )
+    assert "/app-api/api/v3.0/vehicle/remote-ctrl/result" in request.url
+    assert "msgType=charge" in request.url
+    assert BEAN_VIN in request.url
+    assert request.headers["bt-auth-sign"] == bean_tech_sign(
+        "GET",
+        "/app-api/api/v3.0/vehicle/remote-ctrl/result",
+        request.headers["bt-auth-nonce"],
+        request.headers["bt-auth-timestamp"],
+        "msgtype=charge" + "seqno=" + command_id + "vin=" + BEAN_VIN,
+    )
+
+
+@pytest.mark.asyncio
+async def test_beantech_charge_result_polling_uses_msg_type_charge() -> None:
+    transport = _FakeTransport(
+        acquire_vehicles=[FIXTURE["responses"]["discovery"]],
+        get_remote_command_result=[
+            {
+                "code": "000000",
+                "data": {
+                    "messageList": [
+                        {
+                            "messageType": "charge",
+                            "messageData": {
+                                "resultCode": "0",
+                                "resultMessage": "充电设置成功",
+                            },
+                        }
+                    ]
+                },
+            }
+        ],
+    )
+    client = _client(transport)
+    assert isinstance(
+        await client.authenticate(_credentials(), state=_complete_state()),
+        ChinaAuthenticated,
+    )
+    identifier = VehicleIdentifier(BEAN_VIN)
+    results = await client.get_remote_command_results(
+        identifier, BEAN_COMMAND_ID, msg_type="charge"
+    )
+    assert results == (
+        RemoteCommandResultItem(BEAN_COMMAND_ID, "charge", "0", "充电设置成功"),
+    )
+    request = transport.calls[-1]
+    assert "msgType=charge" in request.url
 
 

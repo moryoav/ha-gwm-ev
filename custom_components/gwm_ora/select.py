@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import time
 from datetime import timedelta
+from typing import Any
 
 from homeassistant.components.select import SelectEntity
 from homeassistant.core import HomeAssistant
@@ -62,6 +63,15 @@ async def async_setup_entry(
         entry,
         async_add_entities,
         lambda vehicle: (
+            GwmChargeWindowStartSelect(
+                entry.runtime_data.api, entry.runtime_data.coordinator, vehicle["vin"]
+            ),
+            GwmChargeWindowEndSelect(
+                entry.runtime_data.api, entry.runtime_data.coordinator, vehicle["vin"]
+            ),
+            GwmBatteryAppointmentSelect(
+                entry.runtime_data.api, entry.runtime_data.coordinator, vehicle["vin"]
+            ),
             GwmCabinCleanAppointmentSelect(
                 entry.runtime_data.api, entry.runtime_data.coordinator, vehicle["vin"]
             ),
@@ -102,6 +112,125 @@ class _BeanTechTimeSelect(GwmEntity, SelectEntity):
             return
         self._last_read_at = time.monotonic()
         self.hass.async_create_task(reader())
+
+
+class GwmChargeWindowStartSelect(_BeanTechTimeSelect):
+    """Start of the BeanTech smart-charge window (HH:MM)."""
+
+    def __init__(self, api, coordinator, vin: str) -> None:
+        super().__init__(api, coordinator, vin, translation_key="charge_window_start")
+
+    @property
+    def current_option(self) -> str | None:
+        value = self.coordinator.local_flag(self.vin, "charge_window_start")
+        return value if value in self._attr_options else None
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        if not self.available:
+            return
+        await self._async_read_window()
+
+    async def _async_read_window(self) -> dict[str, Any] | None:
+        try:
+            response = await self._api.async_get_charging_mode(self.vin)
+        except (GwmCommandError, GwmClientError) as err:
+            _LOGGER.debug("Could not read charge window: %s", err)
+            return None
+        self.coordinator.set_local_flag(
+            self.vin, "charge_window_start", response.get("start_time")
+        )
+        self.coordinator.set_local_flag(
+            self.vin, "charge_window_end", response.get("end_time")
+        )
+        return response
+
+    async def async_select_option(self, option: str) -> None:
+        # Optimistically show the new start time, then write it alongside the
+        # current end time (read from the last known value, not a fresh read).
+        self.coordinator.set_local_flag(self.vin, "charge_window_start", option)
+        end_time = self.coordinator.local_flag(self.vin, "charge_window_end")
+        if not isinstance(end_time, str):
+            end_time = "07:00"
+        command = await async_call_gwm_api(
+            self._api.async_set_charge_window(
+                self.vin, start_time=option, end_time=end_time
+            )
+        )
+        self.coordinator.async_track_command(command, on_terminal=self._async_read_window)
+
+
+class GwmChargeWindowEndSelect(_BeanTechTimeSelect):
+    """End of the BeanTech smart-charge window (HH:MM)."""
+
+    def __init__(self, api, coordinator, vin: str) -> None:
+        super().__init__(api, coordinator, vin, translation_key="charge_window_end")
+
+    @property
+    def current_option(self) -> str | None:
+        value = self.coordinator.local_flag(self.vin, "charge_window_end")
+        return value if value in self._attr_options else None
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        if not self.available:
+            return
+        await self._async_read_window()
+
+    async def _async_read_window(self) -> dict[str, Any] | None:
+        try:
+            response = await self._api.async_get_charging_mode(self.vin)
+        except (GwmCommandError, GwmClientError) as err:
+            _LOGGER.debug("Could not read charge window: %s", err)
+            return None
+        self.coordinator.set_local_flag(
+            self.vin, "charge_window_start", response.get("start_time")
+        )
+        self.coordinator.set_local_flag(
+            self.vin, "charge_window_end", response.get("end_time")
+        )
+        return response
+
+    async def async_select_option(self, option: str) -> None:
+        # Optimistically show the new end time, then write it alongside the
+        # current start time (read from the last known value, not a fresh read).
+        self.coordinator.set_local_flag(self.vin, "charge_window_end", option)
+        start_time = self.coordinator.local_flag(self.vin, "charge_window_start")
+        if not isinstance(start_time, str):
+            start_time = "23:00"
+        command = await async_call_gwm_api(
+            self._api.async_set_charge_window(
+                self.vin, start_time=start_time, end_time=option
+            )
+        )
+        self.coordinator.async_track_command(command, on_terminal=self._async_read_window)
+
+
+class GwmBatteryAppointmentSelect(_BeanTechTimeSelect):
+    """Battery appointment heating departure time (HH:MM, within 24 h)."""
+
+    def __init__(self, api, coordinator, vin: str) -> None:
+        super().__init__(
+            api, coordinator, vin, translation_key="battery_appointment_time"
+        )
+
+    @property
+    def current_option(self) -> str | None:
+        value = self.coordinator.local_flag(self.vin, "battery_appointment_time")
+        return value if value in self._attr_options else "08:00"
+
+    async def async_select_option(self, option: str) -> None:
+        use_car_time_ms = _clock_to_today_ms(option)
+        self.coordinator.set_local_flag(self.vin, "battery_appointment_time", option)
+        # Selecting a departure time also arms the appointment, so keep the
+        # companion switch in sync with that request.
+        self.coordinator.set_local_flag(self.vin, "battery_appointment_heating", True)
+        command = await async_call_gwm_api(
+            self._api.async_set_battery_heating_appointment(
+                self.vin, enable=True, use_car_time_ms=use_car_time_ms
+            )
+        )
+        self.coordinator.async_track_command(command)
 
 
 class GwmCabinCleanAppointmentSelect(_BeanTechTimeSelect):
