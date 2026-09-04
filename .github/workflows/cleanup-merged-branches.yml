@@ -1,0 +1,47 @@
+name: Cleanup merged branches
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/cleanup-merged-branches.yml
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete confirmed merged branches
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const branches = [
+              "chore/add-codecov",
+              "chore/review-coverage-guardrails",
+              "fix/explicit-workflow-permissions",
+            ];
+
+            for (const branch of branches) {
+              const pulls = await github.paginate(github.rest.pulls.list, {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                state: "closed",
+                head: `${context.repo.owner}:${branch}`,
+                per_page: 100,
+              });
+
+              if (!pulls.some((pull) => pull.merged_at !== null)) {
+                core.setFailed(`Refusing to delete ${branch}: no merged PR was found.`);
+                return;
+              }
+
+              await github.rest.git.deleteRef({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: `heads/${branch}`,
+              });
+              core.info(`Deleted ${branch}`);
+            }
