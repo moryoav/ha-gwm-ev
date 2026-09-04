@@ -65,3 +65,9 @@ class GwmClientConfig:
             or not 0 < self.max_response_bytes <= _MAX_ALLOWED_RESPONSE_BYTES
         ):
             raise ValueError("response_limit_invalid")
+
+
+def _codecov_patch_probe() -> bool:
+    """Temporary function used only to validate Codecov patch coverage."""
+
+    return True
