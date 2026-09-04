@@ -10,6 +10,7 @@ import pytest
 
 pytest.importorskip("homeassistant")
 
+from homeassistant.components.climate import HVACMode
 from homeassistant.core import HomeAssistant
 
 from custom_components.gwm_ora.button import (
@@ -224,6 +225,54 @@ async def test_task17_capability_exposes_only_climate_and_keeps_beantech_hidden(
     assert not GwmClimateRunTimeNumber(
         SimpleNamespace(), coordinator, "SYNTHETIC-BEANTECH"
     ).available
+
+
+@pytest.mark.asyncio
+async def test_climate_exposes_auto_and_rejects_legacy_hvac_modes() -> None:
+    api = SimpleNamespace(
+        async_set_climate=AsyncMock(
+            side_effect=(
+                {"id": "climate-auto", "state": "in_progress"},
+                {"id": "climate-off", "state": "in_progress"},
+            )
+        )
+    )
+    coordinator = GwmDataUpdateCoordinator(
+        HomeAssistant("synthetic-config"),
+        api,
+        cloud_client=SimpleNamespace(),  # type: ignore[arg-type]
+    )
+    vehicle = _vehicle("SYNTHETIC-A", 80, climate_commands=True)
+    vehicle["climate"] = {
+        "mode": "auto",
+        "action": None,
+        "target_temperature_c": 22,
+    }
+    coordinator.async_set_updated_data({"region": "eu", "vehicles": [vehicle]})
+    coordinator.async_track_command = Mock()  # type: ignore[method-assign]
+    entity = GwmClimate(api, coordinator, "SYNTHETIC-A")
+
+    assert entity.hvac_modes == [HVACMode.OFF, HVACMode.AUTO]
+    assert entity.hvac_mode == HVACMode.AUTO
+    assert entity.hvac_action is None
+
+    await entity.async_set_hvac_mode(HVACMode.AUTO)
+    await entity.async_set_hvac_mode(HVACMode.OFF)
+    for legacy_mode in (HVACMode.COOL, HVACMode.HEAT):
+        with pytest.raises(ValueError, match="Unsupported HVAC mode"):
+            await entity.async_set_hvac_mode(legacy_mode)
+
+    assert api.async_set_climate.await_args_list[0].args == ("SYNTHETIC-A",)
+    assert api.async_set_climate.await_args_list[0].kwargs == {"mode": "auto"}
+    assert api.async_set_climate.await_args_list[1].args == ("SYNTHETIC-A",)
+    assert api.async_set_climate.await_args_list[1].kwargs == {"mode": "off"}
+    assert api.async_set_climate.await_count == 2
+    assert coordinator.async_track_command.call_count == 2
+
+    vehicle["climate"] = {"mode": "off", "action": "off"}
+    coordinator.async_set_updated_data({"region": "eu", "vehicles": [vehicle]})
+    assert entity.hvac_mode == HVACMode.OFF
+    assert entity.hvac_action == "off"
 
 
 @pytest.mark.asyncio

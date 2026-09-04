@@ -330,7 +330,7 @@ async def test_acceptance_is_journaled_before_polling_and_reaches_terminal_resul
     clock = _Clock()
     api, store, credentials = await _api(tmp_path, cloud, clock)
 
-    accepted = await api.async_set_climate(_VIN, mode="cool", temperature=21)
+    accepted = await api.async_set_climate(_VIN, mode="auto", temperature=21)
     journal = await store.async_get_command_journal(cloud_entry_data(credentials))
     assert accepted["state"] == "in_progress"
     assert len(journal) == 1
@@ -359,7 +359,7 @@ async def test_restart_restores_polling_without_resending_vehicle_operation(
     clock = _Clock()
     first_cloud = _Cloud()
     first, store, credentials = await _api(tmp_path, first_cloud, clock)
-    accepted = await first.async_set_climate(_VIN, mode="cool")
+    accepted = await first.async_set_climate(_VIN, mode="auto")
     assert len(first_cloud.sent) == 1
 
     second_cloud = _Cloud()
@@ -387,7 +387,7 @@ async def test_timeout_is_persisted_without_an_extra_poll(tmp_path: Path) -> Non
     cloud = _Cloud()
     clock = _Clock()
     api, store, credentials = await _api(tmp_path, cloud, clock)
-    accepted = await api.async_set_climate(_VIN, mode="cool")
+    accepted = await api.async_set_climate(_VIN, mode="auto")
     clock.value += timedelta(seconds=91)
 
     timed_out = await api.async_get_command(str(accepted["id"]))
@@ -407,14 +407,32 @@ async def test_rejection_and_disabled_mode_never_create_a_journal_entry(
     clock = _Clock()
     api, store, credentials = await _api(tmp_path, cloud, clock)
     with pytest.raises(GwmApiError):
-        await api.async_set_climate(_VIN, mode="cool")
+        await api.async_set_climate(_VIN, mode="auto")
     assert await store.async_get_command_journal(cloud_entry_data(credentials)) == ()
 
     disabled, _store, _credentials_value = await _api(
         tmp_path / "disabled", _Cloud(), clock, enabled=False
     )
     with pytest.raises(GwmCommandForbidden):
-        await disabled.async_set_climate(_VIN, mode="cool")
+        await disabled.async_set_climate(_VIN, mode="auto")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("legacy_mode", ["cool", "heat"])
+async def test_legacy_climate_modes_are_rejected_before_write(
+    tmp_path: Path,
+    legacy_mode: str,
+) -> None:
+    cloud = _Cloud()
+    clock = _Clock()
+    api, store, credentials = await _api(tmp_path, cloud, clock)
+
+    with pytest.raises(GwmCommandError, match="'auto' or 'off'"):
+        await api.async_set_climate(_VIN, mode=legacy_mode)
+
+    assert cloud.updated == []
+    assert cloud.sent == []
+    assert await store.async_get_command_journal(cloud_entry_data(credentials)) == ()
 
 
 @pytest.mark.asyncio
@@ -434,6 +452,19 @@ async def test_runtime_only_and_temperature_while_off_save_without_command(
 
 
 @pytest.mark.asyncio
+async def test_temperature_change_while_active_uses_auto_mode(tmp_path: Path) -> None:
+    clock = _Clock()
+    cloud = _Cloud(currently_on=True)
+    api, _store, _credentials_value = await _api(tmp_path, cloud, clock)
+
+    accepted = await api.async_set_climate(_VIN, temperature=24)
+
+    assert accepted["state"] == "in_progress"
+    assert len(cloud.sent) == 1
+    assert cloud.sent[0].mode == "auto"
+
+
+@pytest.mark.asyncio
 async def test_saved_runtime_is_used_by_immediate_climate_start(
     tmp_path: Path,
 ) -> None:
@@ -442,7 +473,7 @@ async def test_saved_runtime_is_used_by_immediate_climate_start(
     api, _store, _credentials_value = await _api(tmp_path, cloud, clock)
 
     saved = await api.async_set_climate(_VIN, operation_time_minutes=5)
-    started = await api.async_set_climate(_VIN, mode="cool")
+    started = await api.async_set_climate(_VIN, mode="auto")
 
     assert saved["state"] == "completed"
     assert started["state"] == "in_progress"
@@ -773,7 +804,7 @@ async def test_overseas_write_lifecycle_matrix_resumes_every_family_without_rese
     )
 
     accepted = (
-        await first.async_set_climate(_VIN, mode="cool"),
+        await first.async_set_climate(_VIN, mode="auto"),
         await first.async_lock(_VIN, "lock"),
         await first.async_close_windows(_VIN),
         await first.async_set_front_defroster(_VIN, enabled=True),
@@ -838,7 +869,7 @@ async def test_overseas_write_lifecycle_matrix_resumes_every_family_without_rese
 
 
 @pytest.mark.asyncio
-async def test_china_no_pin_lifecycle_journals_heat_lock_window_and_extended_controls(
+async def test_china_no_pin_lifecycle_journals_auto_lock_window_and_extended_controls(
     tmp_path: Path,
 ) -> None:
     clock = _Clock()
@@ -846,7 +877,7 @@ async def test_china_no_pin_lifecycle_journals_heat_lock_window_and_extended_con
     first, store, credentials = await _china_api(tmp_path, first_cloud, clock)
 
     accepted = (
-        await first.async_set_climate(_VIN, mode="heat", temperature=26),
+        await first.async_set_climate(_VIN, mode="auto", temperature=26),
         await first.async_lock(_VIN, "unlock"),
         await first.async_close_windows(_VIN),
         await first.async_vehicle_control(_VIN, "sunroof_close"),

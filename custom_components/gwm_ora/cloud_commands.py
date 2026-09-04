@@ -125,15 +125,9 @@ class GwmCommandApi:
         except (TypeError, ValueError):
             raise GwmCommandError("A/C command requires a valid vehicle") from None
         normalized_mode = mode.strip().lower() if isinstance(mode, str) else None
-        allowed_modes = {None, "cool", "off"}
-        if self._cloud.region == "cn":
-            allowed_modes.add("heat")
+        allowed_modes = {None, "auto", "off"}
         if normalized_mode not in allowed_modes:
-            raise GwmCommandError(
-                "A/C mode must be 'cool', 'heat', or 'off' in mainland China"
-                if self._cloud.region == "cn"
-                else "A/C mode must be 'cool' or 'off' in this region"
-            )
+            raise GwmCommandError("A/C mode must be 'auto' or 'off'")
         minimum_temperature, maximum_temperature = (
             (17, 31) if self._cloud.region == "cn" else (16, 32)
         )
@@ -204,7 +198,7 @@ class GwmCommandApi:
         currently_on = _climate_is_on(context.status)
 
         if (
-            normalized_mode in {"cool", "heat"}
+            normalized_mode == "auto"
             or temperature is not None
             or operation_time_minutes is not None
         ):
@@ -232,7 +226,7 @@ class GwmCommandApi:
 
         command = ClimateCommand(
             identifier=identifier,
-            mode=cast(ClimateMode, normalized_mode or "cool"),
+            mode=cast(ClimateMode, normalized_mode or "auto"),
             temperature=effective_temperature,
             operation_time_minutes=effective_operation_time,
             currently_on=currently_on,
