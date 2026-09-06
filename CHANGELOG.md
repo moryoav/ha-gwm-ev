@@ -8,6 +8,20 @@ This project follows semantic versioning. HACS uses the latest GitHub release ta
 
 ## [Unreleased]
 
+## [0.16.21] - 2026-09-06
+
+### Fixed
+
+- Preserve overseas climate, lock, window, charging-plan, and command-result operation names in sanitized error logs instead of replacing them with `unknown`.
+
+### Added
+
+- Add opt-in debug diagnostics that distinguish saving climate settings, checking the RU security PIN, submitting a command, polling its result, and prerequisite vehicle reads.
+- Record HTTP status, bounded numeric API codes and their original JSON types, the presence/type of `data`, and fixed response-format reasons without logging raw responses, credentials, PINs, VINs, URLs, or command identifiers.
+- Add regression coverage for diagnostic privacy, malformed responses, numeric codes, disabled logging, and unchanged transport and decoder behavior.
+
+This is a diagnostics-only release for investigation of #28. Command sequencing, request payloads, PIN handling, retries, and strict response validation are unchanged. The underlying RU command failure still requires a fresh debug-log capture; this release does not claim to fix it.
+
 ## [0.16.19] - 2026-09-02
 
 ### Added
@@ -42,7 +56,7 @@ This project follows semantic versioning. HACS uses the latest GitHub release ta
 ### Added
 
 - Added a capability-gated **Front defroster** switch for overseas vehicles that report front-defroster status. It uses the official app's 15-minute start request, supports an explicit stop request, and follows the existing restart-safe command journal and result polling.
-- Added a capability-gated **Start air circulation** button for overseas vehicles that report the matching status. It runs the official app's fixed 60-second external-air cabin-clean action and follows the same command journal and result polling.
+- Added a capability-gated **Start air circulation** button for overseas vehicles that report the matching status. It runs the official app's 60-second external-air cabin-clean action and follows the same command journal and result polling.
 
 ## [0.16.15] - 2026-08-31
 
