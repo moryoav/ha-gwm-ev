@@ -8,6 +8,14 @@ This project follows semantic versioning. HACS uses the latest GitHub release ta
 
 ## [Unreleased]
 
+## [0.17.1] - 2026-09-07
+
+### Fixed
+
+- Fixed false errors when successful GWM cloud acknowledgements omit `data`, including climate settings, security-PIN checks, and remote commands in overseas regions.
+- Corrected debug diagnostics to recognize these acknowledgements as successful while still reporting whether `data` is present.
+- Added regression coverage for acknowledgement handling, malformed responses, required read payloads, and status values after accepted commands.
+
 ## [0.17.0] - 2026-09-07
 
 ### Changed

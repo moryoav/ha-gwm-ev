@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import ssl
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -17,6 +18,9 @@ from gwm_client import (
     ChinaVehicleControlCommand,
     ClimateCommand,
     CloseWindowsCommand,
+    CloudStatusItem,
+    CloudVehicle,
+    CloudVehicleBasics,
     DoorLockCommand,
     FrontDefrosterCommand,
     GwmApiError,
@@ -27,6 +31,7 @@ from gwm_client import (
     RemoteCommandResultItem,
     VehicleIdentifier,
     create_gwm_ssl_context,
+    map_vehicle_snapshot,
     select_remote_command_result,
 )
 from gwm_client._protocol import _Deadline, _TransportRequest, _TransportResponse
@@ -61,11 +66,19 @@ def _fixture() -> dict[str, Any]:
     return json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
 
 
-def _response(data: object = None, *, code: str = "000000") -> _TransportResponse:
+_MISSING = object()
+
+
+def _response(data: object = _MISSING, *, code: str = "000000") -> _TransportResponse:
+    """Build acknowledgements without data unless a payload is supplied."""
+
+    envelope: dict[str, object] = {"code": code}
+    if data is not _MISSING:
+        envelope["data"] = data
     return _TransportResponse(
         200,
         {"content-type": "application/json"},
-        json.dumps({"code": code, "data": data}, separators=(",", ":")).encode(),
+        json.dumps(envelope, separators=(",", ":")).encode(),
     )
 
 
@@ -164,6 +177,56 @@ async def test_regional_climate_contracts_are_closed_and_header_exact(region: Re
     assert urlsplit(result_request.url).path.endswith("/vehicle/getRemoteCtrlResultT5")
     assert urlsplit(result_request.url).query == "seqNo=" + sequence
     assert (result_request.headers.get("vin") == fixture["vin"]) is case["result_vin_header"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("region", list(Region))
+@pytest.mark.parametrize("acknowledgement_data", [_MISSING, None], ids=["omitted-data", "null-data"])
+async def test_climate_acknowledgement_preserves_followup_status(
+    region: Region, acknowledgement_data: object,
+) -> None:
+    """Accept empty writes and preserve typed status and snapshot values."""
+
+    fixture = _fixture()
+    case = fixture["regions"][region.value]
+    sequence = fixture["sequence_number"]
+    identifier = VehicleIdentifier(fixture["vin"])
+    acknowledgement_count = 2 if case["security_check"] else 1
+    transport = _RecordingTransport(
+        [_response(acknowledgement_data) for _ in range(acknowledgement_count)]
+        + [_response({"items": [{"code": "2201001", "value": 234, "unit": "C"}]})]
+    )
+    client = GwmClient(
+        GwmClientConfig(region),
+        GwmSession(
+            country=case["country"],
+            device_id=case["device_id"],
+            access_token="SYNTHETIC-COMMAND-TOKEN",
+            app_ssl_context=_context(region),
+        ),
+        transport=transport,
+        sequence_source=lambda: sequence,
+    )
+
+    acceptance = await client.send_climate_command(
+        ClimateCommand(identifier, "auto", 21, 10),
+        security_password_hash=fixture["security_password_hash"],
+    )
+    status = await client.get_last_status(identifier)
+    snapshot = map_vehicle_snapshot(
+        CloudVehicle(identifier=identifier),
+        status,
+        CloudVehicleBasics(),
+        refreshed_at=datetime(2026, 9, 7, tzinfo=UTC),
+        remote_commands_available=True,
+        command_status="pending",
+    )
+
+    assert acceptance.command_id == sequence
+    assert status.items == (CloudStatusItem(code="2201001", value=234, unit="C"),)
+    assert snapshot.values.interior_temperature_c == 23.4
+    assert len(transport.requests) == acknowledgement_count + 1
+    assert not transport.responses
 
 
 @pytest.mark.asyncio
