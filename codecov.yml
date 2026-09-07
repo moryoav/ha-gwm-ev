@@ -1,0 +1,13 @@
+coverage:
+  status:
+    patch:
+      default:
+        target: 100
+        threshold: 0
+        informational: false
+        only_pulls: true
+        if_ci_failed: error
+        if_not_found: failure
+
+github_checks:
+  annotations: true

@@ -228,7 +228,8 @@ async def test_task17_capability_exposes_only_climate_and_keeps_beantech_hidden(
 
 
 @pytest.mark.asyncio
-async def test_climate_exposes_auto_and_rejects_legacy_hvac_modes() -> None:
+@pytest.mark.parametrize("region", ["eu", "aus", "rus", "cn"])
+async def test_climate_exposes_auto_and_rejects_legacy_hvac_modes(region: str) -> None:
     api = SimpleNamespace(
         async_set_climate=AsyncMock(
             side_effect=(
@@ -248,7 +249,7 @@ async def test_climate_exposes_auto_and_rejects_legacy_hvac_modes() -> None:
         "action": None,
         "target_temperature_c": 22,
     }
-    coordinator.async_set_updated_data({"region": "eu", "vehicles": [vehicle]})
+    coordinator.async_set_updated_data({"region": region, "vehicles": [vehicle]})
     coordinator.async_track_command = Mock()  # type: ignore[method-assign]
     entity = GwmClimate(api, coordinator, "SYNTHETIC-A")
 
@@ -270,7 +271,7 @@ async def test_climate_exposes_auto_and_rejects_legacy_hvac_modes() -> None:
     assert coordinator.async_track_command.call_count == 2
 
     vehicle["climate"] = {"mode": "off", "action": "off"}
-    coordinator.async_set_updated_data({"region": "eu", "vehicles": [vehicle]})
+    coordinator.async_set_updated_data({"region": region, "vehicles": [vehicle]})
     assert entity.hvac_mode == HVACMode.OFF
     assert entity.hvac_action == "off"
 

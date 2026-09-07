@@ -1,0 +1,53 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+
+reviews:
+  request_changes_workflow: true
+
+  path_instructions:
+    - path: "gwm_client/china_*.py"
+      instructions: |
+        For endpoint, response-field, signal-code, unit-conversion,
+        schema-validation, or fallback changes:
+
+        - Verify routing remains confined to the intended China platform.
+        - Compare every newly consumed response field with all applicable
+          schema-recognition and validation gates.
+        - Check behavior when the new field is absent, malformed, zero,
+          a numeric string, an integer, or a float.
+        - Require an explicit compatibility decision when replacing an
+          existing field or endpoint.
+        - Flag removal of a previously supported field unless a fallback
+          or a documented intentional breaking change is present.
+
+    - path: "tests/python/client/**"
+      instructions: |
+        When production response parsing or mapping changes:
+
+        - Require a direct assertion for the newly produced value.
+        - Require relevant unit-conversion assertions.
+        - Require missing or malformed input coverage.
+        - URL, path, signature, and fixture-request updates alone do not
+          count as testing response mapping.
+        - Check both mapper-level output and normalized snapshot output
+          when the value reaches VehicleSnapshot.
+
+  pre_merge_checks:
+    override_requested_reviewers_only: true
+
+    custom_checks:
+      - name: "Mapping changes have semantic tests"
+        mode: "error"
+        instructions: >-
+          Fail when a pull request changes an API response field, signal-code
+          mapping, or unit conversion under gwm_client/** without a test that
+          directly asserts the resulting CloudStatusItem or VehicleSnapshot
+          value. URL/signature-only assertions and a general statement that
+          the test suite passes are not sufficient.
+
+      - name: "Parser schema remains compatible"
+        mode: "error"
+        instructions: >-
+          Fail when a newly consumed response field is absent from applicable
+          schema-recognition or validation gates. Also fail when an existing
+          response field or endpoint is removed without an explicit fallback,
+          migration rationale, or regression test covering its absence.

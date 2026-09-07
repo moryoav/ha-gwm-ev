@@ -419,13 +419,18 @@ async def test_rejection_and_disabled_mode_never_create_a_journal_entry(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("legacy_mode", ["cool", "heat"])
+@pytest.mark.parametrize("region", ["eu", "aus", "rus", "cn"])
 async def test_legacy_climate_modes_are_rejected_before_write(
     tmp_path: Path,
     legacy_mode: str,
+    region: str,
 ) -> None:
     cloud = _Cloud()
     clock = _Clock()
-    api, store, credentials = await _api(tmp_path, cloud, clock)
+    if region == "cn":
+        api, store, credentials = await _china_api(tmp_path, cloud, clock)
+    else:
+        api, store, credentials = await _api(tmp_path, cloud, clock, region=region)
 
     with pytest.raises(GwmCommandError, match="'auto' or 'off'"):
         await api.async_set_climate(_VIN, mode=legacy_mode)

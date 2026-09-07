@@ -435,7 +435,7 @@ def _status_request(**changes: object) -> _ChinaTransportRequest:
 def _bean_status_request(**changes: object) -> _ChinaTransportRequest:
     nonce = "0123456789abcdef"
     timestamp = "1723456789123"
-    path = "/app-api/api/v2.0/vehicle/getLastStatus"
+    path = "/app-api/api/v3.0/vehicle/getLastStatus"
     headers = {
         "bt-auth-appkey": BEAN_TECH_APP_KEY,
         "bt-auth-nonce": nonce,
@@ -462,7 +462,7 @@ def _bean_status_request(**changes: object) -> _ChinaTransportRequest:
         "method": "GET",
         "url": (
             "https://gw-app-gateway.gwmapp-h.com/"
-            "app-api/api/v2.0/vehicle/getLastStatus?vin=" + quote(VIN, safe="")
+            "app-api/api/v3.0/vehicle/getLastStatus?vin=" + quote(VIN, safe="")
         ),
         "body": None,
         "headers": headers,
@@ -840,7 +840,7 @@ def test_bean_tech_status_get_has_exact_headers_query_and_signature() -> None:
     assert request.body is None
     assert request.headers["bt-auth-sign"] == bean_tech_sign(
         "GET",
-        "/app-api/api/v2.0/vehicle/getLastStatus",
+        "/app-api/api/v3.0/vehicle/getLastStatus",
         request.headers["bt-auth-nonce"],
         request.headers["bt-auth-timestamp"],
         "vin=" + VIN,
@@ -854,7 +854,7 @@ def test_bean_tech_status_get_has_exact_headers_query_and_signature() -> None:
         {"service": "auto_ai"},
         {"method": "POST"},
         {"url": "https://gw-app-gateway.gwmapp-h.com/app-api/api/v1.0/vehicle/getLastStatus?vin=" + VIN},
-        {"url": "https://gw-app-gateway.gwmapp-h.com/app-api/api/v2.0/vehicle/getLastStatus?vin=" + VIN + "&x=1"},
+        {"url": "https://gw-app-gateway.gwmapp-h.com/app-api/api/v3.0/vehicle/getLastStatus?vin=" + VIN + "&x=1"},
         {"body": b"{}"},
     ],
 )
