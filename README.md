@@ -140,7 +140,7 @@ Remote commands are slower than ordinary Home Assistant operations because the r
 
 The climate entity exposes **Off** and **Auto**. The vehicle determines whether heating or cooling is needed from the selected target temperature.
 
-Set **Climate run time** and the target temperature before starting A/C. Changing the run time only saves it for the next start and does not start the climate system. Changing the target temperature while A/C is off saves it for the next start; changing it while A/C is active sends the new target to the vehicle.
+Set **Climate run time** and the target temperature before starting A/C. Changing the run time only saves it for the next start and does not start the climate system. Changing the target temperature while A/C is off saves it for the next start; changing it while A/C is active sends the new target to the vehicle. Some vehicles and regions only accept temperature changes while A/C is off. In those cases, turn A/C off, set the temperature, and then turn it on again.
 
 On supported Europe, Australia and New Zealand, and Russia vehicles, the **Front defroster** switch starts the official app's 15-minute defrost cycle and can stop it early. The **Start air circulation** button starts the official app's 60-second external-air cabin-clean cycle. GWM does not provide a stop action for that cycle. I expose these controls only when the vehicle reports their matching status signals and remote commands are enabled.
 
@@ -230,6 +230,15 @@ A likely cause is using the same GWM account for the integration and the app on 
 - Enter the correct vehicle security PIN outside mainland China.
 - Reload the integration after changing options.
 - Confirm read-only polling works before testing a command.
+
+### A/C does not turn on or the temperature does not change
+
+Restrictions vary by vehicle and region. These conditions do not apply to every car:
+
+- A low vehicle battery level can prevent remote A/C from starting.
+- Some vehicles require the car to be locked before remote A/C can start.
+- Some vehicles cannot start remote A/C while connected to a charger.
+- Some vehicles only accept temperature changes while A/C is off. Turn A/C off, set the target temperature first, and then turn A/C on again.
 
 ## Mainland China
 
