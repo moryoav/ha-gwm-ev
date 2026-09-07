@@ -269,18 +269,6 @@ Diagnostics redact known credentials, tokens, identifiers, and locations. Review
 
 Never publish raw cloud responses, packet captures, account data, verification codes, private keys, VINs, or exact vehicle locations.
 
-## Naming
-
-I use **GWM** for the project and new code because support is not limited to ORA vehicles. The Python distribution is `gwm-client`, and the import package is `gwm_client`.
-
-The Home Assistant domain and action namespace are `gwm_ora`. This identifier does not limit supported vehicle brands or models.
-
-## Protocol Materials
-
-Some protocol values and bootstrap materials were obtained through interoperability research on official GWM applications. I record their sources, hashes, certificate renewal deadlines, and unresolved redistribution conditions in [Third-Party and Protocol Material Notice](https://github.com/moryoav/ha-gwm-ev/blob/main/THIRD_PARTY_NOTICES.md).
-
-This remains an early integration release. Publishing the standalone client through a public package index remains blocked until the recorded permission or authorized-replacement conditions are resolved.
-
 ## Disclaimer
 
 This project is unofficial and is not affiliated with or endorsed by Great Wall Motor, GWM, or Home Assistant. Vehicle cloud APIs and remote command behavior may change without notice.
