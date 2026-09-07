@@ -206,6 +206,8 @@ Use plain, direct language and include Home Assistant examples where they make t
 
 ## Releases
 
+Changelog entries and GitHub release notes use direct descriptions of the changes, without first-person narration. Start bullets with the change itself, such as "Replaced" or "Fixed", including after labels such as **Breaking:**. Do not start them with "I", "we", "my", or "our". This is an exception to any general first-person style used for public replies, PR descriptions, or comments.
+
 HACS uses GitHub releases for update detection. Release pull requests should:
 
 - Move `CHANGELOG.md` entries from `Unreleased` into the target version.
