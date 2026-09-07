@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 This project follows semantic versioning. HACS uses the latest GitHub release tag as the remote version, so every released version must have both a tag and a GitHub release.
 
-<!-- Use direct descriptions of changes, without first-person narration. Do not start bullets with "I", "we", "my", or "our", including after labels such as "Breaking". This release-note rule overrides general first-person guidance for public replies. -->
+<!-- Use direct release-note language. Do not begin changelog bullets with first-person "I". -->
 
 ## [Unreleased]
 

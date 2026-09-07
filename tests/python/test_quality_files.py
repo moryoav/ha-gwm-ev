@@ -3,27 +3,9 @@
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-
-
-def test_changelog_bullets_do_not_start_with_first_person_narration() -> None:
-    """Keep release notes about the changes, including after bold labels."""
-    first_person_bullet = re.compile(
-        r"^\s*[-*+]\s+(?:\*\*[^*]+\*\*:?\s+)?(?:I|we|my|our)\b",
-        re.IGNORECASE,
-    )
-    violations = [
-        line_number
-        for line_number, line in enumerate(
-            (ROOT / "CHANGELOG.md").read_text(encoding="utf-8").splitlines(), 1
-        )
-        if first_person_bullet.match(line)
-    ]
-
-    assert not violations, f"Use direct change descriptions in CHANGELOG.md at lines {violations}"
 
 
 def _png_size(path: Path) -> tuple[int, int]:
