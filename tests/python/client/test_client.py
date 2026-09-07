@@ -560,6 +560,30 @@ async def test_malformed_envelopes_and_typed_payloads_are_schema_errors(body: by
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("region", list(Region))
+@pytest.mark.parametrize("operation", list(_READ_ENDPOINTS) + ["get_charging_plan", "get_remote_command_result"])
+@pytest.mark.parametrize("body", [b'{"code":"000000"}', b'{"code":"000000","data":null}'])
+async def test_successful_reads_still_require_typed_data(region: Region, operation: str, body: bytes) -> None:
+    """Reject missing read payloads after accepting the success envelope."""
+
+    transport = _RecordingTransport([_TransportResponse(200, {}, body)])
+    client = GwmClient(GwmClientConfig(region), _session(region), transport=transport)
+    identifier = VehicleIdentifier(_fixture()["identifier"])
+
+    with pytest.raises(GwmSchemaError) as raised:
+        if operation == "get_charging_plan":
+            await client.get_charging_plan(identifier)
+        elif operation == "get_remote_command_result":
+            await client.get_remote_command_results(identifier, "SYNTHETIC-COMMAND-ID")
+        else:
+            await _invoke(client, operation)
+
+    assert raised.value.operation == operation
+    assert raised.value.__context__ is None
+    assert len(transport.requests) == 1
+
+
+@pytest.mark.asyncio
 async def test_numeric_zero_is_not_protocol_success() -> None:
     body = b'{"code":0,"description":"not-success","data":[]}'
     transport = _RecordingTransport([_TransportResponse(200, {}, body)])

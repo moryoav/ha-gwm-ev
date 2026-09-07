@@ -1702,6 +1702,8 @@ def _classify_regional_read_error[T](
 
 
 def _decode_envelope(response: _TransportResponse, *, operation: str) -> object:
+    """Validate overseas success; payload requirements belong to each reader."""
+
     if response.status in {401, 403}:
         raise GwmAuthenticationError(operation=operation)
     if response.status == 429:

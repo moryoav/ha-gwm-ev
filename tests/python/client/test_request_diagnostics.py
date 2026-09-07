@@ -68,7 +68,7 @@ def test_operation_alias_is_preserved(operation, error_type):
     (b'{"code":"000000","data":1e999}', "non_finite_number"),
     (b"[" * 66 + b"0" + b"]" * 66, "json_too_deep"),
     (b"[" * 1200 + b"0" + b"]" * 1200, "json_too_deep"),
-    (b" " * (64 * 1024 + 1), "diagnostic_size_limit"),
+    pytest.param(b" " * (64 * 1024 + 1), "diagnostic_size_limit", id="diagnostic-size-limit"),
 ])
 def test_envelope_reason(body, reason):
     assert diagnostics._envelope_shape(body).reason == reason
@@ -233,11 +233,16 @@ async def test_real_transport_preserves_bytes_request_count_and_failure(caplog, 
 
 
 @pytest.mark.parametrize(("body", "expected_error"), [
+    (b"not json", GwmSchemaError),
+    (b"null", GwmSchemaError),
+    (b"[]", GwmSchemaError),
     (b'{"code":"000000"}', None),
     (b'{"code":0,"data":null}', GwmApiError),
     (b'{"code":"000000","data":null}', None),
 ])
 def test_success_decoder_does_not_require_data(caplog, body, expected_error):
+    """Accept code-only acknowledgements while rejecting invalid envelopes."""
+
     from gwm_client.client import _decode_envelope
 
     caplog.set_level(logging.DEBUG, logger=LOGGER)
