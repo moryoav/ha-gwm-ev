@@ -8,6 +8,15 @@ This project follows semantic versioning. HACS uses the latest GitHub release ta
 
 ## [Unreleased]
 
+## [0.17.2] - 2026-09-07
+
+### Changed
+
+- Added country metadata for the supported account regions to meet HACS default-repository submission requirements.
+- Required successful HACS and Hassfest validation before publishing a GitHub release.
+- Clarified dedicated-account and PIN prerequisites, sign-in and refresh token troubleshooting, and vehicle-specific A/C restrictions in the README.
+- Removed outdated migration and add-on guidance from the README.
+
 ## [0.17.1] - 2026-09-07
 
 ### Fixed
