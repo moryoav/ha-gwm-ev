@@ -34,7 +34,7 @@ class GwmClimate(GwmEntity, ClimateEntity):
     """GWM A/C climate control."""
 
     _attr_translation_key = "ac_climate"
-    _attr_hvac_modes = [HVACMode.OFF, HVACMode.COOL]
+    _attr_hvac_modes = [HVACMode.OFF, HVACMode.AUTO]
     _attr_supported_features = ClimateEntityFeature.TARGET_TEMPERATURE
     _attr_temperature_unit = UnitOfTemperature.CELSIUS
     _attr_target_temperature_step = 1
@@ -43,10 +43,7 @@ class GwmClimate(GwmEntity, ClimateEntity):
         super().__init__(coordinator, vin)
         self._api = api
         self._attr_unique_id = f"{vin}_ac_climate"
-        self._attr_hvac_modes = [HVACMode.OFF, HVACMode.COOL]
-        if coordinator.region == "cn":
-            self._attr_hvac_modes.append(HVACMode.HEAT)
-        self._requested_hvac_mode: HVACMode | None = None
+        self._attr_hvac_modes = [HVACMode.OFF, HVACMode.AUTO]
         self._requested_target_temperature: float | None = None
 
     @property
@@ -67,15 +64,11 @@ class GwmClimate(GwmEntity, ClimateEntity):
     @property
     def hvac_mode(self) -> HVACMode:
         """Return current HVAC mode."""
-        if self.climate.get("mode") == "off":
-            return HVACMode.OFF
-        return self._requested_hvac_mode or HVACMode.COOL
+        return HVACMode.AUTO if self.climate.get("mode") == "auto" else HVACMode.OFF
 
     @property
     def hvac_action(self) -> str | None:
-        """Return current HVAC action."""
-        if self._requested_hvac_mode == HVACMode.HEAT and self.climate.get("mode") != "off":
-            return "heating"
+        """Return current HVAC action when GWM reports one."""
         return self.climate.get("action")
 
     @property
@@ -104,12 +97,13 @@ class GwmClimate(GwmEntity, ClimateEntity):
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
         """Set HVAC mode."""
-        mode = {
-            HVACMode.COOL: "cool",
-            HVACMode.HEAT: "heat",
-        }.get(hvac_mode, "off")
+        if hvac_mode == HVACMode.AUTO:
+            mode = "auto"
+        elif hvac_mode == HVACMode.OFF:
+            mode = "off"
+        else:
+            raise ValueError(f"Unsupported HVAC mode: {hvac_mode}")
         command = await async_call_gwm_api(self._api.async_set_climate(self.vin, mode=mode))
-        self._requested_hvac_mode = None if hvac_mode == HVACMode.OFF else hvac_mode
         self.coordinator.async_track_command(command)
 
     async def async_set_temperature(self, **kwargs: Any) -> None:

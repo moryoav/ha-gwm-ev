@@ -142,7 +142,9 @@ Missing vehicle signals remain unavailable without interrupting the other entiti
 
 Remote commands are slower than ordinary Home Assistant operations because the request travels through the GWM cloud and then waits for the vehicle result. The **Remote command status** sensor shows the current progress.
 
-Set **Climate run time** and the target temperature before starting A/C. Changing either setting only saves it for the next start. It does not start the climate system, and neither setting can be changed after A/C has started.
+The climate entity exposes **Off** and **Auto**. The vehicle determines whether heating or cooling is needed from the selected target temperature. Existing automations that use `hvac_mode: cool` or `hvac_mode: heat` must be changed to `hvac_mode: auto`.
+
+Set **Climate run time** and the target temperature before starting A/C. Changing the run time only saves it for the next start and does not start the climate system. Changing the target temperature while A/C is off saves it for the next start; changing it while A/C is active sends the new target to the vehicle.
 
 On supported Europe, Australia and New Zealand, and Russia vehicles, the **Front defroster** switch starts the official app's 15-minute defrost cycle and can stop it early. The **Start air circulation** button starts the official app's 60-second external-air cabin-clean cycle. GWM does not provide a stop action for that cycle. I expose these controls only when the vehicle reports their matching status signals and remote commands are enabled.
 
@@ -241,7 +243,7 @@ Mainland China is available in the setup flow. The integration uses the register
 
 The integration preserves the released add-on capability boundaries:
 
-- NavInfo vehicles provide status polling, climate cooling and heating from 17 to 31 C, climate stop and parameter changes, lock and unlock, close windows, sunroof positions, cabin purge, force refresh, and charging schedules when the matching options are enabled.
+- NavInfo vehicles provide status polling, automatic climate control from 17 to 31 C, climate stop and parameter changes, lock and unlock, close windows, sunroof positions, cabin purge, force refresh, and charging schedules when the matching options are enabled.
 - BeanTech vehicles provide status polling, lock and unlock, close windows, remote start and stop, horn, flashing lights, and close sunroof when remote commands are enabled.
 - BeanTech does not expose climate control, charging schedules, tailgate actions, other sunroof positions, or combined horn and lights.
 - Missing or unknown China platforms fail closed instead of using another platform's route.

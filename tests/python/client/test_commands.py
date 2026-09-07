@@ -22,7 +22,6 @@ from gwm_client import (
     GwmApiError,
     GwmClient,
     GwmClientConfig,
-    GwmConfigurationError,
     GwmSession,
     Region,
     RemoteCommandResultItem,
@@ -115,7 +114,7 @@ async def test_regional_climate_contracts_are_closed_and_header_exact(region: Re
         operation_time_minutes=10,
     )
     acceptance = await client.send_climate_command(
-        ClimateCommand(identifier, "cool", 21, 10),
+        ClimateCommand(identifier, "auto", 21, 10),
         security_password_hash=fixture["security_password_hash"],
     )
     results = await client.get_remote_command_results(identifier, acceptance.command_id)
@@ -195,7 +194,7 @@ async def test_current_anz_commands_and_result_poll_keep_current_app_policy() ->
         operation_time_minutes=10,
     )
     acceptance = await client.send_climate_command(
-        ClimateCommand(identifier, "cool", 21, 10),
+        ClimateCommand(identifier, "auto", 21, 10),
         security_password_hash=fixture["security_password_hash"],
     )
     await client.get_remote_command_results(identifier, acceptance.command_id)
@@ -390,7 +389,7 @@ async def test_provider_rejection_does_not_return_an_accepted_identifier() -> No
         transport=transport,
         sequence_source=lambda: fixture["sequence_number"],
     )
-    command = ClimateCommand(VehicleIdentifier(fixture["vin"]), "cool", 22, 15)
+    command = ClimateCommand(VehicleIdentifier(fixture["vin"]), "auto", 22, 15)
     with pytest.raises(GwmApiError):
         await client.send_climate_command(
             command,
@@ -399,28 +398,17 @@ async def test_provider_rejection_does_not_return_an_accepted_identifier() -> No
     assert len(transport.requests) == 1
 
 
-@pytest.mark.asyncio
-async def test_overseas_heat_is_rejected_before_transport() -> None:
+@pytest.mark.parametrize("legacy_mode", ["cool", "heat"])
+def test_legacy_climate_modes_are_rejected(legacy_mode: str) -> None:
     fixture = _fixture()
-    case = fixture["regions"]["aus"]
-    transport = _RecordingTransport([])
-    client = GwmClient(
-        GwmClientConfig(Region.ANZ),
-        GwmSession(
-            country=case["country"],
-            device_id=case["device_id"],
-            access_token="SYNTHETIC-COMMAND-TOKEN",
-            app_ssl_context=_context(Region.ANZ),
-        ),
-        transport=transport,
-        sequence_source=lambda: fixture["sequence_number"],
-    )
-    with pytest.raises(GwmConfigurationError):
-        await client.send_climate_command(
-            ClimateCommand(VehicleIdentifier(fixture["vin"]), "heat", 24, 15),
-            security_password_hash=fixture["security_password_hash"],
+
+    with pytest.raises(ValueError, match="climate_command_invalid"):
+        ClimateCommand(
+            VehicleIdentifier(fixture["vin"]),
+            legacy_mode,  # type: ignore[arg-type]
+            24,
+            15,
         )
-    assert transport.requests == []
 
 
 def test_result_selection_preserves_russian_and_default_semantics() -> None:

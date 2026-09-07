@@ -8,6 +8,13 @@ This project follows semantic versioning. HACS uses the latest GitHub release ta
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-09-07
+
+### Changed
+
+- **Breaking:** I replaced the climate entity's `cool` mode and mainland-China `heat` mode with `auto`. The vehicle determines heating or cooling from the selected target temperature. Automations and scripts must change `hvac_mode: cool` or `hvac_mode: heat` to `hvac_mode: auto`; both old values are rejected without compatibility aliases.
+- I stopped reporting active climate sessions as `cooling` when GWM provides only an on/off state. The underlying target-temperature and stop requests stay the same.
+
 ## [0.16.21] - 2026-09-06
 
 ### Fixed

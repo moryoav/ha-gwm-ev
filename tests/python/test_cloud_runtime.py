@@ -906,7 +906,7 @@ async def test_china_runtime_handoff_maps_platform_capabilities_and_no_pin_write
     )
     assert updated.basics.climate == CloudClimateConfiguration("25", "1200")
 
-    climate = ClimateCommand(navinfo.identifier, "heat", 25, 20, False)
+    climate = ClimateCommand(navinfo.identifier, "auto", 25, 20, False)
     lock = DoorLockCommand(beantech.identifier, True)
     windows = CloseWindowsCommand(beantech.identifier)
     control = ChinaVehicleControlCommand(beantech.identifier, "horn")
