@@ -57,7 +57,7 @@ def test_operation_alias_is_preserved(operation, error_type):
     (b'{"code":false}', "unexpected_code_type"),
     (b'{"code":550002}', "unexpected_code_type"),
     (b'{"code":"550002"}', "api_code_not_success"),
-    (b'{"code":"000000"}', "missing_data"),
+    (b'{"code":"000000"}', "envelope_ok"),
     (b'{"code":"000000","data":null}', "envelope_ok"),
     (b'{"code":"000000","data":{}}', "envelope_ok"),
     (b'{"code":"000000","data":[]}', "envelope_ok"),
@@ -108,7 +108,7 @@ def test_request_stage_and_response_shape_are_logged_without_secrets(caplog, ope
     assert f"operation={operation} stage={stage}" in caplog.text
     assert "http_status=200" in caplog.text
     assert "api_code=000000 api_code_type=string" in caplog.text
-    assert "data_present=False data_type=missing envelope_reason=missing_data" in caplog.text
+    assert "data_present=False data_type=missing envelope_reason=envelope_ok" in caplog.text
     assert SECRET not in caplog.text
     assert "example.invalid" not in caplog.text
     assert path not in caplog.text
@@ -226,18 +226,18 @@ async def test_real_transport_preserves_bytes_request_count_and_failure(caplog, 
     else:
         result = await call
         assert result.body == body
-        assert "envelope_reason=missing_data" in caplog.text
+        assert "envelope_reason=envelope_ok" in caplog.text
     session.request.assert_called_once()
     assert session.request.call_args.kwargs["data"] == request.body
     assert SECRET not in caplog.text
 
 
 @pytest.mark.parametrize(("body", "expected_error"), [
-    (b'{"code":"000000"}', GwmSchemaError),
+    (b'{"code":"000000"}', None),
     (b'{"code":0,"data":null}', GwmApiError),
     (b'{"code":"000000","data":null}', None),
 ])
-def test_existing_decoder_contract_is_unchanged(caplog, body, expected_error):
+def test_success_decoder_does_not_require_data(caplog, body, expected_error):
     from gwm_client.client import _decode_envelope
 
     caplog.set_level(logging.DEBUG, logger=LOGGER)

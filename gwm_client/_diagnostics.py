@@ -1,9 +1,8 @@
 """Opt-in, bounded overseas request diagnostics; never a protocol decision.
 
 Only fixed labels, numeric status/code metadata and JSON *types* are logged.
-The original response is neither changed nor accepted here. In particular,
-integer codes and success envelopes without data still reach the existing
-strict decoder unchanged. Authentication payloads are outside this scope.
+The original response is neither changed nor accepted here. Authentication
+payloads are outside this scope.
 """
 
 from __future__ import annotations
@@ -134,8 +133,6 @@ def _envelope_shape(body: bytes) -> _EnvelopeShape:
         reason = "unexpected_code_type"
     elif code != "000000":
         reason = "api_code_not_success"
-    elif "data" not in envelope:
-        reason = "missing_data"
     else:
         reason = "envelope_ok"
     return _EnvelopeShape(

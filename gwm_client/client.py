@@ -1732,9 +1732,7 @@ def _decode_envelope(response: _TransportResponse, *, operation: str) -> object:
     code = envelope.get("code")
     if code != "000000":
         raise GwmApiError(operation=operation, api_code=code)
-    if "data" not in envelope:
-        raise GwmSchemaError(operation=operation)
-    return envelope["data"]
+    return envelope.get("data")
 
 
 def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:

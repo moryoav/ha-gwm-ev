@@ -61,11 +61,17 @@ def _fixture() -> dict[str, Any]:
     return json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
 
 
-def _response(data: object = None, *, code: str = "000000") -> _TransportResponse:
+_MISSING = object()
+
+
+def _response(data: object = _MISSING, *, code: str = "000000") -> _TransportResponse:
+    envelope: dict[str, object] = {"code": code}
+    if data is not _MISSING:
+        envelope["data"] = data
     return _TransportResponse(
         200,
         {"content-type": "application/json"},
-        json.dumps({"code": code, "data": data}, separators=(",", ":")).encode(),
+        json.dumps(envelope, separators=(",", ":")).encode(),
     )
 
 
