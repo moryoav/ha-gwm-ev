@@ -8,17 +8,15 @@
 
 ## ❤️ Help support this project
 
-**Maintaining this integration requires a significant investment of time and money.** GWM operates different platforms across regions, and supporting its many vehicle brands and models requires continuous research, testing, and development.
+<p>
+  <a href="https://ko-fi.com/Y5B124NZ2L"><img src="https://storage.ko-fi.com/cdn/kofi3.png?v=6" alt="Support me on Ko-fi" height="36"></a>
+  &nbsp;
+  <a href="https://github.com/sponsors/moryoav"><img src="https://img.shields.io/badge/Sponsor_on_GitHub-EA4AAA?style=for-the-badge&amp;logo=githubsponsors&amp;logoColor=white" alt="Sponsor on GitHub" height="36"></a>
+  &nbsp;
+  <a href="https://garage.yoavmor.com"><img src="https://img.shields.io/badge/Shop_the_Garage-F97316?style=for-the-badge" alt="Shop The GWM Garage" height="36"></a>
+</p>
 
-If you would like to support my work, please consider visiting **[The GWM Garage](https://garage.yoavmor.com)**. I personally select useful products for GWM vehicles from AliExpress. I also try some of these products myself and recommend the ones I genuinely find useful. The website will be updated regularly, so please check back from time to time.
-
-This is not a traditional online store. The website contains links to products sold on AliExpress. If you purchase something through one of these links, I may receive a small commission at no additional cost to you. This helps fund the continued development and maintenance of this integration.
-
-For more direct support, you can also **[☕ support me on Ko-fi](https://ko-fi.com/Y5B124NZ2L)**.
-
-### [Visit The GWM Garage](https://garage.yoavmor.com) | [☕ Support me on Ko-fi](https://ko-fi.com/Y5B124NZ2L)
-
-*I am not directly affiliated with AliExpress or GWM.*
+If you'd like to support my work, you can donate on Ko-fi, sponsor the project on GitHub, or shop through The GWM Garage. I receive a tiny commission on purchases made through its AliExpress links, at no extra cost to you.
 
 ---
 
