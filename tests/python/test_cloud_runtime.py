@@ -6,6 +6,8 @@ import asyncio
 import ssl
 from dataclasses import replace
 from datetime import UTC, datetime
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -929,3 +931,17 @@ async def test_china_runtime_handoff_maps_platform_capabilities_and_no_pin_write
         )
     await runtime.aclose()
     assert client.closed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("region", ["eu", "aus", "rus", "cn"])
+@pytest.mark.parametrize("action", [None, "horn", "flash_lights", "horn_and_lights"])
+async def test_horn_result_routing_keyword_stays_inside_china(region: str, action: str | None) -> None:
+    client = SimpleNamespace(get_remote_command_results=AsyncMock(return_value=()))
+    runtime = GwmCloudClient(region, client)
+    identifier = VehicleIdentifier("LGWTEST0000000001")
+    assert await runtime.async_get_remote_command_results(identifier, "command-id", control_action=action) == ()  # type: ignore[arg-type]
+    if region == "cn" and action is not None:
+        client.get_remote_command_results.assert_awaited_once_with(identifier, "command-id", control_action=action)
+    else:
+        client.get_remote_command_results.assert_awaited_once_with(identifier, "command-id")

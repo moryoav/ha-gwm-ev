@@ -76,6 +76,7 @@ class _Cloud:
         self.charging_error: BaseException | None = None
         self.poll_results: list[tuple[RemoteCommandResultItem, ...]] = []
         self.send_error: BaseException | None = None
+        self.poll_actions: list[str | None] = []
 
     async def async_get_climate_context(
         self,
@@ -126,9 +127,13 @@ class _Cloud:
         self,
         identifier: VehicleIdentifier,
         command_id: str,
+        *,
+        control_action: str | None = None,
     ) -> tuple[RemoteCommandResultItem, ...]:
         assert identifier.value == _VIN
         assert command_id.startswith("provider-command-")
+        assert control_action is None or self.region == "cn"
+        self.poll_actions.append(control_action)
         return self.poll_results.pop(0) if self.poll_results else ()
 
     async def async_send_lock_command(
@@ -1078,3 +1083,69 @@ async def test_charging_acceptance_finishes_ownership_save_before_cancellation(
     assert len(cloud.charging_sent) == 1
     assert len(owned) == 1
     assert owned[0].vehicle_id == _VIN
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["horn", "flash_lights", "horn_and_lights"])
+@pytest.mark.parametrize("terminal_code,terminal_state", [("0", "completed"), ("7", "failed")])
+async def test_china_horn_lights_resume_polling_after_restart_without_resending(
+    tmp_path: Path, action: str, terminal_code: str, terminal_state: str,
+) -> None:
+    clock = _Clock()
+    first_cloud = _Cloud()
+    first, store, credentials = await _china_api(tmp_path, first_cloud, clock)
+    accepted = await first.async_vehicle_control(_VIN, action)
+    assert accepted["state"] == "in_progress"
+    assert len(first_cloud.vehicle_controls_sent) == 1
+    assert first_cloud.vehicle_controls_sent[0].action == action
+
+    cloud = _Cloud()
+    cloud.region = "cn"
+    cloud.poll_results = [
+        (RemoteCommandResultItem("provider-command-control", "remote", "2000", "Pending"),),
+        (RemoteCommandResultItem("provider-command-control", "remote", terminal_code, "Vehicle result"),),
+    ]
+    restored = GwmCommandApi(cloud, store, credentials, enabled=True, security_pin=None, clock=clock)  # type: ignore[arg-type]
+    recovery = await restored.async_restore(cloud_entry_data(credentials))
+    assert recovery[0]["id"] == accepted["id"]
+    assert (await restored.async_get_command(str(accepted["id"])))["state"] == "in_progress"
+    assert (await restored.async_get_command(str(accepted["id"])))["state"] == terminal_state
+    assert cloud.poll_actions == [action, action]
+    assert cloud.vehicle_controls_sent == []
+    journal = await store.async_get_command_journal(cloud_entry_data(credentials))
+    assert journal[0].state == terminal_state
+    # A terminal command is never polled or submitted again.
+    await restored.async_get_command(str(accepted["id"]))
+    assert cloud.poll_actions == [action, action]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["horn", "flash_lights", "horn_and_lights"])
+async def test_china_horn_lights_timeout_without_resending(tmp_path: Path, action: str) -> None:
+    cloud = _Cloud()
+    clock = _Clock()
+    api, _, _ = await _china_api(tmp_path, cloud, clock)
+    accepted = await api.async_vehicle_control(_VIN, action)
+    assert (await api.async_get_command(str(accepted["id"])))["state"] == "in_progress"
+    clock.value += timedelta(seconds=91)
+    assert (await api.async_get_command(str(accepted["id"])))["state"] == "timeout"
+    assert cloud.poll_actions == [action]
+    assert len(cloud.vehicle_controls_sent) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("region", ["eu", "aus", "rus", "cn"])
+@pytest.mark.parametrize("action", ["horn", "flash_lights", "horn_and_lights"])
+async def test_horn_lights_require_china_and_remote_command_opt_in(
+    tmp_path: Path, region: str, action: str,
+) -> None:
+    cloud = _Cloud()
+    cloud.region = region
+    if region == "cn":
+        api, store, credentials = await _china_api(tmp_path, cloud, _Clock(), enabled=False)
+    else:
+        api, store, credentials = await _api(tmp_path, cloud, _Clock())
+    with pytest.raises(GwmCommandForbidden):
+        await api.async_vehicle_control(_VIN, action)
+    assert cloud.vehicle_controls_sent == []
+    assert await store.async_get_command_journal(cloud_entry_data(credentials)) == ()

@@ -245,8 +245,9 @@ Mainland China is available in the setup flow. The integration uses the register
 Available features depend on the vehicle's platform:
 
 - NavInfo vehicles provide status polling, automatic climate control from 17 to 31 C, climate stop and parameter changes, lock and unlock, close windows, sunroof positions, cabin purge, force refresh, and charging schedules when the matching options are enabled.
-- BeanTech vehicles provide status polling, lock and unlock, close windows, remote start and stop, horn, flashing lights, and close sunroof when remote commands are enabled.
-- BeanTech does not expose climate control, charging schedules, tailgate actions, other sunroof positions, or combined horn and lights.
+- BeanTech vehicles provide status polling, lock and unlock, close windows, remote start and stop, horn, flashing lights, combined horn and lights, and close sunroof when remote commands are enabled.
+- BeanTech horn and light buttons use the updated command endpoint and do not require a security PIN. These controls remain behind **Enable remote commands** and depend on vehicle support.
+- BeanTech does not expose climate control, charging schedules, tailgate actions, or other sunroof positions.
 - Missing or unknown China platforms fail closed instead of using another platform's route.
 
 Start with remote commands and charging control disabled. Compare read-only values with the official app before enabling any operation that affects the vehicle.

@@ -51,8 +51,12 @@ BEANTECH_CHINA_VEHICLE_CONTROL_ACTIONS: frozenset[ChinaVehicleControlAction] = f
         "remote_stop",
         "horn",
         "flash_lights",
+        "horn_and_lights",
         "sunroof_close",
     }
+)
+BEANTECH_HORN_LIGHT_ACTIONS: frozenset[ChinaVehicleControlAction] = frozenset(
+    {"horn", "flash_lights", "horn_and_lights"}
 )
 
 _COMMAND_IDENTIFIER = re.compile(r"[\x21-\x7e]{1,512}")

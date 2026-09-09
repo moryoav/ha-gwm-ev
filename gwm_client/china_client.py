@@ -45,6 +45,9 @@ from .china_transport import (
 )
 from .commands import (
     BEANTECH_CHINA_VEHICLE_CONTROL_ACTIONS,
+    BEANTECH_HORN_LIGHT_ACTIONS,
+    NAVINFO_CHINA_VEHICLE_CONTROL_ACTIONS,
+    ChinaVehicleControlAction,
     ChinaVehicleControlCommand,
     ClimateCommand,
     CloseWindowsCommand,
@@ -118,6 +121,8 @@ _NAVINFO_CLIMATE_CONFIG_URL = (
 )
 _BEAN_TECH_SEND_PATH = "/app-api/api/v1.0/vehicle/T5/sendCmd"
 _BEAN_TECH_SEND_URL = _BEAN_TECH_BASE.rstrip("/") + _BEAN_TECH_SEND_PATH
+_BEAN_TECH_TIMELY_PATH = "/app-api/api/v3.0/vehicle/remote-ctrl/timely"
+_BEAN_TECH_TIMELY_URL = _BEAN_TECH_BASE.rstrip("/") + _BEAN_TECH_TIMELY_PATH
 _BEAN_TECH_RESULT_PATH = "/app-api/api/v1.0/vehicle/getRemoteCtrlResultT5"
 _BEAN_TECH_RESULT_URL = _BEAN_TECH_BASE.rstrip("/") + _BEAN_TECH_RESULT_PATH
 _AUTO_AI_LOGIN_URL = _G_APP_BASE + "tsp/v1/proxy/navinfo/GW.M.APP_LOGIN"
@@ -676,11 +681,17 @@ class ChinaClient:
         identifier: VehicleIdentifier,
         command_id: str,
         *,
+        control_action: ChinaVehicleControlAction | None = None,
         timeout: float | None = None,
     ) -> tuple[RemoteCommandResultItem, ...]:
-        """Poll the NavInfo transaction result through the signed BeanTech stream."""
+        """Poll a command; supply control_action for BeanTech horn/light results."""
 
         operation = "get_remote_command_result"
+        if control_action is not None and (
+            not isinstance(control_action, str)
+            or control_action not in NAVINFO_CHINA_VEHICLE_CONTROL_ACTIONS
+        ):
+            raise GwmConfigurationError(operation=operation)
         if (
             type(identifier) is not VehicleIdentifier
             or not isinstance(command_id, str)
@@ -695,6 +706,7 @@ class ChinaClient:
             action=lambda deadline: self._get_remote_command_results_locked(
                 identifier,
                 command_id,
+                control_action=control_action,
                 deadline=deadline,
             ),
         )
@@ -1481,7 +1493,11 @@ class ChinaClient:
                 ),
                 deadline=deadline,
             )
-            _decode_g_app_envelope(response, operation=operation)
+            _decode_g_app_envelope(
+                response,
+                operation=operation,
+                require_code=command.action in BEANTECH_HORN_LIGHT_ACTIONS,
+            )
             return RemoteCommandAcceptance(sequence_number)
 
         if state.auto_ai_token_id is None or state.auto_ai_user_id is None:
@@ -1547,6 +1563,7 @@ class ChinaClient:
         identifier: VehicleIdentifier,
         command_id: str,
         *,
+        control_action: ChinaVehicleControlAction | None = None,
         deadline: _Deadline,
     ) -> tuple[RemoteCommandResultItem, ...]:
         operation = "get_remote_command_result"
@@ -1557,9 +1574,11 @@ class ChinaClient:
         platform = (vehicle.platform or "").strip().casefold()
         if platform not in {"navinfo", "beantech"}:
             raise GwmRoutePolicyError(operation=operation)
+        timely = platform == "beantech" and control_action in BEANTECH_HORN_LIGHT_ACTIONS
         request = (
+            # Horn/light results use the same signed v3 query as NavInfo.
             self._build_navinfo_result_request(state, identifier, command_id)
-            if platform == "navinfo"
+            if platform == "navinfo" or timely
             else self._build_bean_tech_result_request(state, identifier, command_id)
         )
         response = await self._send_locked(
@@ -1568,6 +1587,8 @@ class ChinaClient:
         )
         try:
             data = _decode_g_app_envelope(response, operation=operation)
+            if timely:
+                return _parse_bean_tech_timely_results(data, command_id=command_id)
             return (
                 _parse_navinfo_command_results(data, command_id=command_id)
                 if platform == "navinfo"
@@ -1872,26 +1893,33 @@ class ChinaClient:
         control_type: str,
         command_body: Mapping[str, object] | None,
     ) -> _ChinaTransportRequest:
-        body = encode_dotnet_json(
-            {
-                "vin": identifier.value,
-                "seqNo": sequence_number,
-                "sendType": 0,
-                "commands": [
-                    {
-                        "controlType": control_type,
-                        "cmdBody": None if command_body is None else dict(command_body),
-                    }
-                ],
-                "isSaveConfig": None,
-            }
-        )
+        timely = operation == "send_vehicle_control_command" and control_type in {
+            "WHISTLE", "FLASH", "WHISTLE_FLASH"
+        }
+        payload: dict[str, object] = {
+            "vin": identifier.value,
+            "seqNo": sequence_number,
+            "sendType": 0,
+            "commands": [
+                {
+                    "controlType": control_type,
+                    "cmdBody": None if command_body is None else dict(command_body),
+                }
+            ],
+        }
+        if timely:
+            # The tested PIN-exempt commands omit cmdBody and isSaveConfig.
+            payload["commands"] = [{"controlType": control_type}]
+        else:
+            payload["isSaveConfig"] = None
+        body = encode_dotnet_json(payload)
+        path = _BEAN_TECH_TIMELY_PATH if timely else _BEAN_TECH_SEND_PATH
         headers = self._bean_tech_authenticated_headers(
             state,
             identifier,
             operation=operation,
             method="POST",
-            path=_BEAN_TECH_SEND_PATH,
+            path=path,
             parameter="json=" + body,
         )
         headers["Content-Type"] = "application/json; charset=UTF-8"
@@ -1899,7 +1927,7 @@ class ChinaClient:
             operation=operation,
             service="bean_tech",
             method="POST",
-            url=_BEAN_TECH_SEND_URL,
+            url=_BEAN_TECH_TIMELY_URL if timely else _BEAN_TECH_SEND_URL,
             headers=headers,
             body=body.encode("utf-8"),
         )
@@ -2522,6 +2550,48 @@ def _parse_bean_tech_command_results(
     )
 
 
+def _parse_bean_tech_timely_results(
+    value: object,
+    *,
+    command_id: str,
+) -> tuple[RemoteCommandResultItem, ...]:
+    """Decode the BeanTech v3 stream scoped by the request's VIN and seqNo."""
+    if not isinstance(value, Mapping):
+        raise ValueError("command_result_invalid")
+    messages = _property(value, "messageList")
+    if messages is None:
+        return ()
+    if not isinstance(messages, list):
+        raise ValueError("command_result_invalid")
+    results: list[RemoteCommandResultItem] = []
+    for message in messages:
+        if not isinstance(message, Mapping):
+            continue
+        data = _property(message, "messageData")
+        if data is None:
+            data = message
+        if isinstance(data, str):
+            if not data.strip():
+                continue
+            data = _decode_json_bytes(data.encode("utf-8"))
+        if not isinstance(data, Mapping):
+            continue
+        code = _scalar_text(_property(data, "resultCode"))
+        if not code:
+            continue
+        results.append(
+            RemoteCommandResultItem(
+                # BeanTech's transactionId need not equal our seqNo. The query
+                # scopes this stream; keep NavInfo's separate correlation rules.
+                command_id=command_id,
+                remote_type=_scalar_text(_property(message, "messageType")),
+                result_code="2000" if code in {"2", "3"} else code,
+                result_message=_scalar_text(_property(data, "resultMessage")),
+            )
+        )
+    return tuple(results)
+
+
 def _bean_tech_lock_window_control(
     command_code: int,
 ) -> tuple[str, Mapping[str, object] | None]:
@@ -2588,6 +2658,8 @@ def _bean_tech_vehicle_control(
         return "WHISTLE", None
     if command.action == "flash_lights":
         return "FLASH", None
+    if command.action == "horn_and_lights":
+        return "WHISTLE_FLASH", None
     if command.action == "sunroof_close":
         return "SKYLIGNT_CLOSE", {"skyLight": 0}
     raise ValueError("vehicle_control_action_invalid")
@@ -2642,12 +2714,16 @@ def _optional_nonnegative_number(value: object) -> float | None:
     return result
 
 
-def _decode_g_app_envelope(response: _ChinaTransportResponse, *, operation: str) -> object:
+def _decode_g_app_envelope(
+    response: _ChinaTransportResponse, *, operation: str, require_code: bool = False,
+) -> object:
     root = _decode_json_response(response, operation=operation)
     try:
         code = _scalar_text(_property(root, "code"))
     except (TypeError, ValueError):
         raise GwmSchemaError(operation=operation) from None
+    if require_code and code is None:
+        raise GwmSchemaError(operation=operation)
     if code is not None and code not in {"0", "000000", "200"}:
         if code == "1013":
             raise _ChinaRiskControlError(operation=operation, api_code=code)
