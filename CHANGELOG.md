@@ -8,6 +8,16 @@ This project follows semantic versioning. HACS uses the latest GitHub release ta
 
 ## [Unreleased]
 
+## [0.17.3] - 2026-09-10
+
+### Added
+
+- Added combined horn and lights for mainland-China BeanTech vehicles behind the existing remote-command opt-in.
+
+### Fixed
+
+- Routed BeanTech horn and light commands through the PIN-exempt timely endpoint with restart-safe result polling. Kept other BeanTech controls, NavInfo commands, and overseas regions on their existing paths.
+
 ## [0.17.2] - 2026-09-07
 
 ### Changed

@@ -61,6 +61,7 @@ from gwm_client import (
     is_overseas_session_expired,
     map_vehicle_snapshot,
 )
+from gwm_client.commands import ChinaVehicleControlAction
 
 from .cloud_auth import (
     CloudAuthenticationResult,
@@ -221,6 +222,8 @@ class _ChinaReadClient(Protocol):
         self,
         identifier: VehicleIdentifier,
         command_id: str,
+        *,
+        control_action: ChinaVehicleControlAction | None = None,
     ) -> tuple[RemoteCommandResultItem, ...]: ...
 
     async def aclose(self) -> None: ...
@@ -772,7 +775,15 @@ class GwmCloudClient:
         self,
         identifier: VehicleIdentifier,
         command_id: str,
+        *,
+        control_action: ChinaVehicleControlAction | None = None,
     ) -> tuple[RemoteCommandResultItem, ...]:
+        if self.region == REGION_CHINA and control_action is not None:
+            return await self._async_with_session_renewal(
+                lambda: cast(_ChinaReadClient, self._client).get_remote_command_results(
+                    identifier, command_id, control_action=control_action
+                )
+            )
         return await self._async_with_session_renewal(
             lambda: self._client.get_remote_command_results(identifier, command_id)
         )

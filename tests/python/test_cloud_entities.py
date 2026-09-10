@@ -14,9 +14,14 @@ from homeassistant.components.climate import HVACMode
 from homeassistant.core import HomeAssistant
 
 from custom_components.gwm_ora.button import (
+    BEANTECH_REMOTE_ACTIONS,
+    CHINA_REMOTE_BUTTONS,
     GwmCabinCleanButton,
     GwmChinaRemoteButton,
     GwmCloseWindowsButton,
+)
+from custom_components.gwm_ora.button import (
+    async_setup_entry as async_setup_buttons,
 )
 from custom_components.gwm_ora.climate import GwmClimate
 from custom_components.gwm_ora.coordinator import GwmDataUpdateCoordinator
@@ -468,3 +473,44 @@ async def test_overseas_front_defroster_switch_and_air_circulation_button_are_ca
     assert api.async_set_front_defroster.await_args_list[1].kwargs == {"enabled": False}
     api.async_start_cabin_clean.assert_awaited_once_with("SYNTHETIC-A")
     assert coordinator.async_track_command.call_count == 3
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("region,platform", [
+    ("cn", "beantech"), ("cn", "navinfo"), ("cn", "unknown"),
+    ("eu", "beantech"), ("aus", "beantech"), ("rus", "beantech"),
+])
+async def test_horn_lights_button_registration_and_press_are_region_isolated(region: str, platform: str) -> None:
+    hass = HomeAssistant("synthetic-config")
+    api = SimpleNamespace(async_vehicle_control=AsyncMock(return_value={"id": "accepted", "state": "in_progress"}))
+    coordinator = GwmDataUpdateCoordinator(hass, api, cloud_client=SimpleNamespace())  # type: ignore[arg-type]
+    vehicle = _vehicle("SYNTHETIC-A", 80, platform=platform, china_vehicle_commands=True)
+    coordinator.async_set_updated_data({"region": region, "vehicles": [vehicle]})
+    coordinator.async_track_command = Mock()
+    entry = SimpleNamespace(
+        runtime_data=SimpleNamespace(api=api, coordinator=coordinator), async_on_unload=lambda callback: None,
+    )
+    added: list[Any] = []
+    await async_setup_buttons(hass, entry, lambda entities: added.extend(entities))
+    remote = [entity for entity in added if isinstance(entity, GwmChinaRemoteButton)]
+    expected = (
+        BEANTECH_REMOTE_ACTIONS if region == "cn" and platform == "beantech"
+        else {action for action, _ in CHINA_REMOTE_BUTTONS} if region == "cn" and platform == "navinfo"
+        else set()
+    )
+    assert {entity._action for entity in remote} == expected
+    for entity in remote:
+        if entity._action not in {"horn", "flash_lights", "horn_and_lights"}:
+            continue
+        assert entity.available
+        assert entity.unique_id == "SYNTHETIC-A_" + entity._action
+        await entity.async_press()
+        api.async_vehicle_control.assert_awaited_with("SYNTHETIC-A", entity._action)
+        coordinator.async_track_command.assert_called_with({"id": "accepted", "state": "in_progress"})
+        vehicle["capabilities"]["china_vehicle_commands"] = False
+        assert not entity.available
+        vehicle["capabilities"]["china_vehicle_commands"] = True
+        coordinator.last_update_success = False
+        assert not entity.available
+        coordinator.last_update_success = True
+    assert api.async_vehicle_control.await_count == (3 if expected else 0)

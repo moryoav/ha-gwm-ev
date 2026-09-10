@@ -91,6 +91,8 @@ _BEAN_TECH_SEND_URL = (
     "https://gw-app-gateway.gwmapp-h.com/app-api/api/v1.0/vehicle/T5/sendCmd"
 )
 _BEAN_TECH_SEND_PATH = "/app-api/api/v1.0/vehicle/T5/sendCmd"
+_BEAN_TECH_TIMELY_PATH = "/app-api/api/v3.0/vehicle/remote-ctrl/timely"
+_BEAN_TECH_TIMELY_URL = "https://gw-app-gateway.gwmapp-h.com" + _BEAN_TECH_TIMELY_PATH
 _BEAN_TECH_RESULT_URL = (
     "https://gw-app-gateway.gwmapp-h.com/app-api/api/v1.0/vehicle/getRemoteCtrlResultT5"
 )
@@ -1152,6 +1154,10 @@ def _validate_vehicle_control_command_request(
     request: _ChinaTransportRequest,
     headers: Mapping[str, str],
 ) -> None:
+    if request.url == _BEAN_TECH_TIMELY_URL:
+        if not _valid_bean_tech_horn_lights_request(request, headers):
+            raise ValueError("route_invalid")
+        return
     variants: tuple[tuple[str, Literal["common", "engine_start", "refresh"]], ...] = (
         ("GW.M.SEND_COMMON_COMMAND", "common"),
         ("GW.M.SET_AND_OPEN_COMMAND", "engine_start"),
@@ -1260,6 +1266,45 @@ def _valid_lock_window_body(
         and body.get("userType") == "0"
         and _VIN.fullmatch(str(body.get("vin", ""))) is not None
         and body.get("cmdCode") in expected_codes
+    )
+
+
+def _valid_bean_tech_horn_lights_request(
+    request: _ChinaTransportRequest,
+    headers: Mapping[str, str],
+) -> bool:
+    raw_body = _utf8_body(request.body)
+    body = _decode_wire_object(raw_body) if raw_body is not None else None
+    if not isinstance(body, Mapping):
+        return False
+    return (
+        request.service == "bean_tech"
+        and request.method == "POST"
+        and set(headers) == _BEAN_TECH_COMMAND_HEADERS
+        and list(body) == ["vin", "seqNo", "sendType", "commands"]
+        and _VIN.fullmatch(str(body.get("vin", ""))) is not None
+        and body.get("vin") == headers.get("vin")
+        and isinstance(body.get("seqNo"), str)
+        and _BEAN_TECH_SEQUENCE.fullmatch(str(body["seqNo"])) is not None
+        and type(body.get("sendType")) is int
+        and body["sendType"] == 0
+        and body.get("commands") in (
+            [{"controlType": "WHISTLE"}],
+            [{"controlType": "FLASH"}],
+            [{"controlType": "WHISTLE_FLASH"}],
+        )
+        and raw_body is not None
+        and encode_dotnet_json(body) == raw_body
+        and headers.get("Content-Type") == "application/json; charset=UTF-8"
+        and _valid_bean_tech_authenticated_headers(headers)
+        and headers.get("bt-auth-sign")
+        == bean_tech_sign(
+            "POST",
+            _BEAN_TECH_TIMELY_PATH,
+            headers["bt-auth-nonce"],
+            headers["bt-auth-timestamp"],
+            "json=" + raw_body,
+        )
     )
 
 

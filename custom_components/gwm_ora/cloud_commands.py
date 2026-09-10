@@ -31,6 +31,7 @@ from gwm_client import (
     select_remote_command_result,
     valid_temperature,
 )
+from gwm_client.commands import BEANTECH_HORN_LIGHT_ACTIONS
 
 from .cloud_auth import GwmCloudCredentials
 from .cloud_runtime import GwmCloudClient
@@ -403,10 +404,26 @@ class GwmCommandApi:
                 updated_at=now,
             )
         try:
-            results = await self._cloud.async_get_remote_command_results(
-                VehicleIdentifier(entry.vehicle_id),
-                entry.cloud_command_id,
+            # The durable command name survives a restart. Only the three China
+            # horn/light actions need a new result route; retain all other calls.
+            action = next(
+                (
+                    action for action in BEANTECH_HORN_LIGHT_ACTIONS
+                    if _CHINA_VEHICLE_CONTROL_NAMES[action] == entry.command_name
+                ),
+                None,
             )
+            if self._cloud.region == "cn" and action is not None:
+                results = await self._cloud.async_get_remote_command_results(
+                    VehicleIdentifier(entry.vehicle_id),
+                    entry.cloud_command_id,
+                    control_action=action,
+                )
+            else:
+                results = await self._cloud.async_get_remote_command_results(
+                    VehicleIdentifier(entry.vehicle_id),
+                    entry.cloud_command_id,
+                )
         except GwmClientError:
             raise
         region = None if self._cloud.region == "cn" else Region(self._cloud.region)
