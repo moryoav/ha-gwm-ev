@@ -8,6 +8,8 @@ This project follows semantic versioning. HACS uses the latest GitHub release ta
 
 ## [Unreleased]
 
+## [0.17.3] - 2026-09-10
+
 ### Added
 
 - Added combined horn and lights for mainland-China BeanTech vehicles behind the existing remote-command opt-in.
