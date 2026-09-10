@@ -6,6 +6,8 @@ import asyncio
 import ssl
 from dataclasses import replace
 from datetime import UTC, datetime
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -38,11 +40,13 @@ from gwm_client import (
     ChinaVehicle,
     ChinaVehicleControlCommand,
     ClimateCommand,
+    CloseWindowsCommand,
     CloudClimateConfiguration,
     CloudStatusItem,
     CloudVehicle,
     CloudVehicleBasics,
     CloudVehicleStatus,
+    DoorLockCommand,
     EuAuthenticated,
     EuAuthState,
     EuCredentials,
@@ -53,6 +57,7 @@ from gwm_client import (
     GwmConfigurationError,
     GwmNetworkError,
     GwmOptionalEndpointError,
+    GwmRoutePolicyError,
     GwmSession,
     RemoteCommandAcceptance,
     VehicleIdentifier,
@@ -784,6 +789,8 @@ async def test_china_runtime_handoff_maps_platform_capabilities_and_no_pin_write
 
         def __init__(self) -> None:
             self.climate: list[ClimateCommand] = []
+            self.locks: list[DoorLockCommand] = []
+            self.windows: list[CloseWindowsCommand] = []
             self.controls: list[ChinaVehicleControlCommand] = []
             self.charging: list[ChargingPlanCommand] = []
             self.closed = False
@@ -804,13 +811,6 @@ async def test_china_runtime_handoff_maps_platform_capabilities_and_no_pin_write
             assert identifier == navinfo.identifier
             return ChargingPlanInfo()
 
-        async def get_bean_tech_ac_temperature(
-            self,
-            identifier: VehicleIdentifier,
-        ) -> int | None:
-            del identifier
-            return None
-
         async def set_charging_plan(self, command: ChargingPlanCommand) -> None:
             self.charging.append(command)
 
@@ -820,6 +820,20 @@ async def test_china_runtime_handoff_maps_platform_capabilities_and_no_pin_write
         ) -> RemoteCommandAcceptance:
             self.climate.append(command)
             return RemoteCommandAcceptance("china-climate-command")
+
+        async def send_lock_command(
+            self,
+            command: DoorLockCommand,
+        ) -> RemoteCommandAcceptance:
+            self.locks.append(command)
+            return RemoteCommandAcceptance("china-lock-command")
+
+        async def send_close_windows_command(
+            self,
+            command: CloseWindowsCommand,
+        ) -> RemoteCommandAcceptance:
+            self.windows.append(command)
+            return RemoteCommandAcceptance("china-window-command")
 
         async def send_vehicle_control_command(
             self,
@@ -863,7 +877,7 @@ async def test_china_runtime_handoff_maps_platform_capabilities_and_no_pin_write
         "remote_commands": True,
         "charging_control": True,
         "climate_commands": True,
-        "lock_window_commands": False,
+        "lock_window_commands": True,
         "china_vehicle_commands": True,
         "front_defroster_commands": False,
         "cabin_clean_commands": False,
@@ -872,7 +886,7 @@ async def test_china_runtime_handoff_maps_platform_capabilities_and_no_pin_write
         "remote_commands": True,
         "charging_control": False,
         "climate_commands": True,
-        "lock_window_commands": False,
+        "lock_window_commands": True,
         "china_vehicle_commands": True,
         "front_defroster_commands": False,
         "cabin_clean_commands": False,
@@ -894,30 +908,61 @@ async def test_china_runtime_handoff_maps_platform_capabilities_and_no_pin_write
     )
     assert updated.basics.climate == CloudClimateConfiguration("25", "1200")
 
-    climate = ClimateCommand(navinfo.identifier, "heat", 25, 20, False)
-    control = ChinaVehicleControlCommand(beantech.identifier, "seat_heating_start")
+    climate = ClimateCommand(navinfo.identifier, "auto", 25, 20, False)
+    lock = DoorLockCommand(beantech.identifier, True)
+    windows = CloseWindowsCommand(beantech.identifier)
+    control = ChinaVehicleControlCommand(beantech.identifier, "horn")
     charging = ChargingPlanCommand(navinfo.identifier, False)
     await runtime.async_send_climate_command(climate)
+    await runtime.async_send_lock_command(lock)
+    await runtime.async_send_close_windows_command(windows)
     await runtime.async_send_vehicle_control_command(control)
     await runtime.async_set_charging_plan(charging)
 
     assert client.climate == [climate]
+    assert client.locks == [lock]
+    assert client.windows == [windows]
     assert client.controls == [control]
     assert client.charging == [charging]
-    beantech_context = await runtime.async_get_climate_context(
-        beantech.identifier,
-        include_status=False,
+    bean_context = await runtime.async_get_climate_context(
+        beantech.identifier, include_status=False,
     )
-    assert beantech_context.basics.climate == CloudClimateConfiguration("22", "900")
-    await runtime.async_update_climate_defaults(
-        beantech.identifier,
-        temperature=25,
-        operation_time_minutes=20,
-    )
-    beantech_updated = await runtime.async_get_climate_context(
-        beantech.identifier,
-        include_status=False,
-    )
-    assert beantech_updated.basics.climate == CloudClimateConfiguration("25", "1200")
+    assert bean_context.basics.climate == CloudClimateConfiguration("22", "900")
     await runtime.aclose()
     assert client.closed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("region", ["eu", "aus", "rus", "cn"])
+@pytest.mark.parametrize("action", [None, "horn", "flash_lights", "horn_and_lights", "climate", "comfort_mode", "comfort_off", "cabin_clean"])
+async def test_horn_result_routing_keyword_stays_inside_china(region: str, action: str | None) -> None:
+    client = SimpleNamespace(get_remote_command_results=AsyncMock(return_value=()))
+    runtime = GwmCloudClient(region, client)
+    identifier = VehicleIdentifier("LGWTEST0000000001")
+    assert await runtime.async_get_remote_command_results(identifier, "command-id", control_action=action) == ()  # type: ignore[arg-type]
+    if region == "cn" and action is not None:
+        client.get_remote_command_results.assert_awaited_once_with(identifier, "command-id", control_action=action)
+    else:
+        client.get_remote_command_results.assert_awaited_once_with(identifier, "command-id")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("region", ["cn", "eu", "aus", "rus"])
+@pytest.mark.parametrize("method,client_method,kwargs,result", [
+    ("async_get_bean_tech_comfort_modes", "get_bean_tech_comfort_modes", {}, ({"modeId": "123", "type": "1", "commonUseMode": 1},)),
+    ("async_set_bean_tech_comfort_mode", "set_bean_tech_comfort_mode", {"mode_type": "warm"}, "provider-mode-id"),
+    ("async_set_bean_tech_cabin_clean_appointment", "set_bean_tech_cabin_clean_appointment", {"time_ms": 1788375600000}, None),
+    ("async_get_bean_tech_cabin_clean_appointment", "get_bean_tech_cabin_clean_appointment", {}, 1788375600000),
+])
+async def test_beantech_runtime_adapters_are_china_only_and_preserve_values(region, method, client_method, kwargs, result):
+    call = AsyncMock(return_value=result)
+    client = SimpleNamespace(**{client_method: call})
+    runtime = GwmCloudClient(region, client)
+    identifier = VehicleIdentifier("LGWTEST0000000003")
+    if region == "cn":
+        assert await getattr(runtime, method)(identifier, **kwargs) == result
+        call.assert_awaited_once_with(identifier, **kwargs)
+    else:
+        with pytest.raises(GwmRoutePolicyError):
+            await getattr(runtime, method)(identifier, **kwargs)
+        call.assert_not_awaited()

@@ -8,6 +8,63 @@ This project follows semantic versioning. HACS uses the latest GitHub release ta
 
 ## [Unreleased]
 
+### Added
+
+- Added mainland-China BeanTech A/C, fast cool and heat presets, seat heating and ventilation, steering-wheel heating, defrost, cabin cleaning, and saved comfort modes behind the existing remote-command opt-in.
+- Added a BeanTech cabin-clean appointment selector using Home Assistant's timezone, with scheduled-time readback and protection against stale updates.
+
+### Fixed
+
+- Added strict acceptance validation and restart-safe result polling for BeanTech A/C and comfort commands while preserving existing horn/light, lock/window, charging, NavInfo, and overseas paths.
+
+## [0.17.3] - 2026-09-10
+
+### Added
+
+- Added combined horn and lights for mainland-China BeanTech vehicles behind the existing remote-command opt-in.
+
+### Fixed
+
+- Routed BeanTech horn and light commands through the PIN-exempt timely endpoint with restart-safe result polling. Kept other BeanTech controls, NavInfo commands, and overseas regions on their existing paths.
+
+## [0.17.2] - 2026-09-07
+
+### Changed
+
+- Added country metadata for the supported account regions to meet HACS default-repository submission requirements.
+- Required successful HACS and Hassfest validation before publishing a GitHub release.
+- Clarified dedicated-account and PIN prerequisites, sign-in and refresh token troubleshooting, and vehicle-specific A/C restrictions in the README.
+- Removed outdated migration and add-on guidance from the README.
+
+## [0.17.1] - 2026-09-07
+
+### Fixed
+
+- Fixed false errors when successful GWM cloud acknowledgements omit `data`, including climate settings, security-PIN checks, and remote commands in overseas regions.
+- Corrected debug diagnostics to recognize these acknowledgements as successful while still reporting whether `data` is present.
+- Added regression coverage for acknowledgement handling, malformed responses, required read payloads, and status values after accepted commands.
+
+## [0.17.0] - 2026-09-07
+
+### Changed
+
+- **Breaking:** Replaced the climate entity's `cool` mode and mainland-China `heat` mode with `auto`. The vehicle determines heating or cooling from the selected target temperature. Automations and scripts must change `hvac_mode: cool` or `hvac_mode: heat` to `hvac_mode: auto`; both old values are rejected without compatibility aliases.
+- Stopped reporting active climate sessions as `cooling` when GWM provides only an on/off state. The underlying target-temperature and stop requests stay the same.
+
+## [0.16.21] - 2026-09-06
+
+### Fixed
+
+- Preserve overseas climate, lock, window, charging-plan, and command-result operation names in sanitized error logs instead of replacing them with `unknown`.
+
+### Added
+
+- Add opt-in debug diagnostics that distinguish saving climate settings, checking the RU security PIN, submitting a command, polling its result, and prerequisite vehicle reads.
+- Record HTTP status, bounded numeric API codes and their original JSON types, the presence/type of `data`, and fixed response-format reasons without logging raw responses, credentials, PINs, VINs, URLs, or command identifiers.
+- Add regression coverage for diagnostic privacy, malformed responses, numeric codes, disabled logging, and unchanged transport and decoder behavior.
+
+This is a diagnostics-only release for investigation of #28. Command sequencing, request payloads, PIN handling, retries, and strict response validation are unchanged. The underlying RU command failure still requires a fresh debug-log capture; this release does not claim to fix it.
+
 ## [0.16.19] - 2026-09-02
 
 ### Added
@@ -42,7 +99,7 @@ This project follows semantic versioning. HACS uses the latest GitHub release ta
 ### Added
 
 - Added a capability-gated **Front defroster** switch for overseas vehicles that report front-defroster status. It uses the official app's 15-minute start request, supports an explicit stop request, and follows the existing restart-safe command journal and result polling.
-- Added a capability-gated **Start air circulation** button for overseas vehicles that report the matching status. It runs the official app's fixed 60-second external-air cabin-clean action and follows the same command journal and result polling.
+- Added a capability-gated **Start air circulation** button for overseas vehicles that report the matching status. It runs the official app's 60-second external-air cabin-clean action and follows the same command journal and result polling.
 
 ## [0.16.15] - 2026-08-31
 

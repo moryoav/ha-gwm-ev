@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import ssl
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -17,17 +18,20 @@ from gwm_client import (
     ChinaVehicleControlCommand,
     ClimateCommand,
     CloseWindowsCommand,
+    CloudStatusItem,
+    CloudVehicle,
+    CloudVehicleBasics,
     DoorLockCommand,
     FrontDefrosterCommand,
     GwmApiError,
     GwmClient,
     GwmClientConfig,
-    GwmConfigurationError,
     GwmSession,
     Region,
     RemoteCommandResultItem,
     VehicleIdentifier,
     create_gwm_ssl_context,
+    map_vehicle_snapshot,
     select_remote_command_result,
 )
 from gwm_client._protocol import _Deadline, _TransportRequest, _TransportResponse
@@ -62,11 +66,19 @@ def _fixture() -> dict[str, Any]:
     return json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
 
 
-def _response(data: object = None, *, code: str = "000000") -> _TransportResponse:
+_MISSING = object()
+
+
+def _response(data: object = _MISSING, *, code: str = "000000") -> _TransportResponse:
+    """Build acknowledgements without data unless a payload is supplied."""
+
+    envelope: dict[str, object] = {"code": code}
+    if data is not _MISSING:
+        envelope["data"] = data
     return _TransportResponse(
         200,
         {"content-type": "application/json"},
-        json.dumps({"code": code, "data": data}, separators=(",", ":")).encode(),
+        json.dumps(envelope, separators=(",", ":")).encode(),
     )
 
 
@@ -115,7 +127,7 @@ async def test_regional_climate_contracts_are_closed_and_header_exact(region: Re
         operation_time_minutes=10,
     )
     acceptance = await client.send_climate_command(
-        ClimateCommand(identifier, "cool", 21, 10),
+        ClimateCommand(identifier, "auto", 21, 10),
         security_password_hash=fixture["security_password_hash"],
     )
     results = await client.get_remote_command_results(identifier, acceptance.command_id)
@@ -168,6 +180,56 @@ async def test_regional_climate_contracts_are_closed_and_header_exact(region: Re
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("region", list(Region))
+@pytest.mark.parametrize("acknowledgement_data", [_MISSING, None], ids=["omitted-data", "null-data"])
+async def test_climate_acknowledgement_preserves_followup_status(
+    region: Region, acknowledgement_data: object,
+) -> None:
+    """Accept empty writes and preserve typed status and snapshot values."""
+
+    fixture = _fixture()
+    case = fixture["regions"][region.value]
+    sequence = fixture["sequence_number"]
+    identifier = VehicleIdentifier(fixture["vin"])
+    acknowledgement_count = 2 if case["security_check"] else 1
+    transport = _RecordingTransport(
+        [_response(acknowledgement_data) for _ in range(acknowledgement_count)]
+        + [_response({"items": [{"code": "2201001", "value": 234, "unit": "C"}]})]
+    )
+    client = GwmClient(
+        GwmClientConfig(region),
+        GwmSession(
+            country=case["country"],
+            device_id=case["device_id"],
+            access_token="SYNTHETIC-COMMAND-TOKEN",
+            app_ssl_context=_context(region),
+        ),
+        transport=transport,
+        sequence_source=lambda: sequence,
+    )
+
+    acceptance = await client.send_climate_command(
+        ClimateCommand(identifier, "auto", 21, 10),
+        security_password_hash=fixture["security_password_hash"],
+    )
+    status = await client.get_last_status(identifier)
+    snapshot = map_vehicle_snapshot(
+        CloudVehicle(identifier=identifier),
+        status,
+        CloudVehicleBasics(),
+        refreshed_at=datetime(2026, 9, 7, tzinfo=UTC),
+        remote_commands_available=True,
+        command_status="pending",
+    )
+
+    assert acceptance.command_id == sequence
+    assert status.items == (CloudStatusItem(code="2201001", value=234, unit="C"),)
+    assert snapshot.values.interior_temperature_c == 23.4
+    assert len(transport.requests) == acknowledgement_count + 1
+    assert not transport.responses
+
+
+@pytest.mark.asyncio
 async def test_current_anz_commands_and_result_poll_keep_current_app_policy() -> None:
     fixture = _fixture()
     device_id = "0123456789abcdef0123456789abcdef"
@@ -195,7 +257,7 @@ async def test_current_anz_commands_and_result_poll_keep_current_app_policy() ->
         operation_time_minutes=10,
     )
     acceptance = await client.send_climate_command(
-        ClimateCommand(identifier, "cool", 21, 10),
+        ClimateCommand(identifier, "auto", 21, 10),
         security_password_hash=fixture["security_password_hash"],
     )
     await client.get_remote_command_results(identifier, acceptance.command_id)
@@ -390,7 +452,7 @@ async def test_provider_rejection_does_not_return_an_accepted_identifier() -> No
         transport=transport,
         sequence_source=lambda: fixture["sequence_number"],
     )
-    command = ClimateCommand(VehicleIdentifier(fixture["vin"]), "cool", 22, 15)
+    command = ClimateCommand(VehicleIdentifier(fixture["vin"]), "auto", 22, 15)
     with pytest.raises(GwmApiError):
         await client.send_climate_command(
             command,
@@ -399,28 +461,17 @@ async def test_provider_rejection_does_not_return_an_accepted_identifier() -> No
     assert len(transport.requests) == 1
 
 
-@pytest.mark.asyncio
-async def test_overseas_heat_is_rejected_before_transport() -> None:
+@pytest.mark.parametrize("legacy_mode", ["cool", "heat"])
+def test_legacy_climate_modes_are_rejected(legacy_mode: str) -> None:
     fixture = _fixture()
-    case = fixture["regions"]["aus"]
-    transport = _RecordingTransport([])
-    client = GwmClient(
-        GwmClientConfig(Region.ANZ),
-        GwmSession(
-            country=case["country"],
-            device_id=case["device_id"],
-            access_token="SYNTHETIC-COMMAND-TOKEN",
-            app_ssl_context=_context(Region.ANZ),
-        ),
-        transport=transport,
-        sequence_source=lambda: fixture["sequence_number"],
-    )
-    with pytest.raises(GwmConfigurationError):
-        await client.send_climate_command(
-            ClimateCommand(VehicleIdentifier(fixture["vin"]), "heat", 24, 15),
-            security_password_hash=fixture["security_password_hash"],
+
+    with pytest.raises(ValueError, match="climate_command_invalid"):
+        ClimateCommand(
+            VehicleIdentifier(fixture["vin"]),
+            legacy_mode,  # type: ignore[arg-type]
+            24,
+            15,
         )
-    assert transport.requests == []
 
 
 def test_result_selection_preserves_russian_and_default_semantics() -> None:
@@ -439,23 +490,13 @@ def test_china_vehicle_control_contract_is_closed_and_platform_filtered() -> Non
     identifier = VehicleIdentifier(_fixture()["vin"])
     assert len(NAVINFO_CHINA_VEHICLE_CONTROL_ACTIONS) == 13
     assert {
-        "seat_heating_start",
-        "seat_heating_stop",
-        "seat_heating_start_passenger",
-        "seat_heating_stop_passenger",
-        "seat_ventilation_start",
-        "seat_ventilation_stop",
-        "seat_ventilation_start_passenger",
-        "seat_ventilation_stop_passenger",
-        "steering_wheel_heating",
-        "steering_wheel_heatless",
-        "defrost_front_start",
-        "defrost_front_stop",
-        "defrost_back_start",
-        "defrost_back_stop",
-        "cabin_clean",
-        "comfort_off",
-    } == BEANTECH_CHINA_VEHICLE_CONTROL_ACTIONS
+        "remote_start",
+        "remote_stop",
+        "horn",
+        "flash_lights",
+        "horn_and_lights",
+        "sunroof_close",
+    } < BEANTECH_CHINA_VEHICLE_CONTROL_ACTIONS
     assert (
         ChinaVehicleControlCommand(
             identifier,

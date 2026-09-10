@@ -13,7 +13,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any, Protocol, cast
+from typing import Protocol, cast
 
 from homeassistant.core import HomeAssistant
 
@@ -61,6 +61,7 @@ from gwm_client import (
     is_overseas_session_expired,
     map_vehicle_snapshot,
 )
+from gwm_client.commands import ChinaRemoteCommandAction
 
 from .cloud_auth import (
     CloudAuthenticationResult,
@@ -202,15 +203,20 @@ class _ChinaReadClient(Protocol):
         command: ClimateCommand,
     ) -> RemoteCommandAcceptance: ...
 
+    async def send_lock_command(
+        self,
+        command: DoorLockCommand,
+    ) -> RemoteCommandAcceptance: ...
+
+    async def send_close_windows_command(
+        self,
+        command: CloseWindowsCommand,
+    ) -> RemoteCommandAcceptance: ...
+
     async def send_vehicle_control_command(
         self,
         command: ChinaVehicleControlCommand,
     ) -> RemoteCommandAcceptance: ...
-
-    async def get_bean_tech_ac_temperature(
-        self,
-        identifier: VehicleIdentifier,
-    ) -> int | None: ...
 
     async def get_bean_tech_comfort_modes(
         self,
@@ -241,7 +247,7 @@ class _ChinaReadClient(Protocol):
         identifier: VehicleIdentifier,
         command_id: str,
         *,
-        msg_type: str = "remote",
+        control_action: ChinaRemoteCommandAction | None = None,
     ) -> tuple[RemoteCommandResultItem, ...]: ...
 
     async def aclose(self) -> None: ...
@@ -533,7 +539,7 @@ class GwmCloudClient:
         for vehicle in vehicles:
             status = await self._client.get_last_status(vehicle.identifier)
             if self.region == REGION_CHINA:
-                basics = await self._china_vehicle_basics(vehicle.identifier)
+                basics = self._china_vehicle_basics(vehicle.identifier)
             else:
                 overseas_client = cast(_OverseasReadClient, self._client)
                 try:
@@ -553,9 +559,10 @@ class GwmCloudClient:
                     "navinfo",
                     "beantech",
                 }
+                china_navinfo = self.region == REGION_CHINA and platform == "navinfo"
                 remote_commands_available = self._lock_window_commands_enabled and china_supported
                 charging_control_available = self._charging_control_enabled and (
-                    self.region != REGION_CHINA or platform == "navinfo"
+                    self.region != REGION_CHINA or china_navinfo
                 )
                 snapshot = map_vehicle_snapshot(
                     vehicle,
@@ -573,7 +580,7 @@ class GwmCloudClient:
                     self.region != REGION_CHINA or china_supported
                 )
                 capabilities["lock_window_commands"] = self._lock_window_commands_enabled and (
-                    self.region != REGION_CHINA
+                    self.region != REGION_CHINA or china_supported
                 )
                 capabilities["charging_control"] = charging_control_available
                 capabilities["china_vehicle_commands"] = self._lock_window_commands_enabled and china_supported
@@ -632,7 +639,7 @@ class GwmCloudClient:
         if self.region == REGION_CHINA:
             if (vehicle.platform or "").strip().casefold() not in {"navinfo", "beantech"}:
                 raise GwmRoutePolicyError(operation="send_climate_command")
-            basics = await self._china_vehicle_basics(identifier)
+            basics = self._china_vehicle_basics(identifier)
         else:
             overseas_client = cast(_OverseasReadClient, self._client)
             try:
@@ -707,7 +714,9 @@ class GwmCloudClient:
         security_password_hash: str | None = None,
     ) -> RemoteCommandAcceptance:
         if self.region == REGION_CHINA:
-            raise GwmRoutePolicyError(operation="send_lock_command")
+            return await self._async_with_session_renewal(
+                lambda: cast(_ChinaReadClient, self._client).send_lock_command(command)
+            )
         if not isinstance(security_password_hash, str):
             raise GwmConfigurationError(operation="send_lock_command")
         return await self._async_with_session_renewal(
@@ -724,7 +733,9 @@ class GwmCloudClient:
         security_password_hash: str | None = None,
     ) -> RemoteCommandAcceptance:
         if self.region == REGION_CHINA:
-            raise GwmRoutePolicyError(operation="send_close_windows_command")
+            return await self._async_with_session_renewal(
+                lambda: cast(_ChinaReadClient, self._client).send_close_windows_command(command)
+            )
         if not isinstance(security_password_hash, str):
             raise GwmConfigurationError(operation="send_close_windows_command")
         return await self._async_with_session_renewal(
@@ -784,21 +795,6 @@ class GwmCloudClient:
             lambda: cast(_ChinaReadClient, self._client).send_vehicle_control_command(command)
         )
 
-
-    async def async_get_bean_tech_ac_temperature(
-        self,
-        identifier: VehicleIdentifier,
-    ) -> int | None:
-        """Read the BeanTech A/C set temperature through the client."""
-        if self.region != REGION_CHINA:
-            raise GwmRoutePolicyError(operation="get_bean_tech_ac_temperature")
-        return await self._async_with_session_renewal(
-            lambda: cast(_ChinaReadClient, self._client).get_bean_tech_ac_temperature(
-                identifier
-            )
-        )
-
-
     async def async_get_bean_tech_comfort_modes(
         self,
         identifier: VehicleIdentifier,
@@ -824,10 +820,9 @@ class GwmCloudClient:
         return await self._async_with_session_renewal(
             lambda: cast(_ChinaReadClient, self._client).set_bean_tech_comfort_mode(
                 identifier,
-                mode_type=cast(Any, mode_type),
+                mode_type=mode_type,
             )
         )
-
 
     async def async_set_bean_tech_cabin_clean_appointment(
         self,
@@ -857,27 +852,21 @@ class GwmCloudClient:
             ).get_bean_tech_cabin_clean_appointment(identifier)
         )
 
-
     async def async_get_remote_command_results(
         self,
         identifier: VehicleIdentifier,
         command_id: str,
         *,
-        msg_type: str = "remote",
+        control_action: ChinaRemoteCommandAction | None = None,
     ) -> tuple[RemoteCommandResultItem, ...]:
-        if self.region == REGION_CHINA:
+        if self.region == REGION_CHINA and control_action is not None:
             return await self._async_with_session_renewal(
                 lambda: cast(_ChinaReadClient, self._client).get_remote_command_results(
-                    identifier,
-                    command_id,
-                    msg_type=msg_type,
+                    identifier, command_id, control_action=control_action
                 )
             )
         return await self._async_with_session_renewal(
-            lambda: cast(_OverseasReadClient, self._client).get_remote_command_results(
-                identifier,
-                command_id,
-            )
+            lambda: self._client.get_remote_command_results(identifier, command_id)
         )
 
     async def _async_with_session_renewal[T](
@@ -1030,22 +1019,17 @@ class GwmCloudClient:
         if self._state_store is not None:
             await self._state_store.async_clear_auth_state(self._entry_data)
 
-    async def _china_vehicle_basics(
+    def _china_vehicle_basics(
         self,
         identifier: VehicleIdentifier,
     ) -> CloudVehicleBasics:
-        # The app keeps the A/C set temperature as a local value and only
-        # persists it via POST remote-ctrl/config; it never reads it back
-        # through config/query. Mirror that: the set temperature is the local
-        # default, not a server-read signal.
-        cached = self._china_climate_defaults.get(identifier.value)
-        temperature = cached.temperature if cached is not None else "22"
-        operation_time = cached.operation_time if cached is not None else "900"
-        climate = CloudClimateConfiguration(
-            temperature=temperature,
-            operation_time=operation_time,
+        climate = self._china_climate_defaults.setdefault(
+            identifier.value,
+            CloudClimateConfiguration(
+                temperature="22",
+                operation_time="900",
+            ),
         )
-        self._china_climate_defaults[identifier.value] = climate
         return CloudVehicleBasics(climate=climate)
 
 

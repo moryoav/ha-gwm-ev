@@ -1,13 +1,15 @@
-"""Select platform for BeanTech time-of-day dropdowns."""
+"""BeanTech cabin-clean appointment time."""
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from datetime import timedelta
 
 from homeassistant.components.select import SelectEntity
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.util import dt as dt_util
@@ -19,37 +21,32 @@ from .entity import GwmEntity, async_call_gwm_api, setup_vehicle_entities
 from .errors import GwmCommandError
 
 PARALLEL_UPDATES = 0
-
-# How often an entity re-reads a car value the app can change, so an app-side
-# change is reflected without restarting Home Assistant.
 POLLED_READ_INTERVAL = 60.0
-
 _LOGGER = logging.getLogger(__name__)
-
-# The app offers 5-minute granularity over a full day for these time settings.
 _FIVE_MINUTE_TIMES = [
     f"{hour:02d}:{minute:02d}" for hour in range(24) for minute in range(0, 60, 5)
 ]
 
 
 def _clock_to_today_ms(value: str) -> int:
-    """Convert an ``HH:MM`` selection into today's epoch ms (tomorrow if passed)."""
-    hour, minute = value.split(":", 1)
+    """Find the next selected local time, accounting for DST transitions."""
+    if value not in _FIVE_MINUTE_TIMES:
+        raise HomeAssistantError("Choose a cabin-clean time in five-minute steps")
+    hour, minute = map(int, value.split(":"))
     now = dt_util.now()
-    target = now.replace(hour=int(hour), minute=int(minute), second=0, microsecond=0)
-    if target <= now:
-        target += timedelta(days=1)
+    target = dt_util.find_next_time_expression_time(
+        now.replace(microsecond=0) + timedelta(seconds=1), [0], [minute], [hour]
+    )
     return int(target.timestamp() * 1000)
 
 
 def _ms_to_clock(value_ms: int) -> str | None:
-    """Convert an epoch-ms timestamp into a 5-minute ``HH:MM`` selection."""
+    """Keep the reported time exact, including appointments made in the app."""
     try:
         local = dt_util.as_local(dt_util.utc_from_timestamp(value_ms / 1000))
     except (OverflowError, OSError, ValueError):
         return None
-    minute = (local.minute // 5) * 5
-    return f"{local.hour:02d}:{minute:02d}"
+    return f"{local.hour:02d}:{local.minute:02d}"
 
 
 async def async_setup_entry(
@@ -57,101 +54,90 @@ async def async_setup_entry(
     entry: GwmConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up GWM select entities."""
+    """Register the appointment only for mainland-China BeanTech vehicles."""
     setup_vehicle_entities(
-        entry,
-        async_add_entities,
+        entry, async_add_entities,
         lambda vehicle: (
-            GwmCabinCleanAppointmentSelect(
+            (GwmCabinCleanAppointmentSelect(
                 entry.runtime_data.api, entry.runtime_data.coordinator, vehicle["vin"]
-            ),
+            ),)
+            if entry.runtime_data.coordinator.region == "cn"
+            and str(vehicle.get("platform") or "").strip().casefold() == "beantech"
+            else ()
         ),
     )
 
 
-class _BeanTechTimeSelect(GwmEntity, SelectEntity):
-    """Shared BeanTech time-of-day dropdown entity."""
+class GwmCabinCleanAppointmentSelect(GwmEntity, SelectEntity):
+    """Select the next cabin-clean run time in Home Assistant's timezone."""
 
     _attr_entity_category = EntityCategory.CONFIG
-    _attr_options = _FIVE_MINUTE_TIMES
+    _attr_translation_key = "cabin_clean_appointment_time"
 
-    def __init__(self, api, coordinator, vin: str, *, translation_key: str) -> None:
+    def __init__(self, api, coordinator, vin: str) -> None:
         super().__init__(coordinator, vin)
         self._api = api
-        self._attr_translation_key = translation_key
-        self._attr_unique_id = f"{vin}_{translation_key}"
-        self._last_read_at = 0.0
+        self._attr_unique_id = f"{vin}_cabin_clean_appointment_time"
+        self._time_ms: int | None = None
+        self._last_read_at = float("-inf")
+        self._read_task: asyncio.Task | None = None
+        self._write_lock = asyncio.Lock()
+        self._generation = 0
 
     @property
     def available(self) -> bool:
-        return (
-            super().available
-            and self.remote_commands_available
-            and self.is_china_beantech
-        )
-
-    def _handle_coordinator_update(self) -> None:
-        """Re-read the charge window on a throttle so app toggles stay synced."""
-        super()._handle_coordinator_update()
-        reader = getattr(self, "_async_read_window", None)
-        if (
-            reader is None
-            or not self.available
-            or time.monotonic() - self._last_read_at < POLLED_READ_INTERVAL
-        ):
-            return
-        self._last_read_at = time.monotonic()
-        self.hass.async_create_task(reader())
-
-
-class GwmCabinCleanAppointmentSelect(_BeanTechTimeSelect):
-    """Cabin-clean scheduled run time (HH:MM, within 24 h)."""
-
-    def __init__(self, api, coordinator, vin: str) -> None:
-        super().__init__(
-            api, coordinator, vin, translation_key="cabin_clean_appointment_time"
-        )
+        return super().available and self.china_vehicle_commands_available and self.is_china_beantech
 
     @property
     def current_option(self) -> str | None:
-        value = self.coordinator.local_flag(self.vin, "cabin_clean_appointment_time")
-        return value if value in self._attr_options else "08:00"
+        if self._time_ms is None or self._time_ms <= dt_util.utcnow().timestamp() * 1000:
+            return None
+        return _ms_to_clock(self._time_ms)
+
+    @property
+    def options(self) -> list[str]:
+        current = self.current_option
+        return sorted(set(_FIVE_MINUTE_TIMES) | ({current} if current else set()))
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
-        if not self.available:
-            return
-        await self._async_read_state()
+        self.async_on_remove(self._cancel_read)
+        if self.available:
+            await self._async_read_state()
+
+    def _cancel_read(self) -> None:
+        if self._read_task is not None:
+            self._read_task.cancel()
 
     def _handle_coordinator_update(self) -> None:
-        """Re-read the scheduled cabin-clean time on a throttle."""
         super()._handle_coordinator_update()
         if (
-            not self.available
+            not self.available or self._write_lock.locked()
+            or (self._read_task is not None and not self._read_task.done())
             or time.monotonic() - self._last_read_at < POLLED_READ_INTERVAL
         ):
             return
-        self._last_read_at = time.monotonic()
-        self.hass.async_create_task(self._async_read_state())
+        self._read_task = self.hass.async_create_task(self._async_read_state())
 
     async def _async_read_state(self) -> None:
-        """Read the scheduled cabin-clean time from the car."""
+        self._last_read_at = time.monotonic()
+        generation = self._generation
         try:
             time_ms = await self._api.async_get_cabin_clean_appointment(self.vin)
         except (GwmCommandError, GwmClientError) as err:
-            _LOGGER.debug("Could not read cabin-clean appointment: %s", err)
+            _LOGGER.debug("Could not read cabin-clean appointment (%s)", type(err).__name__)
             return
-        if time_ms is None:
-            return
-        clock = _ms_to_clock(time_ms)
-        if clock is not None:
-            self.coordinator.set_local_flag(
-                self.vin, "cabin_clean_appointment_time", clock
-            )
+        if generation == self._generation and not self._write_lock.locked():
+            self._time_ms = time_ms
+            self.async_write_ha_state()
 
     async def async_select_option(self, option: str) -> None:
-        time_ms = _clock_to_today_ms(option)
-        await async_call_gwm_api(
-            self._api.async_set_cabin_clean_appointment(self.vin, time_ms=time_ms)
-        )
-        self.coordinator.set_local_flag(self.vin, "cabin_clean_appointment_time", option)
+        async with self._write_lock:
+            time_ms = _clock_to_today_ms(option)
+            self._generation += 1
+            await async_call_gwm_api(
+                self._api.async_set_cabin_clean_appointment(self.vin, time_ms=time_ms)
+            )
+            self._time_ms = time_ms
+            self._last_read_at = time.monotonic()
+            self.async_write_ha_state()

@@ -6,6 +6,7 @@ import asyncio
 import json
 from collections import Counter, deque
 from collections.abc import Mapping
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -35,6 +36,10 @@ from gwm_client.china_transport import (
 from gwm_client.commands import (
     ChinaVehicleControlCommand,
     ClimateCommand,
+    CloseWindowsCommand,
+    DoorLockCommand,
+    RemoteCommandResultItem,
+    select_remote_command_result,
 )
 from gwm_client.config import RequestTimeouts
 from gwm_client.errors import (
@@ -175,10 +180,6 @@ def _client(
         sequence_source=lambda: BEAN_COMMAND_ID,
         sleeper=sleeper,
     )
-
-
-def _deadline() -> _Deadline:
-    return _Deadline(asyncio.get_running_loop().time() + 10)
 
 
 def _assert_request(request: _ChinaTransportRequest, expected_name: str) -> None:
@@ -965,8 +966,25 @@ async def test_navinfo_charging_schedule_read_write_clear_and_china_weekday_cont
 
 
 @pytest.mark.asyncio
-async def test_navinfo_climate_start_heat_update_stop_and_result_contracts() -> None:
-    transaction_ids = ("TX-START-1", "TX-HEAT-2", "TX-STOP-3")
+async def test_beantech_charging_is_rejected_before_transport() -> None:
+    transport = _FakeTransport(acquire_vehicles=[FIXTURE["responses"]["discovery"]])
+    client = _client(transport)
+    authenticated = await client.authenticate(_credentials(), state=_complete_state())
+    assert isinstance(authenticated, ChinaAuthenticated)
+    identifier = VehicleIdentifier("LGWTEST0000000003")
+    before = len(transport.calls)
+
+    with pytest.raises(GwmRoutePolicyError):
+        await client.get_charging_plan(identifier)
+    with pytest.raises(GwmRoutePolicyError):
+        await client.set_charging_plan(ChargingPlanCommand(identifier, False))
+
+    assert len(transport.calls) == before
+
+
+@pytest.mark.asyncio
+async def test_navinfo_climate_start_update_stop_and_result_contracts() -> None:
+    transaction_ids = ("TX-START-1", "TX-UPDATE-2", "TX-STOP-3")
     transport = _FakeTransport(
         acquire_vehicles=[FIXTURE["responses"]["discovery"]],
         send_climate_command=[
@@ -1003,21 +1021,21 @@ async def test_navinfo_climate_start_heat_update_stop_and_result_contracts() -> 
     identifier = VehicleIdentifier(VIN)
 
     started = await client.send_climate_command(
-        ClimateCommand(identifier, "cool", 21, 10, currently_on=False)
+        ClimateCommand(identifier, "auto", 21, 10, currently_on=False)
     )
-    heated = await client.send_climate_command(
-        ClimateCommand(identifier, "heat", 26, 20, currently_on=True)
+    updated = await client.send_climate_command(
+        ClimateCommand(identifier, "auto", 26, 20, currently_on=True)
     )
     stopped = await client.send_climate_command(
         ClimateCommand(identifier, "off", 22, 15, currently_on=True)
     )
-    results = await client.get_remote_command_results(identifier, heated.command_id)
+    results = await client.get_remote_command_results(identifier, updated.command_id)
 
-    assert (started.command_id, heated.command_id, stopped.command_id) == transaction_ids
+    assert (started.command_id, updated.command_id, stopped.command_id) == transaction_ids
     command_requests = [
         request for request in transport.calls if request.operation == "send_climate_command"
     ]
-    start_payload, heat_payload, stop_payload = map(_auto_ai_payload, command_requests)
+    start_payload, update_payload, stop_payload = map(_auto_ai_payload, command_requests)
     assert start_payload["header"]["fn"] == "GW.M.SET_AND_OPEN_COMMAND"
     assert start_payload["body"]["cmdCode"] == 6
     assert start_payload["body"]["airParams"] == {
@@ -1025,9 +1043,9 @@ async def test_navinfo_climate_start_heat_update_stop_and_result_contracts() -> 
         "runTime": 10,
         "temperature": 21,
     }
-    assert heat_payload["header"]["fn"] == "GW.M.SET_AND_OPEN_COMMAND"
-    assert heat_payload["body"]["cmdCode"] == 6
-    assert heat_payload["body"]["airParams"] == {
+    assert update_payload["header"]["fn"] == "GW.M.SET_AND_OPEN_COMMAND"
+    assert update_payload["body"]["cmdCode"] == 6
+    assert update_payload["body"]["airParams"] == {
         "engineControl": 1,
         "runTime": 20,
         "temperature": 26,
@@ -1083,7 +1101,7 @@ async def test_navinfo_climate_start_heat_update_stop_and_result_contracts() -> 
     assert result_request.service == "bean_tech"
     assert urlsplit(result_request.url).path == "/app-api/api/v3.0/vehicle/remote-ctrl/result"
     assert urlsplit(result_request.url).query == (
-        "seqNo=TX-HEAT-2&vin=" + VIN + "&msgType=remote"
+        "seqNo=TX-UPDATE-2&vin=" + VIN + "&msgType=remote"
     )
     assert results[0].command_id == transaction_ids[1]
     assert results[0].result_code == "2000"
@@ -1108,7 +1126,7 @@ async def test_navinfo_climate_config_failure_preserves_accepted_command(
     )
 
     accepted = await client.send_climate_command(
-        ClimateCommand(VehicleIdentifier(VIN), "cool", 22, 10)
+        ClimateCommand(VehicleIdentifier(VIN), "auto", 22, 10)
     )
 
     assert accepted.command_id == "TX-ACCEPTED"
@@ -1128,21 +1146,109 @@ async def test_navinfo_climate_rejects_temperatures_outside_captured_range() -> 
     for temperature in (16, 32):
         with pytest.raises(GwmConfigurationError):
             await client.send_climate_command(
-                ClimateCommand(VehicleIdentifier(VIN), "cool", temperature, 10)
+                ClimateCommand(VehicleIdentifier(VIN), "auto", temperature, 10)
             )
 
     assert len(transport.calls) == before
 
 
 @pytest.mark.asyncio
-async def test_beantech_climate_start_and_stop_use_timely_without_token() -> None:
+async def test_unknown_platform_climate_is_rejected_before_command_transport() -> None:
+    transport = _FakeTransport(acquire_vehicles=[FIXTURE["responses"]["discovery"]])
+    client = _client(transport)
+    authenticated = await client.authenticate(_credentials(), state=_complete_state())
+    assert isinstance(authenticated, ChinaAuthenticated)
+    before = len(transport.calls)
+
+    with pytest.raises(GwmRoutePolicyError):
+        await client.send_climate_command(
+            ClimateCommand(VehicleIdentifier("LGWTEST0000000002"), "auto", 22, 15)
+        )
+
+    assert len(transport.calls) == before
+
+
+@pytest.mark.asyncio
+async def test_navinfo_lock_unlock_close_windows_and_result_need_no_pin() -> None:
+    transactions = ("TX-LOCK-1", "TX-UNLOCK-2", "TX-WINDOW-3")
     transport = _FakeTransport(
         acquire_vehicles=[FIXTURE["responses"]["discovery"]],
-        send_climate_command=[
+        send_lock_command=[
+            {"header": {"c": "0"}, "body": {"transactionId": transactions[0]}},
+            {"header": {"c": "0"}, "body": {"transactionId": transactions[1]}},
+        ],
+        send_close_windows_command=[
+            {"header": {"c": "0"}, "body": {"transactionId": transactions[2]}}
+        ],
+        get_remote_command_result=[
+            {
+                "code": "000000",
+                "data": {
+                    "messageList": [
+                        {
+                            "messageType": "remote",
+                            "messageData": json.dumps(
+                                {
+                                    "transactionId": transactions[2],
+                                    "resultCode": "0",
+                                    "resultMessage": "Success",
+                                },
+                                separators=(",", ":"),
+                            ),
+                        }
+                    ]
+                },
+            }
+        ],
+    )
+    client = _client(transport)
+    assert isinstance(
+        await client.authenticate(_credentials(), state=_complete_state()),
+        ChinaAuthenticated,
+    )
+    identifier = VehicleIdentifier(VIN)
+
+    locked = await client.send_lock_command(DoorLockCommand(identifier, True))
+    unlocked = await client.send_lock_command(DoorLockCommand(identifier, False))
+    closed = await client.send_close_windows_command(CloseWindowsCommand(identifier))
+    results = await client.get_remote_command_results(identifier, closed.command_id)
+
+    assert (locked.command_id, unlocked.command_id, closed.command_id) == transactions
+    requests = [
+        request
+        for request in transport.calls
+        if request.operation in {"send_lock_command", "send_close_windows_command"}
+    ]
+    assert [_auto_ai_payload(request)["body"]["cmdCode"] for request in requests] == [2, 1, 3]
+    assert all(
+        _auto_ai_payload(request)["header"]["fn"] == "GW.M.SEND_COMMON_COMMAND"
+        for request in requests
+    )
+    assert results[0].command_id == transactions[2]
+    assert results[0].result_code == "0"
+
+
+@pytest.mark.asyncio
+async def test_beantech_lock_close_windows_and_legacy_result_are_isolated() -> None:
+    transport = _FakeTransport(
+        acquire_vehicles=[FIXTURE["responses"]["discovery"]],
+        send_lock_command=[
             {"code": "000000", "data": {}},
             {"code": "000000", "data": {}},
         ],
-        set_bean_tech_ac_temperature=[{"code": "000000", "data": {}}],
+        send_close_windows_command=[{"code": "000000", "data": {}}],
+        get_remote_command_result=[
+            {
+                "code": "000000",
+                "data": [
+                    {
+                        "remoteType": "0x08",
+                        "resultCode": 6,
+                        "resultMsg": "Success",
+                    }
+                ],
+            }
+        ],
     )
     client = _client(transport)
     assert isinstance(
@@ -1151,104 +1257,43 @@ async def test_beantech_climate_start_and_stop_use_timely_without_token() -> Non
     )
     identifier = VehicleIdentifier(BEAN_VIN)
 
-    started = await client.send_climate_command(
-        ClimateCommand(identifier, "auto", 22, 15)
-    )
-    stopped = await client.send_climate_command(
-        ClimateCommand(identifier, "off", 22, 15)
-    )
+    locked = await client.send_lock_command(DoorLockCommand(identifier, True))
+    unlocked = await client.send_lock_command(DoorLockCommand(identifier, False))
+    closed = await client.send_close_windows_command(CloseWindowsCommand(identifier))
+    results = await client.get_remote_command_results(identifier, closed.command_id)
 
-    assert started.command_id == stopped.command_id == BEAN_COMMAND_ID
+    assert locked.command_id == unlocked.command_id == closed.command_id == BEAN_COMMAND_ID
     sends = [
-        json.loads(request.body or b"null")
+        request
         for request in transport.calls
-        if request.operation == "send_climate_command"
+        if request.operation in {"send_lock_command", "send_close_windows_command"}
     ]
-    assert sends[0]["commands"] == [
+    command_bodies = [json.loads(request.body or b"null") for request in sends]
+    assert command_bodies[0]["commands"] == [
+        {"controlType": "VEHICLE_LOCK", "cmdBody": None}
+    ]
+    assert command_bodies[1]["commands"] == [
+        {"controlType": "VEHICLE_UNLOCK", "cmdBody": None}
+    ]
+    assert command_bodies[2]["commands"] == [
         {
-            "controlType": "AIR_CONDITIONER_START",
+            "controlType": "WINDOW_CLOSE",
             "cmdBody": {
-                "allowStartEng": 1,
-                "operationTime": 900,
-                "temperature": 22,
+                "leftFront": 0,
+                "leftBack": 0,
+                "rightFront": 0,
+                "rightBack": 0,
             },
         }
     ]
-    assert sends[1]["commands"] == [{"controlType": "AIR_CONDITIONER_STOP"}]
-    for request in transport.calls:
-        if request.operation == "send_climate_command":
-            assert request.url.endswith("/app-api/api/v3.0/vehicle/remote-ctrl/timely")
-            assert "securityToken" not in request.headers
-    assert not any(
-        call.operation == "generate_security_token" for call in transport.calls
-    )
+    result_request = transport.calls[-1]
+    assert urlsplit(result_request.url).path == "/app-api/api/v1.0/vehicle/getRemoteCtrlResultT5"
+    assert urlsplit(result_request.url).query == "seqNo=" + BEAN_COMMAND_ID
+    assert results == (RemoteCommandResultItem(BEAN_COMMAND_ID, "0x08", "6", "Success"),)
 
 
 @pytest.mark.asyncio
-async def test_beantech_command_queues_retries_until_accepted_when_551210() -> None:
-    sleeps: list[float] = []
-
-    async def sleeper(delay: float) -> None:
-        sleeps.append(delay)
-
-    transport = _FakeTransport(
-        acquire_vehicles=[FIXTURE["responses"]["discovery"]],
-        send_climate_command=[
-            {"code": "551210"},
-            {"code": "551210"},
-            {"code": "000000", "data": {}},
-        ],
-    )
-    client = _client(transport, sleeper=sleeper)
-    assert isinstance(
-        await client.authenticate(_credentials(), state=_complete_state()),
-        ChinaAuthenticated,
-    )
-
-    accepted = await client.send_climate_command(
-        ClimateCommand(VehicleIdentifier(BEAN_VIN), "off", 22, 15)
-    )
-
-    assert accepted.command_id == BEAN_COMMAND_ID
-    assert sleeps == [5.0, 5.0]
-    assert (
-        Counter(request.operation for request in transport.calls)["send_climate_command"]
-        == 3
-    )
-
-
-@pytest.mark.asyncio
-async def test_beantech_command_surfaces_551210_after_queue_exhausted() -> None:
-    sleeps: list[float] = []
-
-    async def sleeper(delay: float) -> None:
-        sleeps.append(delay)
-
-    transport = _FakeTransport(
-        acquire_vehicles=[FIXTURE["responses"]["discovery"]],
-        send_climate_command=[{"code": "551210"}] * 5,
-    )
-    client = _client(transport, sleeper=sleeper)
-    assert isinstance(
-        await client.authenticate(_credentials(), state=_complete_state()),
-        ChinaAuthenticated,
-    )
-
-    with pytest.raises(GwmApiError) as raised:
-        await client.send_climate_command(
-            ClimateCommand(VehicleIdentifier(BEAN_VIN), "off", 22, 15)
-        )
-
-    assert raised.value.api_code == "551210"
-    assert sleeps == [5.0, 5.0, 5.0, 5.0]
-    assert (
-        Counter(request.operation for request in transport.calls)["send_climate_command"]
-        == 5
-    )
-
-
-@pytest.mark.asyncio
-async def test_beantech_climate_rejects_temperatures_outside_captured_range() -> None:
+async def test_task18_commands_reject_unknown_china_platform_before_transport() -> None:
     transport = _FakeTransport(acquire_vehicles=[FIXTURE["responses"]["discovery"]])
     client = _client(transport)
     assert isinstance(
@@ -1257,11 +1302,10 @@ async def test_beantech_climate_rejects_temperatures_outside_captured_range() ->
     )
     before = len(transport.calls)
 
-    for temperature in (16, 32):
-        with pytest.raises(GwmConfigurationError):
-            await client.send_climate_command(
-                ClimateCommand(VehicleIdentifier(BEAN_VIN), "auto", temperature, 15)
-            )
+    with pytest.raises(GwmRoutePolicyError):
+        await client.send_lock_command(
+            DoorLockCommand(VehicleIdentifier(UNSUPPORTED_VIN), True)
+        )
 
     assert len(transport.calls) == before
 
@@ -1345,72 +1389,334 @@ async def test_navinfo_extended_vehicle_controls_use_exact_app_command_shapes() 
     assert payloads[-1]["body"] == {"vin": VIN}
 
 
-def test_beantech_timely_request_climate_start_shape() -> None:
-    client = _client(_FakeTransport())
-    request = client._build_bean_tech_timely_request(
-        _complete_state(),
-        VehicleIdentifier(BEAN_VIN),
-        sequence_number="0" * 32 + "9359",
-        operation="send_climate_command",
-        control_type="AIR_CONDITIONER_START",
-        command_body={"allowStartEng": 1, "operationTime": 900, "temperature": 22},
-        security_token="JWT",
-    )
-    assert request.url.endswith("/app-api/api/v3.0/vehicle/remote-ctrl/timely")
-    assert request.headers["securityToken"] == "JWT"
-    assert json.loads(request.body or b"null") == {
-        "vin": BEAN_VIN,
-        "seqNo": "0" * 32 + "9359",
-        "sendType": 0,
-        "commands": [
-            {
-                "controlType": "AIR_CONDITIONER_START",
-                "cmdBody": {"allowStartEng": 1, "operationTime": 900, "temperature": 22},
-            }
+@pytest.mark.asyncio
+async def test_beantech_extended_controls_are_exact_and_unsupported_actions_fail_locally() -> None:
+    transport = _FakeTransport(
+        acquire_vehicles=[FIXTURE["responses"]["discovery"]],
+        send_vehicle_control_command=[
+            {"code": "000000", "data": {}} for _ in range(5)
         ],
-    }
-
-
-def test_beantech_timely_request_climate_stop_shape() -> None:
-    client = _client(_FakeTransport())
-    request = client._build_bean_tech_timely_request(
-        _complete_state(),
-        VehicleIdentifier(BEAN_VIN),
-        sequence_number="0" * 32 + "9359",
-        operation="send_climate_command",
-        control_type="AIR_CONDITIONER_STOP",
-        command_body=None,
-        security_token="JWT",
     )
-    assert request.url.endswith("/app-api/api/v3.0/vehicle/remote-ctrl/timely")
-    assert json.loads(request.body or b"null") == {
-        "vin": BEAN_VIN,
-        "seqNo": "0" * 32 + "9359",
-        "sendType": 0,
-        "commands": [{"controlType": "AIR_CONDITIONER_STOP"}],
-    }
-
-
-def test_beantech_result_request_uses_v3_endpoint_when_password_configured() -> None:
-    client = _client(_FakeTransport())
-    command_id = "0" * 32 + "9359"
-    request = client._build_bean_tech_result_request(
-        _complete_state(),
-        VehicleIdentifier(BEAN_VIN),
-        command_id,
+    client = _client(transport)
+    assert isinstance(
+        await client.authenticate(_credentials(), state=_complete_state()),
+        ChinaAuthenticated,
     )
-    assert "/app-api/api/v3.0/vehicle/remote-ctrl/result" in request.url
-    assert "msgType=remote" in request.url
-    assert BEAN_VIN in request.url
-    # The sign must use the canonical parameter (sorted, lowercased keys, no
-    # separators) exactly as the retired add-on's SendBeanTechGetAsync did.
+    identifier = VehicleIdentifier(BEAN_VIN)
+
+    for action in (
+        "remote_start",
+        "remote_stop",
+        "horn",
+        "flash_lights",
+        "sunroof_close",
+    ):
+        accepted = await client.send_vehicle_control_command(
+            ChinaVehicleControlCommand(
+                identifier,
+                action,  # type: ignore[arg-type]
+                10 if action == "remote_start" else None,
+            )
+        )
+        assert accepted.command_id == BEAN_COMMAND_ID
+
+    sends = [
+        json.loads(request.body or b"null")
+        for request in transport.calls
+        if request.operation == "send_vehicle_control_command"
+    ]
+    assert [body["commands"][0] for body in sends] == [
+        {"controlType": "ENGINE_START", "cmdBody": {"operationTime": 600}},
+        {"controlType": "ENGINE_STOP", "cmdBody": None},
+        {"controlType": "WHISTLE"},
+        {"controlType": "FLASH"},
+        {"controlType": "SKYLIGNT_CLOSE", "cmdBody": {"skyLight": 0}},
+    ]
+    requests = [request for request in transport.calls if request.operation == "send_vehicle_control_command"]
+    assert [urlsplit(request.url).path for request in requests] == [
+        "/app-api/api/v1.0/vehicle/T5/sendCmd",
+        "/app-api/api/v1.0/vehicle/T5/sendCmd",
+        "/app-api/api/v3.0/vehicle/remote-ctrl/timely",
+        "/app-api/api/v3.0/vehicle/remote-ctrl/timely",
+        "/app-api/api/v1.0/vehicle/T5/sendCmd",
+    ]
+    for index in (0, 1, 4):
+        assert list(sends[index]) == ["vin", "seqNo", "sendType", "commands", "isSaveConfig"]
+        assert sends[index]["isSaveConfig"] is None
+
+    before = len(transport.calls)
+    with pytest.raises(GwmRoutePolicyError):
+        await client.send_vehicle_control_command(
+            ChinaVehicleControlCommand(identifier, "tailgate_open")
+        )
+    assert len(transport.calls) == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action,control_type", [
+    ("horn", "WHISTLE"), ("flash_lights", "FLASH"), ("horn_and_lights", "WHISTLE_FLASH")
+])
+async def test_beantech_horn_lights_send_exact_pin_exempt_timely_request(
+    action: str, control_type: str,
+) -> None:
+    transport = _FakeTransport(
+        acquire_vehicles=[FIXTURE["responses"]["discovery"]],
+        send_vehicle_control_command=[{"code": "000000"}],
+    )
+    client = _client(transport)
+    await client.authenticate(_credentials(), state=_complete_state())
+    accepted = await client.send_vehicle_control_command(
+        ChinaVehicleControlCommand(VehicleIdentifier(BEAN_VIN), action)  # type: ignore[arg-type]
+    )
+    request = transport.calls[-1]
+    expected_body = (
+        '{"vin":"' + BEAN_VIN + '","seqNo":"' + BEAN_COMMAND_ID
+        + '","sendType":0,"commands":[{"controlType":"' + control_type + '"}]}'
+    )
+    assert accepted.command_id == BEAN_COMMAND_ID
+    assert request.service == "bean_tech"
+    assert request.method == "POST"
+    assert request.url == "https://gw-app-gateway.gwmapp-h.com/app-api/api/v3.0/vehicle/remote-ctrl/timely"
+    assert request.body == expected_body.encode()
+    assert request.headers["vin"] == BEAN_VIN
+    assert "securityToken" not in request.headers
     assert request.headers["bt-auth-sign"] == bean_tech_sign(
-        "GET",
-        "/app-api/api/v3.0/vehicle/remote-ctrl/result",
-        request.headers["bt-auth-nonce"],
-        request.headers["bt-auth-timestamp"],
-        "msgtype=remote" + "seqno=" + command_id + "vin=" + BEAN_VIN,
+        "POST", "/app-api/api/v3.0/vehicle/remote-ctrl/timely",
+        FIXTURE["nonce"], request.headers["bt-auth-timestamp"], "json=" + expected_body,
     )
+    assert len(transport.calls) == 2
+
+
+def _horn_request() -> _ChinaTransportRequest:
+    return _client(_FakeTransport())._build_bean_tech_command_request(
+        _complete_state(), VehicleIdentifier(BEAN_VIN), sequence_number=BEAN_COMMAND_ID,
+        operation="send_vehicle_control_command", control_type="WHISTLE", command_body=None,
+    )
+
+
+@pytest.mark.parametrize("mutation", [
+    "service", "method", "host", "path", "operation", "token", "signature", "header",
+    "missing_body", "invalid_json", "list_body", "vin", "sequence", "sequence_type",
+    "send_type", "boolean_send_type", "float_send_type", "extra_key", "missing_key",
+    "command_body", "security_command", "climate_command", "multiple_commands", "format",
+    "content_type", "auth_header",
+])
+def test_beantech_horn_transport_rejects_unapproved_routes_and_payloads(mutation: str) -> None:
+    request = _horn_request()
+    headers = dict(request.headers)
+    body = json.loads(request.body or b"null")
+    changes: dict[str, Any] = {}
+    if mutation == "service":
+        changes["service"] = "auto_ai"
+    elif mutation == "method":
+        changes["method"] = "GET"
+    elif mutation == "host":
+        changes["url"] = request.url.replace("gw-app-gateway.gwmapp-h.com", "example.invalid")
+    elif mutation == "path":
+        changes["url"] = request.url + "/unexpected"
+    elif mutation == "operation":
+        changes["operation"] = "send_lock_command"
+    elif mutation == "token":
+        headers["securityToken"] = SENSITIVE
+    elif mutation == "signature":
+        headers["bt-auth-sign"] = "0" * 32
+    elif mutation == "header":
+        headers["Unexpected"] = "value"
+    elif mutation == "content_type":
+        headers["Content-Type"] = "text/plain"
+    elif mutation == "auth_header":
+        headers["rs"] = "9"
+    elif mutation == "missing_body":
+        changes["body"] = None
+    elif mutation == "invalid_json":
+        changes["body"] = b"{"
+    elif mutation == "list_body":
+        changes["body"] = b"[]"
+    elif mutation == "format":
+        changes["body"] = json.dumps(body, indent=2).encode()
+    else:
+        if mutation == "vin":
+            body["vin"] = VIN
+        elif mutation == "sequence":
+            body["seqNo"] = "invalid"
+        elif mutation == "sequence_type":
+            body["seqNo"] = 123
+        elif mutation == "send_type":
+            body["sendType"] = 1
+        elif mutation == "boolean_send_type":
+            body["sendType"] = False
+        elif mutation == "float_send_type":
+            body["sendType"] = 0.0
+        elif mutation == "extra_key":
+            body["isSaveConfig"] = None
+        elif mutation == "missing_key":
+            del body["sendType"]
+        elif mutation == "command_body":
+            body["commands"][0]["cmdBody"] = None
+        elif mutation == "security_command":
+            body["commands"] = [{"controlType": "VEHICLE_UNLOCK"}]
+        elif mutation == "climate_command":
+            body["commands"] = [{"controlType": "AIR_CONDITIONER_START"}]
+        elif mutation == "multiple_commands":
+            body["commands"].append({"controlType": "FLASH"})
+        changes["body"] = json.dumps(body, separators=(",", ":")).encode()
+    # Re-sign mutated bodies so schema checks cannot pass merely because the
+    # original signature no longer matches.
+    if changes.get("body") is not None:
+        headers["bt-auth-sign"] = bean_tech_sign(
+            "POST", "/app-api/api/v3.0/vehicle/remote-ctrl/timely",
+            headers["bt-auth-nonce"], headers["bt-auth-timestamp"],
+            "json=" + changes["body"].decode(),
+        )
+    with pytest.raises(ValueError):
+        replace(request, headers=headers, **changes)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code,expected", [(2, "pending"), ("2", "pending"), (3.0, "pending"),
+    ("3", "pending"), (0, "completed"), ("0", "completed"), (6, "completed"), (7, "failed")])
+@pytest.mark.parametrize("shape", ["object", "json", "inline"])
+async def test_beantech_horn_results_map_pending_success_and_failure(
+    code: object, expected: str, shape: str,
+) -> None:
+    data = {"resultCode": code, "resultMessage": "Synthetic result", "transactionId": "server-generated-id"}
+    message = data if shape == "inline" else {
+        "messageType": "remote", "messageData": json.dumps(data) if shape == "json" else data,
+    }
+    transport = _FakeTransport(
+        acquire_vehicles=[FIXTURE["responses"]["discovery"]],
+        get_remote_command_result=[{"code": "000000", "data": {"messageList": [message]}}],
+    )
+    # A fresh client has no in-memory knowledge of the original submission.
+    client = _client(transport)
+    await client.authenticate(_credentials(), state=_complete_state())
+    results = await client.get_remote_command_results(
+        VehicleIdentifier(BEAN_VIN), BEAN_COMMAND_ID, control_action="horn",
+    )
+    assert results == (RemoteCommandResultItem(
+        BEAN_COMMAND_ID, None if shape == "inline" else "remote",
+        "2000" if expected == "pending" else str(code), "Synthetic result",
+    ),)
+    result = select_remote_command_result(results, command_id=BEAN_COMMAND_ID, region=None, expected_remote_type="china")
+    assert result is not None and result.state == expected
+    request = transport.calls[-1]
+    assert request.url == (
+        "https://gw-app-gateway.gwmapp-h.com/app-api/api/v3.0/vehicle/remote-ctrl/result"
+        + "?seqNo=" + BEAN_COMMAND_ID + "&vin=" + BEAN_VIN + "&msgType=remote"
+    )
+    assert request.headers["bt-auth-sign"] == bean_tech_sign(
+        "GET", "/app-api/api/v3.0/vehicle/remote-ctrl/result", FIXTURE["nonce"],
+        request.headers["bt-auth-timestamp"], "msgtype=remote" + "seqno=" + BEAN_COMMAND_ID + "vin=" + BEAN_VIN,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("data", [
+    {}, {"messageList": None}, {"messageList": []},
+    {"messageList": [None, {}, {"messageData": " "}, {"messageData": []}, {"messageData": "null"},
+        {"messageData": {"resultCode": ""}}, {"messageData": {"resultCode": None}}]},
+], ids=["absent", "null", "empty", "incomplete_messages"])
+async def test_beantech_horn_incomplete_results_keep_polling(data: object) -> None:
+    transport = _FakeTransport(
+        acquire_vehicles=[FIXTURE["responses"]["discovery"]],
+        get_remote_command_result=[{"code": "000000", "data": data}],
+    )
+    client = _client(transport)
+    await client.authenticate(_credentials(), state=_complete_state())
+    assert await client.get_remote_command_results(
+        VehicleIdentifier(BEAN_VIN), BEAN_COMMAND_ID, control_action="flash_lights",
+    ) == ()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("data", [
+    [], "invalid", {"messageList": {}}, {"messageList": "invalid"},
+    {"messageList": [{"messageData": "{"}]},
+    *({"messageList": [{"messageData": {"resultCode": code}}]} for code in (True, [], {})),
+], ids=["list_root", "string_root", "object_messages", "string_messages", "broken_json", "bool_code", "list_code", "object_code"])
+async def test_beantech_horn_malformed_results_raise_typed_errors(data: object) -> None:
+    transport = _FakeTransport(
+        acquire_vehicles=[FIXTURE["responses"]["discovery"]],
+        get_remote_command_result=[{"code": "000000", "data": data}],
+    )
+    client = _client(transport)
+    await client.authenticate(_credentials(), state=_complete_state())
+    with pytest.raises(GwmSchemaError):
+        await client.get_remote_command_results(
+            VehicleIdentifier(BEAN_VIN), BEAN_COMMAND_ID, control_action="horn_and_lights",
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["unknown", "", True, [], 123])
+async def test_invalid_result_action_is_rejected_before_transport(action: Any) -> None:
+    transport = _FakeTransport()
+    with pytest.raises(GwmConfigurationError):
+        await _client(transport).get_remote_command_results(
+            VehicleIdentifier(BEAN_VIN), BEAN_COMMAND_ID, control_action=action,
+        )
+    assert transport.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error", [
+    {"code": "551210"}, {"code": "607777"}, GwmNetworkError(operation="send_vehicle_control_command"),
+], ids=["busy", "rejected", "network"])
+async def test_beantech_horn_send_is_not_retried_or_rerouted(error: object) -> None:
+    transport = _FakeTransport(
+        acquire_vehicles=[FIXTURE["responses"]["discovery"]], send_vehicle_control_command=[error],
+    )
+    client = _client(transport)
+    await client.authenticate(_credentials(), state=_complete_state())
+    with pytest.raises(GwmClientError):
+        await client.send_vehicle_control_command(ChinaVehicleControlCommand(VehicleIdentifier(BEAN_VIN), "horn"))
+    assert len(transport.calls) == 2
+    assert transport.calls[-1].url.endswith("/remote-ctrl/timely")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("response", [{}, {"code": None}, {"code": True}, {"code": []}, {"code": {}}])
+async def test_beantech_horn_requires_an_explicit_acceptance_code(response: object) -> None:
+    transport = _FakeTransport(
+        acquire_vehicles=[FIXTURE["responses"]["discovery"]], send_vehicle_control_command=[response],
+    )
+    client = _client(transport)
+    await client.authenticate(_credentials(), state=_complete_state())
+    with pytest.raises(GwmSchemaError):
+        await client.send_vehicle_control_command(ChinaVehicleControlCommand(VehicleIdentifier(BEAN_VIN), "horn"))
+    assert len(transport.calls) == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("vin", [UNSUPPORTED_VIN, "LGWTEST0000000099"])
+@pytest.mark.parametrize("action", ["horn", "flash_lights", "horn_and_lights"])
+async def test_horn_lights_reject_unknown_vehicle_or_platform_locally(vin: str, action: Any) -> None:
+    transport = _FakeTransport(acquire_vehicles=[FIXTURE["responses"]["discovery"]])
+    client = _client(transport)
+    await client.authenticate(_credentials(), state=_complete_state())
+    with pytest.raises(GwmRoutePolicyError):
+        await client.send_vehicle_control_command(ChinaVehicleControlCommand(VehicleIdentifier(vin), action))
+    with pytest.raises(GwmRoutePolicyError):
+        await client.get_remote_command_results(VehicleIdentifier(vin), BEAN_COMMAND_ID, control_action=action)
+    assert len(transport.calls) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["horn", "flash_lights", "horn_and_lights"])
+async def test_navinfo_horn_result_correlation_is_unchanged(action: Any) -> None:
+    transport = _FakeTransport(
+        acquire_vehicles=[FIXTURE["responses"]["discovery"]],
+        get_remote_command_result=[{"code": "000000", "data": {"messageList": [
+            {"messageData": {"transactionId": "other-command", "resultCode": "0"}},
+            {"messageData": {"transactionId": "TX-HORN", "resultCode": "2"}},
+        ]}}],
+    )
+    client = _client(transport)
+    await client.authenticate(_credentials(), state=_complete_state())
+    results = await client.get_remote_command_results(VehicleIdentifier(VIN), "TX-HORN", control_action=action)
+    assert len(results) == 1
+    assert results[0].command_id == "TX-HORN"
+    assert results[0].result_code == "2000"
 
 
 @pytest.mark.asyncio
@@ -1586,13 +1892,14 @@ async def test_invalid_auth_timeout_and_code_fail_without_http() -> None:
 
 
 @pytest.mark.asyncio
-async def test_beantech_seat_heating_start_and_stop_cmdbody_exact() -> None:
+async def test_beantech_climate_start_and_stop_use_timely_without_token() -> None:
     transport = _FakeTransport(
         acquire_vehicles=[FIXTURE["responses"]["discovery"]],
-        send_vehicle_control_command=[
+        send_climate_command=[
             {"code": "000000", "data": {}},
             {"code": "000000", "data": {}},
         ],
+        set_bean_tech_ac_temperature=[{"code": "000000", "data": {}}],
     )
     client = _client(transport)
     assert isinstance(
@@ -1601,186 +1908,34 @@ async def test_beantech_seat_heating_start_and_stop_cmdbody_exact() -> None:
     )
     identifier = VehicleIdentifier(BEAN_VIN)
 
-    await client.send_vehicle_control_command(
-        ChinaVehicleControlCommand(identifier, "seat_heating_start")
+    started = await client.send_climate_command(
+        ClimateCommand(identifier, "auto", 22, 15)
     )
-    await client.send_vehicle_control_command(
-        ChinaVehicleControlCommand(identifier, "seat_heating_stop")
+    stopped = await client.send_climate_command(
+        ClimateCommand(identifier, "off", 22, 15)
     )
 
+    assert started.command_id == stopped.command_id == BEAN_COMMAND_ID
     sends = [
         json.loads(request.body or b"null")
         for request in transport.calls
-        if request.operation == "send_vehicle_control_command"
+        if request.operation == "send_climate_command"
     ]
-    assert [body["commands"][0] for body in sends] == [
+    assert sends[0]["commands"] == [
         {
-            "controlType": "SEAT_HEATING_START",
-            "cmdBody": {"leftFront": 3, "operationTime": 600},
-        },
-        {
-            "controlType": "SEAT_HEATING_STOP",
-            "cmdBody": {"leftFront": 0, "operationMode": 1},
-        },
+            "controlType": "AIR_CONDITIONER_START",
+            "cmdBody": {
+                "allowStartEng": 1,
+                "operationTime": 900,
+                "temperature": 22,
+            },
+        }
     ]
-    assert not any(
-        call.operation == "generate_security_token" for call in transport.calls
-    )
-
-
-@pytest.mark.asyncio
-async def test_beantech_seat_heating_passenger_cmdbody_exact() -> None:
-    transport = _FakeTransport(
-        acquire_vehicles=[FIXTURE["responses"]["discovery"]],
-        send_vehicle_control_command=[
-            {"code": "000000", "data": {}},
-            {"code": "000000", "data": {}},
-        ],
-    )
-    client = _client(transport)
-    assert isinstance(
-        await client.authenticate(_credentials(), state=_complete_state()),
-        ChinaAuthenticated,
-    )
-    identifier = VehicleIdentifier(BEAN_VIN)
-
-    await client.send_vehicle_control_command(
-        ChinaVehicleControlCommand(identifier, "seat_heating_start_passenger")
-    )
-    await client.send_vehicle_control_command(
-        ChinaVehicleControlCommand(identifier, "seat_heating_stop_passenger")
-    )
-
-    sends = [
-        json.loads(request.body or b"null")
-        for request in transport.calls
-        if request.operation == "send_vehicle_control_command"
-    ]
-    assert [body["commands"][0] for body in sends] == [
-        {
-            "controlType": "SEAT_HEATING_START",
-            "cmdBody": {"rightFront": 3, "operationTime": 600},
-        },
-        {
-            "controlType": "SEAT_HEATING_STOP",
-            "cmdBody": {"rightFront": 0, "operationMode": 1},
-        },
-    ]
-    assert not any(
-        call.operation == "generate_security_token" for call in transport.calls
-    )
-
-
-@pytest.mark.asyncio
-async def test_beantech_seat_ventilation_cmdbody_exact() -> None:
-    transport = _FakeTransport(
-        acquire_vehicles=[FIXTURE["responses"]["discovery"]],
-        send_vehicle_control_command=[
-            {"code": "000000", "data": {}},
-            {"code": "000000", "data": {}},
-        ],
-    )
-    client = _client(transport)
-    assert isinstance(
-        await client.authenticate(_credentials(), state=_complete_state()),
-        ChinaAuthenticated,
-    )
-    identifier = VehicleIdentifier(BEAN_VIN)
-
-    await client.send_vehicle_control_command(
-        ChinaVehicleControlCommand(identifier, "seat_ventilation_start")
-    )
-    await client.send_vehicle_control_command(
-        ChinaVehicleControlCommand(identifier, "seat_ventilation_stop")
-    )
-
-    sends = [
-        json.loads(request.body or b"null")
-        for request in transport.calls
-        if request.operation == "send_vehicle_control_command"
-    ]
-    assert [body["commands"][0] for body in sends] == [
-        {
-            "controlType": "SEAT_VENTILATION_START",
-            "cmdBody": {"leftFront": 3, "operationTime": 600},
-        },
-        {
-            "controlType": "SEAT_VENTILATION_STOP",
-            "cmdBody": {"leftFront": 0, "operationMode": 2},
-        },
-    ]
-    assert not any(
-        call.operation == "generate_security_token" for call in transport.calls
-    )
-
-
-@pytest.mark.asyncio
-async def test_beantech_seat_ventilation_passenger_cmdbody_exact() -> None:
-    transport = _FakeTransport(
-        acquire_vehicles=[FIXTURE["responses"]["discovery"]],
-        send_vehicle_control_command=[
-            {"code": "000000", "data": {}},
-            {"code": "000000", "data": {}},
-        ],
-    )
-    client = _client(transport)
-    assert isinstance(
-        await client.authenticate(_credentials(), state=_complete_state()),
-        ChinaAuthenticated,
-    )
-    identifier = VehicleIdentifier(BEAN_VIN)
-
-    await client.send_vehicle_control_command(
-        ChinaVehicleControlCommand(identifier, "seat_ventilation_start_passenger")
-    )
-    await client.send_vehicle_control_command(
-        ChinaVehicleControlCommand(identifier, "seat_ventilation_stop_passenger")
-    )
-
-    sends = [
-        json.loads(request.body or b"null")
-        for request in transport.calls
-        if request.operation == "send_vehicle_control_command"
-    ]
-    assert [body["commands"][0] for body in sends] == [
-        {
-            "controlType": "SEAT_VENTILATION_START",
-            "cmdBody": {"rightFront": 3, "operationTime": 600},
-        },
-        {
-            "controlType": "SEAT_VENTILATION_STOP",
-            "cmdBody": {"rightFront": 0, "operationMode": 2},
-        },
-    ]
-    assert not any(
-        call.operation == "generate_security_token" for call in transport.calls
-    )
-
-
-@pytest.mark.asyncio
-async def test_beantech_cabin_clean_cmdbody_exact() -> None:
-    transport = _FakeTransport(
-        acquire_vehicles=[FIXTURE["responses"]["discovery"]],
-        send_vehicle_control_command=[{"code": "000000", "data": {}}],
-    )
-    client = _client(transport)
-    assert isinstance(
-        await client.authenticate(_credentials(), state=_complete_state()),
-        ChinaAuthenticated,
-    )
-    await client.send_vehicle_control_command(
-        ChinaVehicleControlCommand(VehicleIdentifier(BEAN_VIN), "cabin_clean")
-    )
-
-    sends = [
-        json.loads(request.body or b"null")
-        for request in transport.calls
-        if request.operation == "send_vehicle_control_command"
-    ]
-    assert sends[0]["commands"][0] == {
-        "controlType": "CABIN_CLEANING_START",
-        "cmdBody": {"operationTime": 60},
-    }
+    assert sends[1]["commands"] == [{"controlType": "AIR_CONDITIONER_STOP"}]
+    for request in transport.calls:
+        if request.operation == "send_climate_command":
+            assert request.url.endswith("/app-api/api/v3.0/vehicle/remote-ctrl/timely")
+            assert "securityToken" not in request.headers
     assert not any(
         call.operation == "generate_security_token" for call in transport.calls
     )
@@ -1959,3 +2114,423 @@ async def test_beantech_cabin_clean_appointment_read_returns_none_when_unset() -
     )
 
 
+_COMFORT_CONTRACTS = (
+    ("seat_heating_start", "SEAT_HEATING_START", {"leftFront": 3, "operationTime": 600}),
+    ("seat_heating_stop", "SEAT_HEATING_STOP", {"leftFront": 0, "operationMode": 1}),
+    ("seat_heating_start_passenger", "SEAT_HEATING_START", {"rightFront": 3, "operationTime": 600}),
+    ("seat_heating_stop_passenger", "SEAT_HEATING_STOP", {"rightFront": 0, "operationMode": 1}),
+    ("seat_ventilation_start", "SEAT_VENTILATION_START", {"leftFront": 3, "operationTime": 600}),
+    ("seat_ventilation_stop", "SEAT_VENTILATION_STOP", {"leftFront": 0, "operationMode": 2}),
+    ("seat_ventilation_start_passenger", "SEAT_VENTILATION_START", {"rightFront": 3, "operationTime": 600}),
+    ("seat_ventilation_stop_passenger", "SEAT_VENTILATION_STOP", {"rightFront": 0, "operationMode": 2}),
+    ("steering_wheel_heating", "STEERING_WHEEL_HEATING", {"operationTime": 600}),
+    ("steering_wheel_heatless", "STEERING_WHEEL_HEATLESS", None),
+    ("defrost_front_start", "DEFROST_FRONT_START", {"operationTime": 900}),
+    ("defrost_front_stop", "DEFROST_FRONT_STOP", None),
+    ("defrost_back_start", "DEFROST_BACK_START", {"operationTime": 900}),
+    ("defrost_back_stop", "DEFROST_BACK_STOP", None),
+    ("cabin_clean", "CABIN_CLEANING_START", {"operationTime": 60}),
+)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action,control_type,command_body", _COMFORT_CONTRACTS)
+async def test_beantech_comfort_captured_payloads_and_navinfo_isolation(
+    action: str, control_type: str, command_body: object,
+) -> None:
+    transport = _FakeTransport(
+        acquire_vehicles=[FIXTURE["responses"]["discovery"]],
+        send_vehicle_control_command=[{"code": "000000"}],
+    )
+    client = _client(transport)
+    await client.authenticate(_credentials(), state=_complete_state())
+    acceptance = await client.send_vehicle_control_command(
+        ChinaVehicleControlCommand(VehicleIdentifier(BEAN_VIN), action)  # type: ignore[arg-type]
+    )
+    assert acceptance.command_id == BEAN_COMMAND_ID
+    request = transport.calls[-1]
+    command = {"controlType": control_type}
+    if command_body is not None:
+        command["cmdBody"] = command_body
+    assert json.loads(request.body) == {
+        "vin": BEAN_VIN, "seqNo": BEAN_COMMAND_ID, "sendType": 0, "commands": [command],
+    }
+    assert request.url == "https://gw-app-gateway.gwmapp-h.com/app-api/api/v3.0/vehicle/remote-ctrl/timely"
+    assert "securityToken" not in request.headers
+    assert request.headers["bt-auth-sign"] == bean_tech_sign(
+        "POST", urlsplit(request.url).path, FIXTURE["nonce"], request.headers["bt-auth-timestamp"],
+        "json=" + request.body.decode(),
+    )
+    before = len(transport.calls)
+    for vin in (VIN, UNSUPPORTED_VIN):
+        with pytest.raises(GwmRoutePolicyError):
+            await client.send_vehicle_control_command(
+                ChinaVehicleControlCommand(VehicleIdentifier(vin), action)  # type: ignore[arg-type]
+            )
+    assert len(transport.calls) == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("minutes,temperature", [(5, 17), (6, 22), (30, 31)])
+async def test_beantech_climate_companion_config_preserves_units(minutes: int, temperature: int) -> None:
+    transport = _FakeTransport(
+        acquire_vehicles=[FIXTURE["responses"]["discovery"]],
+        send_climate_command=[{"code": "000000"}],
+        set_bean_tech_ac_temperature=[{"code": "000000"}],
+    )
+    client = _client(transport)
+    await client.authenticate(_credentials(), state=_complete_state())
+    accepted = await client.send_climate_command(ClimateCommand(VehicleIdentifier(BEAN_VIN), "auto", temperature, minutes))
+    assert accepted.command_id == BEAN_COMMAND_ID
+    control = {"controlType": "AIR_CONDITIONER_START", "cmdBody": {
+        "allowStartEng": 1, "operationTime": minutes * 60, "temperature": temperature,
+    }}
+    send, config = transport.calls[-2:]
+    assert json.loads(send.body)["commands"] == [control]
+    assert json.loads(config.body) == {"configs": [control], "vin": BEAN_VIN}
+    assert config.url.endswith("/remote-ctrl/config")
+    assert config.headers["bt-auth-sign"] == bean_tech_sign(
+        "POST", urlsplit(config.url).path, FIXTURE["nonce"], config.headers["bt-auth-timestamp"],
+        "json=" + config.body.decode(),
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", [GwmNetworkError(), GwmAuthenticationError(), {"code": "551210"}, {}])
+async def test_beantech_climate_companion_failure_retains_accepted_command(failure: object, caplog) -> None:
+    transport = _FakeTransport(
+        acquire_vehicles=[FIXTURE["responses"]["discovery"]],
+        send_climate_command=[{"code": "000000"}], set_bean_tech_ac_temperature=[failure],
+    )
+    client = _client(transport)
+    await client.authenticate(_credentials(), state=_complete_state())
+    result = await client.send_climate_command(ClimateCommand(VehicleIdentifier(BEAN_VIN), "auto", 22, 15))
+    assert result.command_id == BEAN_COMMAND_ID
+    assert Counter(call.operation for call in transport.calls)["send_climate_command"] == 1
+    assert "was accepted" in caplog.text
+    assert BEAN_VIN not in caplog.text
+    assert BEAN_COMMAND_ID not in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode_type,expected_id,expected_type", [("warm", "123", "1"), ("cool", "456", "2"), ("common", "456", "2")])
+async def test_beantech_comfort_modes_normalize_and_send_dynamic_selection(mode_type, expected_id, expected_type) -> None:
+    modes = [{"modeId": 123, "type": 1, "commonUseMode": "0"}, {"modeId": "456", "type": "2", "commonUseMode": 1}]
+    transport = _FakeTransport(
+        acquire_vehicles=[FIXTURE["responses"]["discovery"]],
+        get_bean_tech_comfort_modes=[{"code": "000000", "data": modes}] * 2,
+        set_bean_tech_comfort_mode=[{"code": "000000"}],
+    )
+    client = _client(transport)
+    await client.authenticate(_credentials(), state=_complete_state())
+    identifier = VehicleIdentifier(BEAN_VIN)
+    assert await client.get_bean_tech_comfort_modes(identifier) == (
+        {"modeId": "123", "type": "1", "commonUseMode": 0},
+        {"modeId": "456", "type": "2", "commonUseMode": 1},
+    )
+    command_id = await client.set_bean_tech_comfort_mode(identifier, mode_type=mode_type)
+    assert command_id == BEAN_COMMAND_ID
+    request = transport.calls[-1]
+    assert json.loads(request.body) == {
+        "vin": BEAN_VIN, "seqNo": BEAN_COMMAND_ID, "sendType": 0,
+        "commands": [{"controlType": "COMFORT_MODE_CTRL", "cmdBody": {
+            "action": 1, "modeId": expected_id, "type": expected_type,
+        }}],
+    }
+    assert "securityToken" not in request.headers
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field,value", [
+    ("modeId", None), ("modeId", ""), ("modeId", " "), ("modeId", True), ("modeId", 0),
+    ("modeId", 1.0), ("modeId", []), ("modeId", "private\nvalue"),
+    pytest.param("modeId", "x" * 129, id="oversized-mode-id"),
+    ("type", None), ("type", 0), ("type", 3), ("type", True), ("type", 1.0), ("type", []),
+    ("commonUseMode", None), ("commonUseMode", 2), ("commonUseMode", True), ("commonUseMode", 1.0), ("commonUseMode", []),
+])
+async def test_beantech_comfort_mode_schema_rejects_before_command(field, value) -> None:
+    mode = {"modeId": "123", "type": "1", "commonUseMode": 1, field: value}
+    transport = _FakeTransport(acquire_vehicles=[FIXTURE["responses"]["discovery"]], get_bean_tech_comfort_modes=[{"code": "000000", "data": [mode]}])
+    client = _client(transport)
+    await client.authenticate(_credentials(), state=_complete_state())
+    with pytest.raises(GwmSchemaError):
+        await client.set_bean_tech_comfort_mode(VehicleIdentifier(BEAN_VIN), mode_type="common")
+    assert not any(call.operation == "set_bean_tech_comfort_mode" for call in transport.calls)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("data", [None, {}, "bad", [None], [{"time": True}], [{"time": 0}], [{"time": -1}], [{"time": 1.5}], [{"time": "1735689600000"}], [{"time": 253402214399001}]])
+async def test_beantech_appointment_read_rejects_malformed_data(data: object) -> None:
+    transport = _FakeTransport(acquire_vehicles=[FIXTURE["responses"]["discovery"]], get_bean_tech_cabin_clean_appointment=[{"code": "000000", "data": data}])
+    client = _client(transport)
+    await client.authenticate(_credentials(), state=_complete_state())
+    with pytest.raises(GwmSchemaError):
+        await client.get_bean_tech_cabin_clean_appointment(VehicleIdentifier(BEAN_VIN))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("value", [None, True, 0, -1, "1735689600000", 1.5, [], 253402214399001])
+async def test_beantech_appointment_rejects_invalid_timestamp_before_io(value: object) -> None:
+    transport = _FakeTransport()
+    client = _client(transport)
+    with pytest.raises(GwmConfigurationError):
+        await client.set_bean_tech_cabin_clean_appointment(VehicleIdentifier(BEAN_VIN), time_ms=value)  # type: ignore[arg-type]
+    assert transport.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("value", [None, True, "", "invalid", []])
+async def test_beantech_comfort_rejects_invalid_mode_before_io(value: object) -> None:
+    transport = _FakeTransport()
+    client = _client(transport)
+    with pytest.raises(GwmConfigurationError):
+        await client.set_bean_tech_comfort_mode(VehicleIdentifier(BEAN_VIN), mode_type=value)  # type: ignore[arg-type]
+    assert transport.calls == []
+
+
+async def _submit_beantech_feature(client: ChinaClient, feature: str, vin: str = BEAN_VIN):
+    identifier = VehicleIdentifier(vin)
+    if feature == "climate":
+        return await client.send_climate_command(ClimateCommand(identifier, "off", 22, 15))
+    if feature == "comfort_mode":
+        return await client.set_bean_tech_comfort_mode(identifier, mode_type="warm")
+    if feature == "appointment":
+        return await client.set_bean_tech_cabin_clean_appointment(identifier, time_ms=1735689600000)
+    return await client.send_vehicle_control_command(ChinaVehicleControlCommand(identifier, "comfort_off"))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("feature,operation", [("climate", "send_climate_command"), ("comfort_mode", "set_bean_tech_comfort_mode"), ("appointment", "set_bean_tech_cabin_clean_appointment"), ("comfort_off", "send_vehicle_control_command")])
+@pytest.mark.parametrize("failure", [{}, {"data": {}}, {"code": None}, {"code": "551210"}, GwmNetworkError(), GwmRateLimitError()])
+async def test_beantech_new_submissions_require_acceptance_and_never_retry(feature, operation, failure) -> None:
+    transport = _FakeTransport(acquire_vehicles=[FIXTURE["responses"]["discovery"]], get_bean_tech_comfort_modes=[{"code": "000000", "data": [{"modeId": "123", "type": "1"}]}], **{operation: [failure]})
+    client = _client(transport)
+    await client.authenticate(_credentials(), state=_complete_state())
+    with pytest.raises(GwmClientError):
+        await _submit_beantech_feature(client, feature)
+    assert Counter(call.operation for call in transport.calls)[operation] == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("feature", ["comfort_mode", "appointment", "comfort_off"])
+@pytest.mark.parametrize("vin", [VIN, UNSUPPORTED_VIN])
+async def test_beantech_new_writes_reject_other_platforms_before_transport(feature: str, vin: str) -> None:
+    transport = _FakeTransport(acquire_vehicles=[FIXTURE["responses"]["discovery"]])
+    client = _client(transport)
+    await client.authenticate(_credentials(), state=_complete_state())
+    before = len(transport.calls)
+    with pytest.raises(GwmRoutePolicyError):
+        await _submit_beantech_feature(client, feature, vin)
+    assert len(transport.calls) == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["climate", "comfort_mode", "comfort_off"] + [row[0] for row in _COMFORT_CONTRACTS])
+@pytest.mark.parametrize("code,state", [(2, "pending"), (3, "pending"), (0, "completed"), (7, "failed")])
+async def test_beantech_new_actions_use_timely_result_semantics(action, code, state) -> None:
+    transport = _FakeTransport(acquire_vehicles=[FIXTURE["responses"]["discovery"]], get_remote_command_result=[{"code": "000000", "data": {"messageList": [{"messageType": "remote", "messageData": {"transactionId": "provider-internal", "resultCode": code}}]}}])
+    client = _client(transport)
+    await client.authenticate(_credentials(), state=_complete_state())
+    results = await client.get_remote_command_results(VehicleIdentifier(BEAN_VIN), BEAN_COMMAND_ID, control_action=action)
+    assert results == (RemoteCommandResultItem(BEAN_COMMAND_ID, "remote", "2000" if code in {2, 3} else str(code), None),)
+    assert select_remote_command_result(results, command_id=BEAN_COMMAND_ID, region=None).state == state
+    assert urlsplit(transport.calls[-1].url).path == "/app-api/api/v3.0/vehicle/remote-ctrl/result"
+
+
+def _beantech_feature_request(kind):
+    client = _client(_FakeTransport())
+    state, identifier = _complete_state(), VehicleIdentifier(BEAN_VIN)
+    if kind == "config":
+        return client._build_bean_tech_config_request(state, identifier, temperature=22, operation_time_minutes=15)
+    if kind == "subscribe":
+        return client._build_bean_tech_subscribe_request(state, identifier, time_ms=1735689600000)
+    if kind == "subscribe_get":
+        return client._build_bean_tech_subscribe_get_request(state, identifier)
+    if kind == "comfort_get":
+        return client._build_bean_tech_simple_get_request(state, identifier, operation="get_bean_tech_comfort_modes", path="/app-api/api/v3.0/vehicle/one-touch/mode", url="https://gw-app-gateway.gwmapp-h.com/app-api/api/v3.0/vehicle/one-touch/mode")
+    commands = {
+        "climate": [("AIR_CONDITIONER_START", {"allowStartEng": 1, "operationTime": 900, "temperature": 22})],
+        "climate_stop": [("AIR_CONDITIONER_STOP", None)],
+        "seat": [("SEAT_HEATING_STOP", {"leftFront": 0, "operationMode": 1})],
+        "comfort_mode": [("COMFORT_MODE_CTRL", {"action": 1, "modeId": "123", "type": "1"})],
+        "comfort_off": [
+            ("AIR_CONDITIONER_STOP", None),
+            ("SEAT_HEATING_STOP", {"leftFront": 0, "operationMode": 1, "rightFront": 0}),
+            ("SEAT_VENTILATION_STOP", {"leftFront": 0, "operationMode": 2, "rightFront": 0}),
+            ("STEERING_WHEEL_HEATLESS", None),
+        ],
+    }[kind]
+    return client._build_bean_tech_timely_request_for_commands(
+        state, identifier, sequence_number=BEAN_COMMAND_ID,
+        operation="send_climate_command" if kind.startswith("climate") else "set_bean_tech_comfort_mode" if kind == "comfort_mode" else "send_vehicle_control_command",
+        commands=commands, send_type=1 if kind == "comfort_off" else 0,
+    )
+
+
+@pytest.mark.parametrize("kind", ["climate", "climate_stop", "seat", "comfort_mode", "comfort_off", "config", "subscribe", "subscribe_get", "comfort_get"])
+@pytest.mark.parametrize("mutation", ["host", "path", "method", "service", "operation", "token", "signature", "content_type", "vin_header"])
+def test_beantech_new_routes_reject_wrong_destinations_and_headers(kind, mutation):
+    request = _beantech_feature_request(kind)
+    headers, changes = dict(request.headers), {}
+    if mutation == "host":
+        changes["url"] = request.url.replace("gw-app-gateway.gwmapp-h.com", "example.invalid")
+    elif mutation == "path":
+        changes["url"] = request.url + "/unexpected"
+    elif mutation == "method":
+        changes["method"] = "POST" if request.method == "GET" else "GET"
+    elif mutation == "service":
+        changes["service"] = "auto_ai"
+    elif mutation == "operation":
+        changes["operation"] = "send_lock_command"
+    elif mutation == "token":
+        headers["securityToken"] = SENSITIVE
+    elif mutation == "signature":
+        headers["bt-auth-sign"] = "0" * 32
+    elif mutation == "content_type":
+        headers["Content-Type"] = "text/plain"
+    else:
+        headers["vin"] = VIN
+    with pytest.raises(ValueError, match="route_invalid"):
+        replace(request, headers=headers, **changes)
+
+
+@pytest.mark.parametrize("kind", ["climate", "climate_stop", "seat", "comfort_mode", "comfort_off", "config", "subscribe"])
+@pytest.mark.parametrize("mutation", ["list", "null", "malformed", "missing", "extra", "wrong_vin", "boolean", "command", "command_body"])
+def test_beantech_new_post_schemas_reject_resigned_malformed_payloads(kind, mutation):
+    request = _beantech_feature_request(kind)
+    headers = dict(request.headers)
+    body = json.loads(request.body)
+    if mutation == "list":
+        raw = b"[]"
+    elif mutation == "null":
+        raw = b"null"
+    elif mutation == "malformed":
+        raw = b"{"
+    else:
+        if mutation == "missing":
+            body.pop(next(iter(body)))
+        elif mutation == "extra":
+            body["isSaveConfig"] = None
+        elif mutation == "wrong_vin":
+            body["vin"] = VIN
+        elif mutation == "boolean":
+            if "sendType" in body:
+                body["sendType"] = bool(body["sendType"])
+            elif "subscribeType" in body:
+                body["subscribeType"] = False
+            else:
+                body["configs"][0]["cmdBody"]["allowStartEng"] = True
+        elif mutation == "command":
+            key = "configs" if kind == "config" else "commands"
+            body[key] = [{"controlType": "VEHICLE_UNLOCK"}]
+        else:
+            key = "configs" if kind == "config" else "commands"
+            body[key][0]["cmdBody"] = {"unexpected": 1}
+        raw = json.dumps(body, separators=(",", ":")).encode()
+    headers["bt-auth-sign"] = bean_tech_sign("POST", urlsplit(request.url).path, headers["bt-auth-nonce"], headers["bt-auth-timestamp"], "json=" + raw.decode())
+    with pytest.raises(ValueError, match="route_invalid"):
+        replace(request, body=raw, headers=headers)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("temperature", [16, 32])
+async def test_beantech_climate_rejects_out_of_range_temperature_before_send(temperature):
+    transport = _FakeTransport(acquire_vehicles=[FIXTURE["responses"]["discovery"]])
+    client = _client(transport)
+    await client.authenticate(_credentials(), state=_complete_state())
+    before = len(transport.calls)
+    with pytest.raises(GwmConfigurationError):
+        await client.send_climate_command(ClimateCommand(VehicleIdentifier(BEAN_VIN), "auto", temperature, 15))
+    assert len(transport.calls) == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method", ["get_bean_tech_comfort_modes", "get_bean_tech_cabin_clean_appointment"])
+async def test_beantech_new_reads_reject_bad_identifiers_and_other_platforms(method):
+    transport = _FakeTransport(acquire_vehicles=[FIXTURE["responses"]["discovery"]])
+    client = _client(transport)
+    with pytest.raises(GwmConfigurationError):
+        await getattr(client, method)(BEAN_VIN)
+    assert transport.calls == []
+    await client.authenticate(_credentials(), state=_complete_state())
+    before = len(transport.calls)
+    for vin in (VIN, UNSUPPORTED_VIN):
+        with pytest.raises(GwmRoutePolicyError):
+            await getattr(client, method)(VehicleIdentifier(vin))
+    assert len(transport.calls) == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("data", [[], [{"modeId": "123", "type": "2", "commonUseMode": 0}]])
+@pytest.mark.parametrize("mode", ["warm", "common"])
+async def test_beantech_missing_requested_comfort_mode_is_a_schema_error(data, mode):
+    transport = _FakeTransport(acquire_vehicles=[FIXTURE["responses"]["discovery"]], get_bean_tech_comfort_modes=[{"code": "000000", "data": data}])
+    client = _client(transport)
+    await client.authenticate(_credentials(), state=_complete_state())
+    with pytest.raises(GwmSchemaError):
+        await client.set_bean_tech_comfort_mode(VehicleIdentifier(BEAN_VIN), mode_type=mode)
+    assert not any(call.operation == "set_bean_tech_comfort_mode" for call in transport.calls)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("data", [[{}], [{"time": None}]])
+async def test_beantech_missing_appointment_time_is_unset(data):
+    transport = _FakeTransport(acquire_vehicles=[FIXTURE["responses"]["discovery"]], get_bean_tech_cabin_clean_appointment=[{"code": "000000", "data": data}])
+    client = _client(transport)
+    await client.authenticate(_credentials(), state=_complete_state())
+    assert await client.get_bean_tech_cabin_clean_appointment(VehicleIdentifier(BEAN_VIN)) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("sequence", [None, "invalid", 1, "raise"])
+@pytest.mark.parametrize("feature", ["climate", "comfort_off", "comfort_mode"])
+async def test_beantech_sequence_failure_prevents_physical_command(sequence, feature):
+    transport = _FakeTransport(acquire_vehicles=[FIXTURE["responses"]["discovery"]], get_bean_tech_comfort_modes=[{"code": "000000", "data": [{"modeId": "123", "type": "1"}]}])
+    client = _client(transport)
+    await client.authenticate(_credentials(), state=_complete_state())
+    def source():
+        if sequence == "raise":
+            raise ValueError(SENSITIVE)
+        return sequence
+    client._sequence_source = source
+    with pytest.raises(GwmConfigurationError) as error:
+        await _submit_beantech_feature(client, feature)
+    assert SENSITIVE not in str(error.value)
+    assert all(not call.operation.startswith(("send_", "set_")) for call in transport.calls)
+
+
+@pytest.mark.parametrize("kind,changes", [
+    ("config", {"configs": [{"controlType": "AIR_CONDITIONER_START", "cmdBody": None}]}),
+    ("comfort_mode", {"commands": [{"controlType": "COMFORT_MODE_CTRL", "cmdBody": None}]}),
+    ("comfort_mode", {"commands": []}),
+    ("comfort_mode", {"commands": [None]}),
+])
+def test_beantech_new_schemas_reject_incomplete_commands(kind, changes):
+    request = _beantech_feature_request(kind)
+    body = json.loads(request.body)
+    body.update(changes)
+    raw = json.dumps(body, separators=(",", ":")).encode()
+    headers = dict(request.headers)
+    headers["bt-auth-sign"] = bean_tech_sign("POST", urlsplit(request.url).path, headers["bt-auth-nonce"], headers["bt-auth-timestamp"], "json=" + raw.decode())
+    with pytest.raises(ValueError):
+        replace(request, body=raw, headers=headers)
+
+
+@pytest.mark.asyncio
+async def test_beantech_climate_companion_timeout_keeps_the_accepted_id():
+    transport = _FakeTransport(acquire_vehicles=[FIXTURE["responses"]["discovery"]], send_climate_command=[{"code": "000000"}], set_bean_tech_ac_temperature=[_Wait()])
+    client = _client(transport)
+    await client.authenticate(_credentials(), state=_complete_state())
+    result = await client.send_climate_command(ClimateCommand(VehicleIdentifier(BEAN_VIN), "auto", 22, 15), timeout=0.4)
+    assert result.command_id == BEAN_COMMAND_ID
+    assert Counter(call.operation for call in transport.calls)["send_climate_command"] == 1
+
+
+@pytest.mark.asyncio
+async def test_beantech_climate_skips_optional_save_when_deadline_is_almost_used():
+    transport = _FakeTransport(acquire_vehicles=[FIXTURE["responses"]["discovery"]], send_climate_command=[{"code": "000000"}])
+    client = _client(transport)
+    await client.authenticate(_credentials(), state=_complete_state())
+    result = await client.send_climate_command(ClimateCommand(VehicleIdentifier(BEAN_VIN), "auto", 22, 15), timeout=0.08)
+    assert result.command_id == BEAN_COMMAND_ID
+    assert not any(call.operation == "set_bean_tech_ac_temperature" for call in transport.calls)

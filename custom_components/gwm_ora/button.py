@@ -27,6 +27,16 @@ CHINA_REMOTE_BUTTONS: tuple[tuple[str, str], ...] = (
     ("force_refresh", "force_refresh"),
 )
 
+BEANTECH_REMOTE_ACTIONS = {
+    "remote_start",
+    "remote_stop",
+    "horn",
+    "flash_lights",
+    "horn_and_lights",
+    "sunroof_close",
+}
+
+
 def _china_remote_buttons_for_vehicle(
     vehicle: dict,
 ) -> tuple[tuple[str, str], ...]:
@@ -34,8 +44,10 @@ def _china_remote_buttons_for_vehicle(
     platform = str(vehicle.get("platform") or "").lower()
     if platform == "navinfo":
         return CHINA_REMOTE_BUTTONS
-    # BeanTech horn/flash/remote/sunroof buttons arrive in the horn and
-    # PIN-gated PRs (④⑤); PR ② only exposes A/C and comfort controls.
+    if platform == "beantech":
+        return tuple(
+            item for item in CHINA_REMOTE_BUTTONS if item[0] in BEANTECH_REMOTE_ACTIONS
+        )
     return ()
 
 
@@ -54,17 +66,12 @@ async def async_setup_entry(
                 entry.runtime_data.coordinator,
                 vin,
             ),
+            GwmCabinCleanButton(
+                entry.runtime_data.api,
+                entry.runtime_data.coordinator,
+                vin,
+            ),
         ]
-        if entry.runtime_data.coordinator.region != "cn":
-            # The overseas air-circulation button has no BeanTech equivalent: the
-            # BeanTech cabin clean is exposed as a comfort button instead.
-            entities.append(
-                GwmCabinCleanButton(
-                    entry.runtime_data.api,
-                    entry.runtime_data.coordinator,
-                    vin,
-                )
-            )
         if entry.runtime_data.coordinator.region == "cn":
             entities.extend(
                 GwmChinaRemoteButton(
@@ -76,6 +83,11 @@ async def async_setup_entry(
                 )
                 for action, translation_key in _china_remote_buttons_for_vehicle(vehicle)
             )
+        if (entry.runtime_data.coordinator.region == "cn"
+                and str(vehicle.get("platform") or "").strip().casefold() == "beantech"):
+            # Replace only BeanTech's unavailable overseas cabin-clean entity,
+            # preserving the existing unique ID without registering it twice.
+            entities = [entity for entity in entities if not isinstance(entity, GwmCabinCleanButton)]
             entities.extend(
                 GwmBeanTechComfortButton(
                     entry.runtime_data.api,
@@ -192,9 +204,7 @@ class GwmChinaRemoteButton(GwmEntity, ButtonEntity):
 class GwmBeanTechComfortButton(GwmEntity, ButtonEntity):
     """BeanTech comfort action button.
 
-    Covers the fixed-duration cabin clean and the one-touch comfort modes
-    (warm, cool, and all-off). All of these travel the PIN-less timely path
-    introduced by PR ② and only need the capability and platform gates.
+    Covers cabin cleaning and one-touch comfort modes behind the existing opt-in.
     """
 
     def __init__(

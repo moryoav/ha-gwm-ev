@@ -19,10 +19,6 @@ from .errors import GwmCommandError
 
 PARALLEL_UPDATES = 0
 
-# How long a switch keeps showing the requested state before falling back to
-# the value reported by the car.
-OPTIMISTIC_STATE_TIMEOUT = 120.0
-
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -49,14 +45,13 @@ async def async_setup_entry(
             coordinator.region == "cn"
             and str(vehicle.get("platform") or "").lower() == "beantech"
         )
+        existing = [
+            GwmChargingScheduleSwitch(api, coordinator, vin),
+            GwmFrontDefrosterSwitch(api, coordinator, vin),
+        ]
         if not is_beantech:
-            # The overseas charging-schedule and front-defroster switches have no
-            # BeanTech equivalent, so they are only created for non-BeanTech cars.
-            return [
-                GwmChargingScheduleSwitch(api, coordinator, vin),
-                GwmFrontDefrosterSwitch(api, coordinator, vin),
-            ]
-        return [
+            return existing
+        return existing + [
             GwmRemoteControlSwitch(
                 api,
                 coordinator,
@@ -202,17 +197,8 @@ class GwmChargingScheduleSwitch(GwmEntity, SwitchEntity):
 
     @property
     def available(self) -> bool:
-        """Return whether charging control is enabled for this entry.
-
-        BeanTech vehicles use the smart-scheduled-charging switch instead: they
-        have a single ``chargingMode`` toggle rather than the plan window this
-        switch writes, so exposing both would give one switch that always fails.
-        """
-        return (
-            super().available
-            and self.charging_control_available
-            and not self.is_china_beantech
-        )
+        """Return whether charging control is enabled for this entry."""
+        return super().available and self.charging_control_available
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Set a charging window from now for the default duration."""
@@ -235,52 +221,7 @@ class GwmChargingScheduleSwitch(GwmEntity, SwitchEntity):
         self.coordinator.set_charging_plan_active(self.vin, False)
 
 
-class _OptimisticRemoteSwitch(GwmEntity, SwitchEntity):
-    """Switch that shows the requested state until the car reports back.
-
-    Remote commands take a while to land in the polled status snapshot, so a
-    plain switch snaps back to the old state right after being toggled. Setting
-    ``assumed_state`` would fix that, but it also makes Home Assistant render
-    the entity as a pair of on/off buttons instead of a single toggle, so the
-    requested state is tracked here with a timeout instead.
-    """
-
-    _optimistic_state: bool | None = None
-    _optimistic_until: float = 0.0
-
-    def _actual_is_on(self) -> bool | None:
-        """Return the state reported by the car."""
-        raise NotImplementedError
-
-    @property
-    def is_on(self) -> bool | None:
-        if (
-            self._optimistic_state is not None
-            and time.monotonic() < self._optimistic_until
-        ):
-            return self._optimistic_state
-        return self._actual_is_on()
-
-    def _set_optimistic(self, value: bool) -> None:
-        """Show ``value`` until the car confirms it or the timeout expires."""
-        self._optimistic_state = value
-        self._optimistic_until = time.monotonic() + OPTIMISTIC_STATE_TIMEOUT
-        self.async_write_ha_state()
-
-    def _handle_coordinator_update(self) -> None:
-        # Only stop overriding once the car confirms the requested state, or the
-        # timeout expires. Do not budget this by coordinator updates: command
-        # status is pushed every couple of seconds, which would clear an
-        # optimistic state far sooner than the intended timeout.
-        if self._optimistic_state is not None and (
-            self._actual_is_on() == self._optimistic_state
-            or time.monotonic() >= self._optimistic_until
-        ):
-            self._optimistic_state = None
-        super()._handle_coordinator_update()
-
-
-class GwmRemoteControlSwitch(_OptimisticRemoteSwitch):
+class GwmRemoteControlSwitch(GwmEntity, SwitchEntity):
     """Generic BeanTech remote-control on/off switch.
 
     Maps a paired ``turn_on_action``/``turn_off_action`` to the vehicle and
@@ -308,17 +249,18 @@ class GwmRemoteControlSwitch(_OptimisticRemoteSwitch):
         self._attr_translation_key = translation_key
         self._attr_unique_id = f"{vin}_{translation_key}"
 
-    def _actual_is_on(self) -> bool | None:
+    @property
+    def is_on(self) -> bool | None:
         value = vehicle_value(self.vehicle, self._state_key)
         if value is None:
             return None
-        return bool(value)
+        return bool(value) if type(value) in {bool, int} else None
 
     @property
     def available(self) -> bool:
         return (
             super().available
-            and self.remote_commands_available
+            and self.china_vehicle_commands_available
             and self.is_china_beantech
         )
 
@@ -327,13 +269,9 @@ class GwmRemoteControlSwitch(_OptimisticRemoteSwitch):
             self._api.async_vehicle_control(self.vin, self._turn_on_action)
         )
         self.coordinator.async_track_command(command)
-        self._set_optimistic(True)
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         command = await async_call_gwm_api(
             self._api.async_vehicle_control(self.vin, self._turn_off_action)
         )
         self.coordinator.async_track_command(command)
-        self._set_optimistic(False)
-
-

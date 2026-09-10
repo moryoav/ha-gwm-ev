@@ -45,9 +45,15 @@ from .china_transport import (
 )
 from .commands import (
     BEANTECH_CHINA_VEHICLE_CONTROL_ACTIONS,
+    BEANTECH_COMFORT_ACTIONS,
+    BEANTECH_HORN_LIGHT_ACTIONS,
+    BEANTECH_TIMELY_ACTIONS,
     NAVINFO_CHINA_VEHICLE_CONTROL_ACTIONS,
+    ChinaRemoteCommandAction,
     ChinaVehicleControlCommand,
     ClimateCommand,
+    CloseWindowsCommand,
+    DoorLockCommand,
     RemoteCommandAcceptance,
     RemoteCommandResultItem,
     parse_remote_command_results,
@@ -91,7 +97,9 @@ __all__ = [
     "ChargingPlanCommand",
     "ChargingPlanInfo",
     "ChargingPlanItem",
+    "CloseWindowsCommand",
     "ClimateCommand",
+    "DoorLockCommand",
     "RemoteCommandAcceptance",
     "RemoteCommandResultItem",
 ]
@@ -113,16 +121,16 @@ _NAVINFO_CLIMATE_CONFIG_PATH = "/app-api/api/v3.0/vehicle/remote-ctrl/config"
 _NAVINFO_CLIMATE_CONFIG_URL = (
     _BEAN_TECH_BASE.rstrip("/") + _NAVINFO_CLIMATE_CONFIG_PATH
 )
-_BEAN_TECH_TIMELY_PATH = "/app-api/api/v3.0/vehicle/remote-ctrl/timely"
-_BEAN_TECH_TIMELY_URL = _BEAN_TECH_BASE.rstrip("/") + _BEAN_TECH_TIMELY_PATH
-_BEAN_TECH_TIMELY_RESULT_PATH = "/app-api/api/v3.0/vehicle/remote-ctrl/result"
-_BEAN_TECH_TIMELY_RESULT_URL = _BEAN_TECH_BASE.rstrip("/") + _BEAN_TECH_TIMELY_RESULT_PATH
-_BEAN_TECH_CONFIG_QUERY_PATH = "/app-api/api/v3.0/vehicle/remote-ctrl/config/query"
-_BEAN_TECH_CONFIG_QUERY_URL = _BEAN_TECH_BASE.rstrip("/") + _BEAN_TECH_CONFIG_QUERY_PATH
 _BEAN_TECH_SUBSCRIBE_PATH = "/app-api/api/v3.0/vehicle/remote-ctrl/subscribe"
 _BEAN_TECH_SUBSCRIBE_URL = _BEAN_TECH_BASE.rstrip("/") + _BEAN_TECH_SUBSCRIBE_PATH
 _BEAN_TECH_ONE_TOUCH_MODE_PATH = "/app-api/api/v3.0/vehicle/one-touch/mode"
 _BEAN_TECH_ONE_TOUCH_MODE_URL = _BEAN_TECH_BASE.rstrip("/") + _BEAN_TECH_ONE_TOUCH_MODE_PATH
+_BEAN_TECH_SEND_PATH = "/app-api/api/v1.0/vehicle/T5/sendCmd"
+_BEAN_TECH_SEND_URL = _BEAN_TECH_BASE.rstrip("/") + _BEAN_TECH_SEND_PATH
+_BEAN_TECH_TIMELY_PATH = "/app-api/api/v3.0/vehicle/remote-ctrl/timely"
+_BEAN_TECH_TIMELY_URL = _BEAN_TECH_BASE.rstrip("/") + _BEAN_TECH_TIMELY_PATH
+_BEAN_TECH_RESULT_PATH = "/app-api/api/v1.0/vehicle/getRemoteCtrlResultT5"
+_BEAN_TECH_RESULT_URL = _BEAN_TECH_BASE.rstrip("/") + _BEAN_TECH_RESULT_PATH
 _AUTO_AI_LOGIN_URL = _G_APP_BASE + "tsp/v1/proxy/navinfo/GW.M.APP_LOGIN"
 _DISCOVERY_URL = _G_APP_BASE + "gcar/v1/app/android/vehicle/query-vehicle-list"
 _SOURCE_APP_VERSION = "2.1.5"
@@ -134,13 +142,6 @@ _VERIFICATION_INTERVAL = timedelta(minutes=10)
 _TRANSIENT_INIT_HTTP_STATUSES = frozenset({502, 503, 504})
 _MAX_INIT_ATTEMPTS = 3
 _INIT_RETRY_SECONDS = 1.0
-# The BeanTech backend executes one command per vehicle at a time: a command
-# sent while the previous one is still running is rejected with 551210. Queue
-# the send by waiting a few seconds between attempts, so rapid toggles (and a
-# sleeping car's slower first wake-up) drain in order instead of surfacing
-# "remote command in progress".
-_MAX_BEAN_TECH_COMMAND_ATTEMPTS = 5
-_BEAN_TECH_COMMAND_RETRY_SECONDS = 5.0
 _MAX_JSON_DEPTH = 64
 _MAX_ALLOWED_RESPONSE_BYTES = 16 * 1024 * 1024
 _MAX_SECRET_LENGTH = 16 * 1024
@@ -604,7 +605,7 @@ class ChinaClient:
         *,
         timeout: float | None = None,
     ) -> RemoteCommandAcceptance:
-        """Send a platform-routed China climate command."""
+        """Send the climate payload for the discovered China platform."""
 
         operation: Literal["send_climate_command"] = "send_climate_command"
         if type(command) is not ClimateCommand:
@@ -615,6 +616,49 @@ class ChinaClient:
             action=lambda deadline: self._send_climate_command_locked(command, deadline=deadline),
         )
 
+    async def send_lock_command(
+        self,
+        command: DoorLockCommand,
+        *,
+        timeout: float | None = None,
+    ) -> RemoteCommandAcceptance:
+        """Send a platform-routed China lock or unlock command without a PIN."""
+
+        operation: Literal["send_lock_command"] = "send_lock_command"
+        if type(command) is not DoorLockCommand:
+            raise GwmConfigurationError(operation=operation)
+        return await self._run_read(
+            operation,
+            timeout=timeout,
+            action=lambda deadline: self._send_lock_window_command_locked(
+                command,
+                operation=operation,
+                command_code=2 if command.lock else 1,
+                deadline=deadline,
+            ),
+        )
+
+    async def send_close_windows_command(
+        self,
+        command: CloseWindowsCommand,
+        *,
+        timeout: float | None = None,
+    ) -> RemoteCommandAcceptance:
+        """Send a platform-routed China close-all-windows command without a PIN."""
+
+        operation: Literal["send_close_windows_command"] = "send_close_windows_command"
+        if type(command) is not CloseWindowsCommand:
+            raise GwmConfigurationError(operation=operation)
+        return await self._run_read(
+            operation,
+            timeout=timeout,
+            action=lambda deadline: self._send_lock_window_command_locked(
+                command,
+                operation=operation,
+                command_code=3,
+                deadline=deadline,
+            ),
+        )
 
     async def send_vehicle_control_command(
         self,
@@ -643,23 +687,23 @@ class ChinaClient:
         identifier: VehicleIdentifier,
         command_id: str,
         *,
-        msg_type: Literal["remote", "charge"] = "remote",
+        control_action: ChinaRemoteCommandAction | None = None,
         timeout: float | None = None,
     ) -> tuple[RemoteCommandResultItem, ...]:
-        """Poll the result stream through the signed BeanTech endpoint.
-
-        Remote commands use ``msgType=remote``; BeanTech charging-setting writes
-        use ``msgType=charge``. Both share the ``messageList`` result envelope.
-        """
+        """Poll a command; supply control_action for BeanTech timely results."""
 
         operation = "get_remote_command_result"
+        if control_action is not None and (
+            not isinstance(control_action, str)
+            or control_action not in NAVINFO_CHINA_VEHICLE_CONTROL_ACTIONS | BEANTECH_TIMELY_ACTIONS
+        ):
+            raise GwmConfigurationError(operation=operation)
         if (
             type(identifier) is not VehicleIdentifier
             or not isinstance(command_id, str)
             or not command_id
             or len(command_id) > 512
             or any(ord(character) < 0x21 or ord(character) > 0x7E for character in command_id)
-            or msg_type not in {"remote", "charge"}
         ):
             raise GwmConfigurationError(operation=operation)
         return await self._run_read(
@@ -668,32 +712,10 @@ class ChinaClient:
             action=lambda deadline: self._get_remote_command_results_locked(
                 identifier,
                 command_id,
-                msg_type=msg_type,
+                control_action=control_action,
                 deadline=deadline,
             ),
         )
-
-
-    async def get_bean_tech_ac_temperature(
-        self,
-        identifier: VehicleIdentifier,
-        *,
-        timeout: float | None = None,
-    ) -> int | None:
-        """Read the BeanTech A/C set temperature the car remembers."""
-
-        operation = "get_bean_tech_ac_temperature"
-        if type(identifier) is not VehicleIdentifier:
-            raise GwmConfigurationError(operation=operation)
-        return await self._run_read(
-            operation,
-            timeout=timeout,
-            action=lambda deadline: self._get_bean_tech_ac_temperature_locked(
-                identifier,
-                deadline=deadline,
-            ),
-        )
-
 
     async def get_bean_tech_comfort_modes(
         self,
@@ -725,7 +747,11 @@ class ChinaClient:
         """Execute a BeanTech one-touch comfort mode, resolving its dynamic modeId."""
 
         operation = "set_bean_tech_comfort_mode"
-        if type(identifier) is not VehicleIdentifier:
+        if (
+            type(identifier) is not VehicleIdentifier
+            or not isinstance(mode_type, str)
+            or mode_type not in {"warm", "cool", "common"}
+        ):
             raise GwmConfigurationError(operation=operation)
         return await self._run_read(
             operation,
@@ -737,7 +763,6 @@ class ChinaClient:
             ),
         )
 
-
     async def set_bean_tech_cabin_clean_appointment(
         self,
         identifier: VehicleIdentifier,
@@ -748,7 +773,11 @@ class ChinaClient:
         """Schedule one BeanTech cabin-clean run at ``time_ms`` (epoch ms)."""
 
         operation = "set_bean_tech_cabin_clean_appointment"
-        if type(identifier) is not VehicleIdentifier:
+        if (
+            type(identifier) is not VehicleIdentifier
+            or type(time_ms) is not int
+            or not 0 < time_ms <= 253402214399000
+        ):
             raise GwmConfigurationError(operation=operation)
         await self._run_read(
             operation,
@@ -779,7 +808,6 @@ class ChinaClient:
                 deadline=deadline,
             ),
         )
-
 
     async def get_charging_plan(
         self,
@@ -1102,18 +1130,12 @@ class ChinaClient:
                 await self._sleep_before_retry(deadline, operation=operation)
         raise GwmProtocolError(operation=operation)  # pragma: no cover
 
-    async def _sleep_before_retry(
-        self,
-        deadline: _Deadline,
-        *,
-        operation: str,
-        seconds: float = _INIT_RETRY_SECONDS,
-    ) -> None:
+    async def _sleep_before_retry(self, deadline: _Deadline, *, operation: str) -> None:
         loop = asyncio.get_running_loop()
-        if deadline.remaining(loop.time()) <= seconds:
+        if deadline.remaining(loop.time()) <= _INIT_RETRY_SECONDS:
             raise GwmDeadlineExceededError(operation=operation)
         try:
-            await self._sleeper(seconds)
+            await self._sleeper(_INIT_RETRY_SECONDS)
         except asyncio.CancelledError:
             raise
         except GwmClientError:
@@ -1384,18 +1406,27 @@ class ChinaClient:
             if command.mode != "off":
                 # The app also persists the temperature via remote-ctrl/config so
                 # the car remembers it; send that as a best-effort companion.
+                remaining = deadline.remaining(asyncio.get_running_loop().time())
+                if remaining <= 0.1:
+                    return acceptance
+                # Leave time to return the accepted ID to the durable journal
+                # even when the optional settings save stalls.
+                config_deadline = _Deadline(deadline.expires_at - min(1.0, remaining / 2))
                 try:
-                    config_response = await self._send_locked(
-                        self._build_bean_tech_config_request(
-                            state,
-                            command.identifier,
-                            temperature=command.temperature,
-                            operation_time_minutes=command.operation_time_minutes,
-                        ),
-                        deadline=deadline,
-                    )
-                    _decode_g_app_envelope(config_response, operation="set_bean_tech_ac_temperature")
-                except GwmClientError as err:
+                    async with asyncio.timeout_at(config_deadline.expires_at):
+                        config_response = await self._send_locked(
+                            self._build_bean_tech_config_request(
+                                state,
+                                command.identifier,
+                                temperature=command.temperature,
+                                operation_time_minutes=command.operation_time_minutes,
+                            ),
+                            deadline=config_deadline,
+                        )
+                        _decode_g_app_envelope(
+                            config_response, operation="set_bean_tech_ac_temperature", require_code=True
+                        )
+                except (GwmClientError, TimeoutError) as err:
                     _LOGGER.warning(
                         "BeanTech A/C command was accepted but its companion "
                         "temperature-save request failed (%s)",
@@ -1477,22 +1508,200 @@ class ChinaClient:
                 )
         return acceptance
 
-
     async def _send_bean_tech_control(
         self,
         state: ChinaAuthState,
         identifier: VehicleIdentifier,
         *,
-        operation: Literal[
-            "send_vehicle_control_command",
-            "send_climate_command",
-            "set_bean_tech_comfort_mode",
-        ],
+        operation: Literal["send_vehicle_control_command", "send_climate_command"],
         commands: Sequence[tuple[str, Mapping[str, object] | None]],
         send_type: int = 0,
         deadline: _Deadline,
     ) -> RemoteCommandAcceptance:
-        for attempt in range(_MAX_BEAN_TECH_COMMAND_ATTEMPTS):
+        """Submit one PIN-exempt command without retrying a physical action."""
+        sequence_number = self._bean_tech_sequence(operation=operation)
+        response = await self._send_locked(
+            self._build_bean_tech_timely_request_for_commands(
+                state, identifier, sequence_number=sequence_number,
+                operation=operation, commands=commands, send_type=send_type,
+            ),
+            deadline=deadline,
+        )
+        _decode_g_app_envelope(response, operation=operation, require_code=True)
+        return RemoteCommandAcceptance(sequence_number)
+
+    async def _get_bean_tech_comfort_modes_locked(
+        self,
+        identifier: VehicleIdentifier,
+        *,
+        deadline: _Deadline,
+    ) -> tuple[Mapping[str, object], ...]:
+        operation: Literal["get_bean_tech_comfort_modes"] = "get_bean_tech_comfort_modes"
+        state = self._required_session(operation=operation)
+        vehicle = self._vehicles.get(identifier.value.casefold())
+        if vehicle is None or (vehicle.platform or "").strip().casefold() != "beantech":
+            raise GwmRoutePolicyError(operation=operation)
+        response = await self._send_locked(
+            self._build_bean_tech_simple_get_request(
+                state,
+                identifier,
+                operation=operation,
+                path=_BEAN_TECH_ONE_TOUCH_MODE_PATH,
+                url=_BEAN_TECH_ONE_TOUCH_MODE_URL,
+            ),
+            deadline=deadline,
+        )
+        data = _decode_g_app_envelope(response, operation=operation)
+        if not isinstance(data, list) or not all(
+            isinstance(mode, Mapping) for mode in data
+        ):
+            raise GwmSchemaError(operation=operation)
+        modes: list[Mapping[str, object]] = []
+        for mode in data:
+            mode_id = mode.get("modeId")
+            mode_type = mode.get("type")
+            common = mode.get("commonUseMode", 0)
+            if (
+                type(mode_id) not in {str, int}
+                or not str(mode_id).strip()
+                or len(str(mode_id)) > 128
+                or any(ord(char) < 0x21 or ord(char) > 0x7E for char in str(mode_id))
+                or (type(mode_id) is int and mode_id <= 0)
+                or type(mode_type) not in {str, int}
+                or str(mode_type) not in {"1", "2"}
+                or type(common) not in {str, int}
+                or str(common) not in {"0", "1"}
+            ):
+                raise GwmSchemaError(operation=operation)
+            modes.append({"modeId": str(mode_id), "type": str(mode_type), "commonUseMode": int(common)})
+        return tuple(modes)
+
+    async def _set_bean_tech_comfort_mode_locked(
+        self,
+        identifier: VehicleIdentifier,
+        *,
+        mode_type: Literal["warm", "cool", "common"],
+        deadline: _Deadline,
+    ) -> str:
+        operation: Literal["set_bean_tech_comfort_mode"] = "set_bean_tech_comfort_mode"
+        state = self._required_session(operation=operation)
+        vehicle = self._vehicles.get(identifier.value.casefold())
+        if vehicle is None or (vehicle.platform or "").strip().casefold() != "beantech":
+            raise GwmRoutePolicyError(operation=operation)
+        modes = await self._get_bean_tech_comfort_modes_locked(
+            identifier, deadline=deadline
+        )
+        if mode_type == "common":
+            mode = next(
+                (m for m in modes if m.get("commonUseMode") in (1, "1")), None
+            )
+        else:
+            want_type = "1" if mode_type == "warm" else "2"
+            mode = next((m for m in modes if str(m.get("type")) == want_type), None)
+        if mode is None:
+            raise GwmSchemaError(operation=operation)
+        sequence_number = self._bean_tech_sequence(operation=operation)
+        response = await self._send_locked(
+            self._build_bean_tech_timely_request_for_commands(
+                state,
+                identifier,
+                sequence_number=sequence_number,
+                operation=operation,
+                commands=[
+                    (
+                        "COMFORT_MODE_CTRL",
+                        {
+                            "action": 1,
+                            "modeId": mode["modeId"],
+                            "type": mode["type"],
+                        },
+                    )
+                ],
+                send_type=0,
+            ),
+            deadline=deadline,
+        )
+        _decode_g_app_envelope(response, operation=operation, require_code=True)
+        return sequence_number
+
+    async def _set_bean_tech_cabin_clean_appointment_locked(
+        self,
+        identifier: VehicleIdentifier,
+        *,
+        time_ms: int,
+        deadline: _Deadline,
+    ) -> None:
+        operation = "set_bean_tech_cabin_clean_appointment"
+        state = self._required_session(operation=operation)
+        vehicle = self._vehicles.get(identifier.value.casefold())
+        if vehicle is None or (vehicle.platform or "").strip().casefold() != "beantech":
+            raise GwmRoutePolicyError(operation=operation)
+        response = await self._send_locked(
+            self._build_bean_tech_subscribe_request(state, identifier, time_ms=time_ms),
+            deadline=deadline,
+        )
+        _decode_g_app_envelope(response, operation=operation, require_code=True)
+
+    async def _get_bean_tech_cabin_clean_appointment_locked(
+        self,
+        identifier: VehicleIdentifier,
+        *,
+        deadline: _Deadline,
+    ) -> int | None:
+        operation: Literal["get_bean_tech_cabin_clean_appointment"] = (
+            "get_bean_tech_cabin_clean_appointment"
+        )
+        state = self._required_session(operation=operation)
+        vehicle = self._vehicles.get(identifier.value.casefold())
+        if vehicle is None or (vehicle.platform or "").strip().casefold() != "beantech":
+            raise GwmRoutePolicyError(operation=operation)
+        response = await self._send_locked(
+            self._build_bean_tech_subscribe_get_request(state, identifier),
+            deadline=deadline,
+        )
+        data = _decode_g_app_envelope(response, operation=operation)
+        if not isinstance(data, list):
+            raise GwmSchemaError(operation=operation)
+        if not data:
+            return None
+        if not isinstance(data[0], Mapping):
+            raise GwmSchemaError(operation=operation)
+        time_ms = data[0].get("time")
+        if time_ms is None:
+            return None
+        if type(time_ms) is not int or not 0 < time_ms <= 253402214399000:
+            raise GwmSchemaError(operation=operation)
+        return time_ms
+
+    def _bean_tech_sequence(self, *, operation: str) -> str:
+        try:
+            sequence_number = self._sequence_source()
+        except Exception:
+            raise GwmConfigurationError(operation=operation) from None
+        if (
+            not isinstance(sequence_number, str)
+            or _BEAN_TECH_SEQUENCE.fullmatch(sequence_number) is None
+        ):
+            raise GwmConfigurationError(operation=operation)
+        return sequence_number
+
+    async def _send_lock_window_command_locked(
+        self,
+        command: DoorLockCommand | CloseWindowsCommand,
+        *,
+        operation: Literal["send_lock_command", "send_close_windows_command"],
+        command_code: int,
+        deadline: _Deadline,
+    ) -> RemoteCommandAcceptance:
+        state = self._required_session(operation=operation)
+        vehicle = self._vehicles.get(command.identifier.value.casefold())
+        if vehicle is None:
+            raise GwmRoutePolicyError(operation=operation)
+        platform = None if vehicle.platform is None else vehicle.platform.strip().casefold()
+        if platform not in {"navinfo", "beantech"}:
+            raise GwmRoutePolicyError(operation=operation)
+
+        if platform == "beantech":
             try:
                 sequence_number = self._sequence_source()
             except Exception:
@@ -1502,39 +1711,60 @@ class ChinaClient:
                 or _BEAN_TECH_SEQUENCE.fullmatch(sequence_number) is None
             ):
                 raise GwmConfigurationError(operation=operation)
-
-            # The PIN-less timely path carries every BeanTech control command and
-            # never attaches a security token (PR ⑤ reintroduces the PIN-gated
-            # variant).
-            request = self._build_bean_tech_timely_request_for_commands(
-                state,
-                identifier,
-                sequence_number=sequence_number,
-                operation=operation,
-                commands=commands,
-                send_type=send_type,
-                security_token=None,
+            control_type, command_body = _bean_tech_lock_window_control(command_code)
+            response = await self._send_locked(
+                self._build_bean_tech_command_request(
+                    state,
+                    command.identifier,
+                    sequence_number=sequence_number,
+                    operation=operation,
+                    control_type=control_type,
+                    command_body=command_body,
+                ),
+                deadline=deadline,
             )
+            _decode_g_app_envelope(response, operation=operation)
+            return RemoteCommandAcceptance(sequence_number)
 
-            response = await self._send_locked(request, deadline=deadline)
-            try:
-                _decode_g_app_envelope(response, operation=operation)
-                return RemoteCommandAcceptance(sequence_number)
-            except GwmApiError as err:
-                if (
-                    err.api_code == "551210"
-                    and attempt < _MAX_BEAN_TECH_COMMAND_ATTEMPTS - 1
-                ):
-                    await self._sleep_before_retry(
-                        deadline,
-                        operation=operation,
-                        seconds=_BEAN_TECH_COMMAND_RETRY_SECONDS,
-                    )
-                    continue
-                raise
-        # The loop returns on success or raises on the final 551210; this line
-        # is unreachable and only keeps mypy from seeing a fall-through.
-        raise GwmProtocolError(operation=operation)
+        if state.auto_ai_token_id is None or state.auto_ai_user_id is None:
+            raise GwmAuthenticationError(operation=operation)
+        body = {
+            "flag": 1,
+            "signStr": hashlib.md5(
+                (command.identifier.value + state.auto_ai_token_id).encode("utf-8"),
+                usedforsecurity=False,
+            ).hexdigest(),
+            "userId": state.auto_ai_user_id,
+            "userType": "0",
+            "vin": command.identifier.value,
+            "cmdCode": command_code,
+        }
+        response = await self._send_locked(
+            self._build_auto_ai_request(
+                operation=operation,
+                state=state,
+                function="GW.M.SEND_COMMON_COMMAND",
+                body=body,
+                url=_AUTO_AI_DIRECT,
+                include_token=True,
+            ),
+            deadline=deadline,
+        )
+        try:
+            result = _decode_auto_ai_envelope(response, operation=operation)
+            command_id = _scalar_text(_property(result, "transactionId"))
+            if (
+                command_id is None
+                or not command_id
+                or len(command_id) > 512
+                or any(ord(character) < 0x21 or ord(character) > 0x7E for character in command_id)
+            ):
+                raise ValueError("command_acceptance_invalid")
+            return RemoteCommandAcceptance(command_id)
+        except GwmClientError:
+            raise
+        except (RecursionError, OverflowError, TypeError, ValueError):
+            raise GwmSchemaError(operation=operation) from None
 
     async def _send_vehicle_control_command_locked(
         self,
@@ -1556,29 +1786,49 @@ class ChinaClient:
         if platform == "beantech":
             if command.action not in BEANTECH_CHINA_VEHICLE_CONTROL_ACTIONS:
                 raise GwmRoutePolicyError(operation=operation)
-            if command.action == "comfort_off":
+            if command.action in BEANTECH_COMFORT_ACTIONS:
+                commands = (
+                    _bean_tech_comfort_off_commands()
+                    if command.action == "comfort_off"
+                    else (_bean_tech_vehicle_control(command),)
+                )
                 return await self._send_bean_tech_control(
-                    state,
-                    command.identifier,
-                    operation=operation,
-                    commands=_bean_tech_comfort_off_commands(),
-                    send_type=1,
+                    state, command.identifier, operation=operation, commands=commands,
+                    send_type=1 if command.action == "comfort_off" else 0,
                     deadline=deadline,
                 )
             control_type, command_body = _bean_tech_vehicle_control(command)
-            return await self._send_bean_tech_control(
-                state,
-                command.identifier,
-                operation=operation,
-                commands=[(control_type, command_body)],
+            try:
+                sequence_number = self._sequence_source()
+            except Exception:
+                raise GwmConfigurationError(operation=operation) from None
+            if (
+                not isinstance(sequence_number, str)
+                or _BEAN_TECH_SEQUENCE.fullmatch(sequence_number) is None
+            ):
+                raise GwmConfigurationError(operation=operation)
+            response = await self._send_locked(
+                self._build_bean_tech_command_request(
+                    state,
+                    command.identifier,
+                    sequence_number=sequence_number,
+                    operation=operation,
+                    control_type=control_type,
+                    command_body=command_body,
+                ),
                 deadline=deadline,
             )
-
-        if command.action not in NAVINFO_CHINA_VEHICLE_CONTROL_ACTIONS:
-            raise GwmRoutePolicyError(operation=operation)
+            _decode_g_app_envelope(
+                response,
+                operation=operation,
+                require_code=command.action in BEANTECH_HORN_LIGHT_ACTIONS,
+            )
+            return RemoteCommandAcceptance(sequence_number)
 
         if state.auto_ai_token_id is None or state.auto_ai_user_id is None:
             raise GwmAuthenticationError(operation=operation)
+        if command.action not in NAVINFO_CHINA_VEHICLE_CONTROL_ACTIONS:
+            raise GwmRoutePolicyError(operation=operation)
         command_code, function = _navinfo_vehicle_control(command)
         if command.action == "force_refresh":
             body: dict[str, object] = {"vin": command.identifier.value}
@@ -1640,7 +1890,7 @@ class ChinaClient:
         identifier: VehicleIdentifier,
         command_id: str,
         *,
-        msg_type: Literal["remote", "charge"],
+        control_action: ChinaRemoteCommandAction | None = None,
         deadline: _Deadline,
     ) -> tuple[RemoteCommandResultItem, ...]:
         operation = "get_remote_command_result"
@@ -1651,20 +1901,21 @@ class ChinaClient:
         platform = (vehicle.platform or "").strip().casefold()
         if platform not in {"navinfo", "beantech"}:
             raise GwmRoutePolicyError(operation=operation)
-        if platform == "navinfo":
-            if msg_type != "remote":
-                raise GwmRoutePolicyError(operation=operation)
-            request = self._build_navinfo_result_request(state, identifier, command_id)
-        else:
-            request = self._build_bean_tech_result_request(
-                state, identifier, command_id, msg_type=msg_type
-            )
+        timely = platform == "beantech" and control_action in BEANTECH_TIMELY_ACTIONS
+        request = (
+            # BeanTech timely results use the same signed v3 query as NavInfo.
+            self._build_navinfo_result_request(state, identifier, command_id)
+            if platform == "navinfo" or timely
+            else self._build_bean_tech_result_request(state, identifier, command_id)
+        )
         response = await self._send_locked(
             request,
             deadline=deadline,
         )
         try:
             data = _decode_g_app_envelope(response, operation=operation)
+            if timely:
+                return _parse_bean_tech_timely_results(data, command_id=command_id)
             return (
                 _parse_navinfo_command_results(data, command_id=command_id)
                 if platform == "navinfo"
@@ -1674,193 +1925,6 @@ class ChinaClient:
             raise
         except (RecursionError, OverflowError, TypeError, ValueError):
             raise GwmSchemaError(operation=operation) from None
-
-
-    async def _get_bean_tech_ac_temperature_locked(
-        self,
-        identifier: VehicleIdentifier,
-        *,
-        deadline: _Deadline,
-    ) -> int | None:
-        operation: Literal["get_bean_tech_ac_temperature"] = "get_bean_tech_ac_temperature"
-        state = self._required_session(operation=operation)
-        vehicle = self._vehicles.get(identifier.value.casefold())
-        if vehicle is None or (vehicle.platform or "").strip().casefold() != "beantech":
-            raise GwmRoutePolicyError(operation=operation)
-        response = await self._send_locked(
-            self._build_bean_tech_config_query_request(
-                state,
-                identifier,
-                types=["AIR_CONDITIONER_START"],
-                operation=operation,
-            ),
-            deadline=deadline,
-        )
-        data = _decode_g_app_envelope(response, operation=operation)
-        if not isinstance(data, list) or not data or not isinstance(data[0], Mapping):
-            raise GwmSchemaError(operation=operation)
-        cmd_content = data[0].get("cmdContent")
-        if not isinstance(cmd_content, Mapping):
-            raise GwmSchemaError(operation=operation)
-        temperature = cmd_content.get("temperature")
-        if temperature is None:
-            return None
-        if isinstance(temperature, bool):
-            raise GwmSchemaError(operation=operation)
-        try:
-            return int(temperature)
-        except (TypeError, ValueError):
-            raise GwmSchemaError(operation=operation) from None
-
-
-    async def _get_bean_tech_comfort_modes_locked(
-        self,
-        identifier: VehicleIdentifier,
-        *,
-        deadline: _Deadline,
-    ) -> tuple[Mapping[str, object], ...]:
-        operation: Literal["get_bean_tech_comfort_modes"] = "get_bean_tech_comfort_modes"
-        state = self._required_session(operation=operation)
-        vehicle = self._vehicles.get(identifier.value.casefold())
-        if vehicle is None or (vehicle.platform or "").strip().casefold() != "beantech":
-            raise GwmRoutePolicyError(operation=operation)
-        response = await self._send_locked(
-            self._build_bean_tech_simple_get_request(
-                state,
-                identifier,
-                operation=operation,
-                path=_BEAN_TECH_ONE_TOUCH_MODE_PATH,
-                url=_BEAN_TECH_ONE_TOUCH_MODE_URL,
-            ),
-            deadline=deadline,
-        )
-        data = _decode_g_app_envelope(response, operation=operation)
-        if not isinstance(data, list) or not all(
-            isinstance(mode, Mapping) for mode in data
-        ):
-            raise GwmSchemaError(operation=operation)
-        return tuple(data)
-
-    async def _set_bean_tech_comfort_mode_locked(
-        self,
-        identifier: VehicleIdentifier,
-        *,
-        mode_type: Literal["warm", "cool", "common"],
-        deadline: _Deadline,
-    ) -> str:
-        operation: Literal["set_bean_tech_comfort_mode"] = "set_bean_tech_comfort_mode"
-        state = self._required_session(operation=operation)
-        vehicle = self._vehicles.get(identifier.value.casefold())
-        if vehicle is None or (vehicle.platform or "").strip().casefold() != "beantech":
-            raise GwmRoutePolicyError(operation=operation)
-        modes = await self._get_bean_tech_comfort_modes_locked(
-            identifier, deadline=deadline
-        )
-        if mode_type == "common":
-            mode = next(
-                (m for m in modes if m.get("commonUseMode") in (1, "1")), None
-            )
-        else:
-            want_type = "1" if mode_type == "warm" else "2"
-            mode = next((m for m in modes if str(m.get("type")) == want_type), None)
-        try:
-            mode_id = None if mode is None else _scalar_text(mode.get("modeId"))
-            mode_type_str = None if mode is None else _scalar_text(mode.get("type"))
-        except ValueError:
-            raise GwmSchemaError(operation=operation) from None
-        if (
-            mode_id is None
-            or not mode_id.strip()
-            or mode_type_str not in {"1", "2"}
-        ):
-            raise GwmSchemaError(operation=operation)
-        sequence_number = self._bean_tech_sequence(operation=operation)
-        response = await self._send_locked(
-            self._build_bean_tech_timely_request_for_commands(
-                state,
-                identifier,
-                sequence_number=sequence_number,
-                operation=operation,
-                commands=[
-                    (
-                        "COMFORT_MODE_CTRL",
-                        {
-                            "action": 1,
-                            "modeId": str(mode_id),
-                            "type": str(mode_type_str),
-                        },
-                    )
-                ],
-                send_type=0,
-                security_token=None,
-            ),
-            deadline=deadline,
-        )
-        _decode_g_app_envelope(response, operation=operation)
-        return sequence_number
-
-
-    async def _set_bean_tech_cabin_clean_appointment_locked(
-        self,
-        identifier: VehicleIdentifier,
-        *,
-        time_ms: int,
-        deadline: _Deadline,
-    ) -> None:
-        operation = "set_bean_tech_cabin_clean_appointment"
-        state = self._required_session(operation=operation)
-        vehicle = self._vehicles.get(identifier.value.casefold())
-        if vehicle is None or (vehicle.platform or "").strip().casefold() != "beantech":
-            raise GwmRoutePolicyError(operation=operation)
-        if isinstance(time_ms, bool) or not isinstance(time_ms, int) or time_ms <= 0:
-            raise GwmConfigurationError(operation=operation)
-        response = await self._send_locked(
-            self._build_bean_tech_subscribe_request(state, identifier, time_ms=time_ms),
-            deadline=deadline,
-        )
-        _decode_g_app_envelope(response, operation=operation)
-
-    async def _get_bean_tech_cabin_clean_appointment_locked(
-        self,
-        identifier: VehicleIdentifier,
-        *,
-        deadline: _Deadline,
-    ) -> int | None:
-        operation: Literal["get_bean_tech_cabin_clean_appointment"] = (
-            "get_bean_tech_cabin_clean_appointment"
-        )
-        state = self._required_session(operation=operation)
-        vehicle = self._vehicles.get(identifier.value.casefold())
-        if vehicle is None or (vehicle.platform or "").strip().casefold() != "beantech":
-            raise GwmRoutePolicyError(operation=operation)
-        response = await self._send_locked(
-            self._build_bean_tech_subscribe_get_request(state, identifier),
-            deadline=deadline,
-        )
-        data = _decode_g_app_envelope(response, operation=operation)
-        if not isinstance(data, list) or not data:
-            return None
-        if not isinstance(data[0], Mapping):
-            raise GwmSchemaError(operation=operation)
-        time_ms = data[0].get("time")
-        if time_ms is None:
-            return None
-        if isinstance(time_ms, bool) or not isinstance(time_ms, int) or time_ms <= 0:
-            raise GwmSchemaError(operation=operation)
-        return time_ms
-
-
-    def _bean_tech_sequence(self, *, operation: str) -> str:
-        try:
-            sequence_number = self._sequence_source()
-        except Exception:
-            raise GwmConfigurationError(operation=operation) from None
-        if (
-            not isinstance(sequence_number, str)
-            or _BEAN_TECH_SEQUENCE.fullmatch(sequence_number) is None
-        ):
-            raise GwmConfigurationError(operation=operation)
-        return sequence_number
 
     async def _send_locked(
         self,
@@ -2142,72 +2206,6 @@ class ChinaClient:
             body=None,
         )
 
-
-    def _build_navinfo_climate_config_request(
-        self,
-        state: ChinaAuthState,
-        identifier: VehicleIdentifier,
-        *,
-        operation_time_minutes: int,
-        temperature: int,
-    ) -> _ChinaTransportRequest:
-        operation: Literal["save_climate_config"] = "save_climate_config"
-        body = encode_dotnet_json(
-            {
-                "configs": {
-                    "cmdBody": {
-                        "allowStartEng": 1,
-                        "operationTime": operation_time_minutes * 60,
-                        "temperature": temperature,
-                    },
-                    "controlType": "AIR_CONDITIONER_START",
-                },
-                "vin": identifier.value,
-            }
-        )
-        headers = self._bean_tech_authenticated_headers(
-            state,
-            identifier,
-            operation=operation,
-            method="POST",
-            path=_NAVINFO_CLIMATE_CONFIG_PATH,
-            parameter="json=" + body,
-        )
-        headers["Content-Type"] = "application/json; charset=UTF-8"
-        return _ChinaTransportRequest(
-            operation=operation,
-            service="bean_tech",
-            method="POST",
-            url=_NAVINFO_CLIMATE_CONFIG_URL,
-            headers=headers,
-            body=body.encode("utf-8"),
-        )
-
-    def _build_bean_tech_timely_request(
-        self,
-        state: ChinaAuthState,
-        identifier: VehicleIdentifier,
-        *,
-        sequence_number: str,
-        operation: Literal[
-            "send_vehicle_control_command",
-            "send_climate_command",
-            "set_bean_tech_comfort_mode",
-        ],
-        control_type: str,
-        command_body: Mapping[str, object] | None,
-        security_token: str | None,
-    ) -> _ChinaTransportRequest:
-        return self._build_bean_tech_timely_request_for_commands(
-            state,
-            identifier,
-            sequence_number=sequence_number,
-            operation=operation,
-            commands=[(control_type, command_body)],
-            send_type=0,
-            security_token=security_token,
-        )
-
     def _build_bean_tech_timely_request_for_commands(
         self,
         state: ChinaAuthState,
@@ -2221,7 +2219,6 @@ class ChinaClient:
         ],
         commands: Sequence[tuple[str, Mapping[str, object] | None]],
         send_type: int,
-        security_token: str | None,
     ) -> _ChinaTransportRequest:
         command_list: list[dict[str, object]] = []
         for control_type, command_body in commands:
@@ -2246,8 +2243,6 @@ class ChinaClient:
             parameter="json=" + body,
         )
         headers["Content-Type"] = "application/json; charset=UTF-8"
-        if security_token is not None:
-            headers["securityToken"] = security_token
         return _ChinaTransportRequest(
             operation=operation,
             service="bean_tech",
@@ -2256,77 +2251,6 @@ class ChinaClient:
             headers=headers,
             body=body.encode("utf-8"),
         )
-
-    def _build_bean_tech_result_request(
-        self,
-        state: ChinaAuthState,
-        identifier: VehicleIdentifier,
-        command_id: str,
-        *,
-        msg_type: Literal["remote", "charge"] = "remote",
-    ) -> _ChinaTransportRequest:
-        operation: Literal["get_remote_command_result"] = "get_remote_command_result"
-        encoded_sequence = quote(command_id, safe="", encoding="utf-8", errors="strict")
-        encoded_vin = quote(identifier.value, safe="", encoding="utf-8", errors="strict")
-        query = "seqNo=" + encoded_sequence + "&vin=" + encoded_vin + "&msgType=" + msg_type
-        # The bt-auth-sign canonical string sorts query keys, lowercases them and
-        # concatenates without separators (matches the retired add-on's
-        # SendBeanTechGetAsync and the NavInfo result request).
-        parameter = "msgtype=" + msg_type + "seqno=" + command_id + "vin=" + identifier.value
-        headers = self._bean_tech_authenticated_headers(
-            state,
-            identifier,
-            operation=operation,
-            method="GET",
-            path=_BEAN_TECH_TIMELY_RESULT_PATH,
-            parameter=parameter,
-        )
-        return _ChinaTransportRequest(
-            operation=operation,
-            service="bean_tech",
-            method="GET",
-            url=_BEAN_TECH_TIMELY_RESULT_URL + "?" + query,
-            headers=headers,
-            body=None,
-        )
-
-
-    def _build_bean_tech_config_query_request(
-        self,
-        state: ChinaAuthState,
-        identifier: VehicleIdentifier,
-        *,
-        types: Sequence[str],
-        operation: Literal["get_bean_tech_ac_temperature"],
-    ) -> _ChinaTransportRequest:
-        if state.auto_ai_user_id is None:
-            raise GwmAuthenticationError(operation=operation)
-        body = encode_dotnet_json(
-            {
-                "sendType": 0,
-                "types": list(types),
-                "userId": state.auto_ai_user_id,
-                "vin": identifier.value,
-            }
-        )
-        headers = self._bean_tech_authenticated_headers(
-            state,
-            identifier,
-            operation=operation,
-            method="POST",
-            path=_BEAN_TECH_CONFIG_QUERY_PATH,
-            parameter="json=" + body,
-        )
-        headers["Content-Type"] = "application/json; charset=UTF-8"
-        return _ChinaTransportRequest(
-            operation=operation,
-            service="bean_tech",
-            method="POST",
-            url=_BEAN_TECH_CONFIG_QUERY_URL,
-            headers=headers,
-            body=body.encode("utf-8"),
-        )
-
 
     def _build_bean_tech_subscribe_request(
         self,
@@ -2466,6 +2390,126 @@ class ChinaClient:
             body=body.encode("utf-8"),
         )
 
+    def _build_bean_tech_command_request(
+        self,
+        state: ChinaAuthState,
+        identifier: VehicleIdentifier,
+        *,
+        sequence_number: str,
+        operation: Literal[
+            "send_lock_command",
+            "send_close_windows_command",
+            "send_vehicle_control_command",
+        ],
+        control_type: str,
+        command_body: Mapping[str, object] | None,
+    ) -> _ChinaTransportRequest:
+        timely = operation == "send_vehicle_control_command" and control_type in {
+            "WHISTLE", "FLASH", "WHISTLE_FLASH"
+        }
+        payload: dict[str, object] = {
+            "vin": identifier.value,
+            "seqNo": sequence_number,
+            "sendType": 0,
+            "commands": [
+                {
+                    "controlType": control_type,
+                    "cmdBody": None if command_body is None else dict(command_body),
+                }
+            ],
+        }
+        if timely:
+            # The tested PIN-exempt commands omit cmdBody and isSaveConfig.
+            payload["commands"] = [{"controlType": control_type}]
+        else:
+            payload["isSaveConfig"] = None
+        body = encode_dotnet_json(payload)
+        path = _BEAN_TECH_TIMELY_PATH if timely else _BEAN_TECH_SEND_PATH
+        headers = self._bean_tech_authenticated_headers(
+            state,
+            identifier,
+            operation=operation,
+            method="POST",
+            path=path,
+            parameter="json=" + body,
+        )
+        headers["Content-Type"] = "application/json; charset=UTF-8"
+        return _ChinaTransportRequest(
+            operation=operation,
+            service="bean_tech",
+            method="POST",
+            url=_BEAN_TECH_TIMELY_URL if timely else _BEAN_TECH_SEND_URL,
+            headers=headers,
+            body=body.encode("utf-8"),
+        )
+
+    def _build_navinfo_climate_config_request(
+        self,
+        state: ChinaAuthState,
+        identifier: VehicleIdentifier,
+        *,
+        operation_time_minutes: int,
+        temperature: int,
+    ) -> _ChinaTransportRequest:
+        operation: Literal["save_climate_config"] = "save_climate_config"
+        body = encode_dotnet_json(
+            {
+                "configs": {
+                    "cmdBody": {
+                        "allowStartEng": 1,
+                        "operationTime": operation_time_minutes * 60,
+                        "temperature": temperature,
+                    },
+                    "controlType": "AIR_CONDITIONER_START",
+                },
+                "vin": identifier.value,
+            }
+        )
+        headers = self._bean_tech_authenticated_headers(
+            state,
+            identifier,
+            operation=operation,
+            method="POST",
+            path=_NAVINFO_CLIMATE_CONFIG_PATH,
+            parameter="json=" + body,
+        )
+        headers["Content-Type"] = "application/json; charset=UTF-8"
+        return _ChinaTransportRequest(
+            operation=operation,
+            service="bean_tech",
+            method="POST",
+            url=_NAVINFO_CLIMATE_CONFIG_URL,
+            headers=headers,
+            body=body.encode("utf-8"),
+        )
+
+    def _build_bean_tech_result_request(
+        self,
+        state: ChinaAuthState,
+        identifier: VehicleIdentifier,
+        command_id: str,
+    ) -> _ChinaTransportRequest:
+        operation: Literal["get_remote_command_result"] = "get_remote_command_result"
+        headers = self._bean_tech_authenticated_headers(
+            state,
+            identifier,
+            operation=operation,
+            method="GET",
+            path=_BEAN_TECH_RESULT_PATH,
+            parameter="seqno=" + command_id,
+        )
+        return _ChinaTransportRequest(
+            operation=operation,
+            service="bean_tech",
+            method="GET",
+            url=(
+                _BEAN_TECH_RESULT_URL
+                + "?seqNo="
+                + quote(command_id, safe="", encoding="utf-8", errors="strict")
+            ),
+            headers=headers,
+            body=None,
+        )
 
     def _bean_tech_authenticated_headers(
         self,
@@ -2517,6 +2561,8 @@ class ChinaClient:
             "get_charging_plan",
             "set_charging_plan",
             "send_climate_command",
+            "send_lock_command",
+            "send_close_windows_command",
             "send_vehicle_control_command",
         ],
         state: ChinaAuthState,
@@ -2994,49 +3040,6 @@ def _parse_bean_tech_command_results(
     *,
     command_id: str,
 ) -> tuple[RemoteCommandResultItem, ...]:
-    # PIN-configured path hits the v3.0 result endpoint, which answers with
-    # messageList[].messageData = {resultCode, resultMessage, transactionId, ...}.
-    # resultCode "2"/"3" = still running, "0" = success. The seqNo query already
-    # scopes the list to one command, so no transactionId correlation is applied.
-    if isinstance(value, Mapping) and _property(value, "messageList") is not None:
-        messages = _property(value, "messageList")
-        if not isinstance(messages, list):
-            raise ValueError("command_result_invalid")
-        results: list[RemoteCommandResultItem] = []
-        for message in messages:
-            if not isinstance(message, Mapping):
-                continue
-            message_data = _property(message, "messageData")
-            if message_data is None:
-                message_data = message
-            if isinstance(message_data, str):
-                if not message_data.strip():
-                    continue
-                try:
-                    message_data = _decode_json_bytes(message_data.encode("utf-8"))
-                except (UnicodeError, json.JSONDecodeError, RecursionError, ValueError):
-                    continue
-            if not isinstance(message_data, Mapping):
-                continue
-            result_code = _scalar_text(_property(message_data, "resultCode"))
-            if not result_code:
-                continue
-            normalized_code = "2000" if result_code in {"2", "3"} else result_code
-            result_message = _scalar_text(_property(message_data, "resultMessage"))
-            if not result_message and normalized_code == "2000":
-                result_message = "Command is still running"
-            results.append(
-                RemoteCommandResultItem(
-                    command_id=command_id,
-                    remote_type=_scalar_text(_property(message, "messageType")),
-                    result_code=normalized_code,
-                    result_message=result_message,
-                )
-            )
-        return tuple(results)
-
-    # No-PIN path still hits the legacy T5 result endpoint: a flat list (or a
-    # resultList/list key) of {remoteType, resultCode, resultMsg}.
     candidates = value
     if isinstance(value, Mapping):
         candidates = _property(value, "resultList")
@@ -3056,6 +3059,68 @@ def _parse_bean_tech_command_results(
         )
         for item in parsed
     )
+
+
+def _parse_bean_tech_timely_results(
+    value: object,
+    *,
+    command_id: str,
+) -> tuple[RemoteCommandResultItem, ...]:
+    """Decode the BeanTech v3 stream scoped by the request's VIN and seqNo."""
+    if not isinstance(value, Mapping):
+        raise ValueError("command_result_invalid")
+    messages = _property(value, "messageList")
+    if messages is None:
+        return ()
+    if not isinstance(messages, list):
+        raise ValueError("command_result_invalid")
+    results: list[RemoteCommandResultItem] = []
+    for message in messages:
+        if not isinstance(message, Mapping):
+            continue
+        data = _property(message, "messageData")
+        if data is None:
+            data = message
+        if isinstance(data, str):
+            if not data.strip():
+                continue
+            data = _decode_json_bytes(data.encode("utf-8"))
+        if not isinstance(data, Mapping):
+            continue
+        code = _scalar_text(_property(data, "resultCode"))
+        if not code:
+            continue
+        results.append(
+            RemoteCommandResultItem(
+                # BeanTech's transactionId need not equal our seqNo. The query
+                # scopes this stream; keep NavInfo's separate correlation rules.
+                command_id=command_id,
+                remote_type=_scalar_text(_property(message, "messageType")),
+                result_code="2000" if code in {"2", "3"} else code,
+                result_message=_scalar_text(_property(data, "resultMessage")),
+            )
+        )
+    return tuple(results)
+
+
+def _bean_tech_lock_window_control(
+    command_code: int,
+) -> tuple[str, Mapping[str, object] | None]:
+    if command_code == 1:
+        return "VEHICLE_UNLOCK", None
+    if command_code == 2:
+        return "VEHICLE_LOCK", None
+    if command_code == 3:
+        return (
+            "WINDOW_CLOSE",
+            {
+                "leftFront": 0,
+                "leftBack": 0,
+                "rightFront": 0,
+                "rightBack": 0,
+            },
+        )
+    raise ValueError("command_code_invalid")
 
 
 def _navinfo_vehicle_control(
@@ -3089,6 +3154,44 @@ def _navinfo_vehicle_control(
         ),
     )
 
+
+def _bean_tech_comfort_off_commands() -> tuple[
+    tuple[str, Mapping[str, object] | None], ...
+]:
+    """The multi-command BeanTech one-touch comfort off sequence.
+
+    ``sendType=1`` tells the vehicle to treat the commands as one atomic
+    operation. The retired add-on's ``SendBeanTechComfortOffAsync`` sent these
+    exact four commands: air conditioning off, seat heating off, seat
+    ventilation off, and steering-wheel heating off.
+    """
+    return (
+        ("AIR_CONDITIONER_STOP", None),
+        (
+            "SEAT_HEATING_STOP",
+            {"leftFront": 0, "operationMode": 1, "rightFront": 0},
+        ),
+        (
+            "SEAT_VENTILATION_STOP",
+            {"leftFront": 0, "operationMode": 2, "rightFront": 0},
+        ),
+        ("STEERING_WHEEL_HEATLESS", None),
+    )
+
+def _bean_tech_climate_control(
+    command: ClimateCommand,
+) -> tuple[str, Mapping[str, object] | None]:
+    if command.mode == "off":
+        return "AIR_CONDITIONER_STOP", None
+    # Preserve the tested automatic A/C payload, including engine permission.
+    return (
+        "AIR_CONDITIONER_START",
+        {
+            "allowStartEng": 1,
+            "operationTime": command.operation_time_minutes * 60,
+            "temperature": command.temperature,
+        },
+    )
 
 def _bean_tech_vehicle_control(
     command: ChinaVehicleControlCommand,
@@ -3147,50 +3250,22 @@ def _bean_tech_vehicle_control(
         return "DEFROST_BACK_STOP", None
     if command.action == "cabin_clean":
         return "CABIN_CLEANING_START", {"operationTime": 60}
+    if command.action == "remote_start":
+        return (
+            "ENGINE_START",
+            {"operationTime": (command.run_time_minutes or 15) * 60},
+        )
+    if command.action == "remote_stop":
+        return "ENGINE_STOP", None
+    if command.action == "horn":
+        return "WHISTLE", None
+    if command.action == "flash_lights":
+        return "FLASH", None
+    if command.action == "horn_and_lights":
+        return "WHISTLE_FLASH", None
+    if command.action == "sunroof_close":
+        return "SKYLIGNT_CLOSE", {"skyLight": 0}
     raise ValueError("vehicle_control_action_invalid")
-
-
-def _bean_tech_comfort_off_commands() -> tuple[
-    tuple[str, Mapping[str, object] | None], ...
-]:
-    """The multi-command BeanTech one-touch comfort off sequence.
-
-    ``sendType=1`` tells the vehicle to treat the commands as one atomic
-    operation. The retired add-on's ``SendBeanTechComfortOffAsync`` sent these
-    exact four commands: air conditioning off, seat heating off, seat
-    ventilation off, and steering-wheel heating off.
-    """
-    return (
-        ("AIR_CONDITIONER_STOP", None),
-        (
-            "SEAT_HEATING_STOP",
-            {"leftFront": 0, "operationMode": 1, "rightFront": 0},
-        ),
-        (
-            "SEAT_VENTILATION_STOP",
-            {"leftFront": 0, "operationMode": 2, "rightFront": 0},
-        ),
-        ("STEERING_WHEEL_HEATLESS", None),
-    )
-
-
-def _bean_tech_climate_control(
-    command: ClimateCommand,
-) -> tuple[str, Mapping[str, object] | None]:
-    if command.mode == "off":
-        return "AIR_CONDITIONER_STOP", None
-    # BeanTech has no separate heat/cool distinction: "cool", "heat" and "auto"
-    # all map to the automatic AIR_CONDITIONER_START command. ``allowStartEng``
-    # is always 1 for BeanTech because its "auto" mode doubles as the app's
-    # linked hybrid-engine-heating switch (the retired add-on's ``heatSwitch``).
-    return (
-        "AIR_CONDITIONER_START",
-        {
-            "allowStartEng": 1,
-            "operationTime": command.operation_time_minutes * 60,
-            "temperature": command.temperature,
-        },
-    )
 
 
 def _optional_bool(value: object, *, default: bool) -> bool:
@@ -3242,12 +3317,16 @@ def _optional_nonnegative_number(value: object) -> float | None:
     return result
 
 
-def _decode_g_app_envelope(response: _ChinaTransportResponse, *, operation: str) -> object:
+def _decode_g_app_envelope(
+    response: _ChinaTransportResponse, *, operation: str, require_code: bool = False,
+) -> object:
     root = _decode_json_response(response, operation=operation)
     try:
         code = _scalar_text(_property(root, "code"))
     except (TypeError, ValueError):
         raise GwmSchemaError(operation=operation) from None
+    if require_code and code is None:
+        raise GwmSchemaError(operation=operation)
     if code is not None and code not in {"0", "000000", "200"}:
         if code == "1013":
             raise _ChinaRiskControlError(operation=operation, api_code=code)

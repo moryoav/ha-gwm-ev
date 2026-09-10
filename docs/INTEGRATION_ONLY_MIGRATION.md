@@ -166,7 +166,7 @@ The integration must continue to discover multiple vehicles dynamically and iden
 - GPS authorization, tire warning states, and window learning states.
 - Steering-wheel, windscreen, and seat heating/ventilation values.
 - Engine/raw state codes and the complete raw-item map for diagnostics and future mapping.
-- Climate mode/action, target/current temperature, bounds, step, and operation time.
+- Climate `auto`/`off` mode, provider-reported action when known, target/current temperature, bounds, step, and operation time.
 
 The existing HA platforms must remain available: sensor, binary sensor, device tracker, climate, lock, button, number, and switch. Missing regional/model values remain unknown or unavailable without breaking other entities.
 
@@ -183,7 +183,7 @@ The existing HA platforms must remain available: sensor, binary sensor, device t
 
 Remote controls remain behind explicit opt-in. Europe, ANZ, and Russia also require a configured security PIN; the China protocol does not send one:
 
-- Climate on/off, temperature, and operation time; China additionally exposes heating and uses a separate parameter-update operation when HVAC is already running.
+- Climate auto/off, target temperature, and operation time. The vehicle determines heating or cooling from the target; China keeps its separate command and configuration requests.
 - Door lock and unlock.
 - Close all windows.
 - China-only remote engine start/stop, horn, light flash, combined vehicle search, tailgate open/close, and sunroof close/tilt/half/full controls.
@@ -380,6 +380,7 @@ The changed checkpoints stay intentionally narrow:
 | D-072 | 2026-08-31 | I apply the current GWM ANZ app's password input formatters before current-v2 login. | A second trace of both the login and set-password views found the same ordered rules: allow `[a-zA-Z0-9\s]`, deny ASCII spaces, then limit the result to 40 characters. The beta previously sent Home Assistant's password field verbatim, so a symbol that the official app silently removes could cause exact `308001`. Release `v0.16.10` applies those rules only to `current_v2`; `legacy_v1` stays byte-compatible. |
 | D-073 | 2026-08-31 | I expose only bounded client metadata when a post-login vehicle refresh fails. | The tester's `v0.16.10` attempt completed password authentication, requested and accepted the one-time code, created the config entry, and completed vehicle discovery before `getLastStatus` returned an application error. Release `v0.16.11` retains the sanitized API code in the failed-setup message and warning log so the next stored-session retry can identify the exact request mismatch without another password login or verification-code request. |
 | D-074 | 2026-08-31 | I separate current ANZ authentication signing from native vehicle-read signing. | The tester's stored-session retry exposed exact `607099` at `getLastStatus`, which is a signature rejection. The signed 1.0.6 app performs authentication through its Flutter networking layer but routes discovery, status, and basics through the native vehicle API and request interceptor. Queryless discovery had hidden the mismatch. Current-v2 reads therefore retain the current session headers and `gwId`, but use the native 16-character nonce and established ANZ query canonicalization. Authentication and commands remain unchanged until their own evidence requires a narrower adjustment. |
+| D-075 | 2026-09-02 | I replace the climate `cool`/`heat` contract with `auto`/`off` without aliases. | Every supported provider request distinguishes only A/C off from A/C on with a target temperature. The vehicle decides whether to heat or cool, so separate modes and a guessed `cooling` action misrepresent the protocol. The breaking contract is versioned in integration 0.17.0. |
 
 ## Post-Branch Main Drift Review
 
