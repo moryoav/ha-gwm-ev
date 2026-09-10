@@ -181,6 +181,22 @@ async def test_appointment_readback_clears_unset_and_retains_known_state_on_erro
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("minute", [0, 3])
+async def test_appointment_reselecting_reported_time_preserves_the_existing_appointment(monkeypatch, minute):
+    entity, api = _appointment(monkeypatch)
+    future = int(datetime(2026, 1, 2, 8, minute, 7, tzinfo=UTC).timestamp() * 1000)
+    api.async_get_cabin_clean_appointment.return_value = future
+    await entity._async_read_state()
+    option = entity.current_option
+    assert option in entity.options
+
+    await entity.async_select_option(option)
+
+    assert entity._time_ms == future
+    api.async_set_cabin_clean_appointment.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_appointment_only_changes_local_value_after_success(monkeypatch):
     entity, api = _appointment(monkeypatch)
     api.async_set_cabin_clean_appointment.side_effect = GwmApiError(api_code="7")

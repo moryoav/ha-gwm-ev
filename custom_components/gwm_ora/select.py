@@ -133,6 +133,8 @@ class GwmCabinCleanAppointmentSelect(GwmEntity, SelectEntity):
 
     async def async_select_option(self, option: str) -> None:
         async with self._write_lock:
+            if option == self.current_option:
+                return
             time_ms = _clock_to_today_ms(option)
             self._generation += 1
             await async_call_gwm_api(
