@@ -47,10 +47,9 @@ async def async_setup_entry(
         )
         existing = [
             GwmChargingScheduleSwitch(api, coordinator, vin),
-            GwmFrontDefrosterSwitch(api, coordinator, vin),
         ]
         if not is_beantech:
-            return existing
+            return existing + [GwmFrontDefrosterSwitch(api, coordinator, vin)]
         return existing + [
             GwmRemoteControlSwitch(
                 api,

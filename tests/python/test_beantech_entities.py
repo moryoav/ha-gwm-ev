@@ -21,7 +21,7 @@ from custom_components.gwm_ora.button import async_setup_entry as setup_buttons
 from custom_components.gwm_ora.coordinator import GwmDataUpdateCoordinator
 from custom_components.gwm_ora.select import GwmCabinCleanAppointmentSelect, _clock_to_today_ms, _ms_to_clock
 from custom_components.gwm_ora.select import async_setup_entry as setup_selects
-from custom_components.gwm_ora.switch import GwmRemoteControlSwitch
+from custom_components.gwm_ora.switch import GwmChargingScheduleSwitch, GwmFrontDefrosterSwitch, GwmRemoteControlSwitch
 from custom_components.gwm_ora.switch import async_setup_entry as setup_switches
 from gwm_client import GwmApiError
 
@@ -58,6 +58,10 @@ async def test_beantech_entities_are_registered_only_on_the_intended_platform(re
         added = []
         await setup(hass, entry, added.extend)
         assert len({entity.unique_id for entity in added}) == len(added)
+        if setup is setup_switches:
+            assert sum(isinstance(entity, GwmChargingScheduleSwitch) for entity in added) == 1
+            assert sum(isinstance(entity, GwmFrontDefrosterSwitch) for entity in added) == int(not expected)
+            assert sum(entity.translation_key == "defrost_front" for entity in added) == int(expected)
         new = [entity for entity in added if isinstance(entity, new_classes)]
         assert len(new) == (count if expected else 0)
         assert all(entity.available == enabled for entity in new)
