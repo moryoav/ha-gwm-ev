@@ -193,7 +193,7 @@ async def test_cloud_coordinator_keeps_mixed_china_platform_entities_isolated() 
 
 
 @pytest.mark.asyncio
-async def test_task17_capability_exposes_only_climate_and_keeps_beantech_hidden() -> None:
+async def test_climate_capability_enables_beantech_without_enabling_other_controls() -> None:
     coordinator = GwmDataUpdateCoordinator(
         HomeAssistant("synthetic-config"),
         SimpleNamespace(),
@@ -224,10 +224,10 @@ async def test_task17_capability_exposes_only_climate_and_keeps_beantech_hidden(
             ],
         }
     )
-    assert not GwmClimate(
+    assert GwmClimate(
         SimpleNamespace(), coordinator, "SYNTHETIC-BEANTECH"
     ).available
-    assert not GwmClimateRunTimeNumber(
+    assert GwmClimateRunTimeNumber(
         SimpleNamespace(), coordinator, "SYNTHETIC-BEANTECH"
     ).available
 

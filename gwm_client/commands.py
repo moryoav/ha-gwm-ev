@@ -25,7 +25,25 @@ type ChinaVehicleControlAction = Literal[
     "sunroof_full",
     "cabin_purge",
     "force_refresh",
+    "seat_heating_start",
+    "seat_heating_stop",
+    "seat_heating_start_passenger",
+    "seat_heating_stop_passenger",
+    "seat_ventilation_start",
+    "seat_ventilation_stop",
+    "seat_ventilation_start_passenger",
+    "seat_ventilation_stop_passenger",
+    "steering_wheel_heating",
+    "steering_wheel_heatless",
+    "defrost_front_start",
+    "defrost_front_stop",
+    "defrost_back_start",
+    "defrost_back_stop",
+    "cabin_clean",
+    "comfort_off",
 ]
+type ChinaRemoteCommandAction = ChinaVehicleControlAction | Literal["climate", "comfort_mode"]
+
 type RemoteCommandState = Literal["pending", "completed", "failed"]
 
 NAVINFO_CHINA_VEHICLE_CONTROL_ACTIONS: frozenset[ChinaVehicleControlAction] = frozenset(
@@ -57,6 +75,29 @@ BEANTECH_CHINA_VEHICLE_CONTROL_ACTIONS: frozenset[ChinaVehicleControlAction] = f
 )
 BEANTECH_HORN_LIGHT_ACTIONS: frozenset[ChinaVehicleControlAction] = frozenset(
     {"horn", "flash_lights", "horn_and_lights"}
+)
+
+BEANTECH_COMFORT_ACTIONS: frozenset[ChinaVehicleControlAction] = frozenset({
+    "seat_heating_start",
+    "seat_heating_stop",
+    "seat_heating_start_passenger",
+    "seat_heating_stop_passenger",
+    "seat_ventilation_start",
+    "seat_ventilation_stop",
+    "seat_ventilation_start_passenger",
+    "seat_ventilation_stop_passenger",
+    "steering_wheel_heating",
+    "steering_wheel_heatless",
+    "defrost_front_start",
+    "defrost_front_stop",
+    "defrost_back_start",
+    "defrost_back_stop",
+    "cabin_clean",
+    "comfort_off",
+})
+BEANTECH_CHINA_VEHICLE_CONTROL_ACTIONS |= BEANTECH_COMFORT_ACTIONS
+BEANTECH_TIMELY_ACTIONS: frozenset[ChinaRemoteCommandAction] = (
+    BEANTECH_HORN_LIGHT_ACTIONS | BEANTECH_COMFORT_ACTIONS | {"climate", "comfort_mode"}
 )
 
 _COMMAND_IDENTIFIER = re.compile(r"[\x21-\x7e]{1,512}")
@@ -151,7 +192,7 @@ class ChinaVehicleControlCommand:
         )
         if (
             type(self.identifier) is not VehicleIdentifier
-            or self.action not in NAVINFO_CHINA_VEHICLE_CONTROL_ACTIONS
+            or self.action not in NAVINFO_CHINA_VEHICLE_CONTROL_ACTIONS | BEANTECH_CHINA_VEHICLE_CONTROL_ACTIONS
             or not valid_run_time
             or (self.action != "remote_start" and self.run_time_minutes is not None)
         ):

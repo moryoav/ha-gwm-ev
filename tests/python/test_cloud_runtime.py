@@ -885,7 +885,7 @@ async def test_china_runtime_handoff_maps_platform_capabilities_and_no_pin_write
     assert snapshots[1]["capabilities"] == {
         "remote_commands": True,
         "charging_control": False,
-        "climate_commands": False,
+        "climate_commands": True,
         "lock_window_commands": True,
         "china_vehicle_commands": True,
         "front_defroster_commands": False,
@@ -924,18 +924,17 @@ async def test_china_runtime_handoff_maps_platform_capabilities_and_no_pin_write
     assert client.windows == [windows]
     assert client.controls == [control]
     assert client.charging == [charging]
-    with pytest.raises(GwmRoutePolicyError):
-        await runtime.async_get_climate_context(
-            beantech.identifier,
-            include_status=False,
-        )
+    bean_context = await runtime.async_get_climate_context(
+        beantech.identifier, include_status=False,
+    )
+    assert bean_context.basics.climate == CloudClimateConfiguration("22", "900")
     await runtime.aclose()
     assert client.closed
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("region", ["eu", "aus", "rus", "cn"])
-@pytest.mark.parametrize("action", [None, "horn", "flash_lights", "horn_and_lights"])
+@pytest.mark.parametrize("action", [None, "horn", "flash_lights", "horn_and_lights", "climate", "comfort_mode", "comfort_off", "cabin_clean"])
 async def test_horn_result_routing_keyword_stays_inside_china(region: str, action: str | None) -> None:
     client = SimpleNamespace(get_remote_command_results=AsyncMock(return_value=()))
     runtime = GwmCloudClient(region, client)
@@ -945,3 +944,25 @@ async def test_horn_result_routing_keyword_stays_inside_china(region: str, actio
         client.get_remote_command_results.assert_awaited_once_with(identifier, "command-id", control_action=action)
     else:
         client.get_remote_command_results.assert_awaited_once_with(identifier, "command-id")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("region", ["cn", "eu", "aus", "rus"])
+@pytest.mark.parametrize("method,client_method,kwargs,result", [
+    ("async_get_bean_tech_comfort_modes", "get_bean_tech_comfort_modes", {}, ({"modeId": "123", "type": "1", "commonUseMode": 1},)),
+    ("async_set_bean_tech_comfort_mode", "set_bean_tech_comfort_mode", {"mode_type": "warm"}, "provider-mode-id"),
+    ("async_set_bean_tech_cabin_clean_appointment", "set_bean_tech_cabin_clean_appointment", {"time_ms": 1788375600000}, None),
+    ("async_get_bean_tech_cabin_clean_appointment", "get_bean_tech_cabin_clean_appointment", {}, 1788375600000),
+])
+async def test_beantech_runtime_adapters_are_china_only_and_preserve_values(region, method, client_method, kwargs, result):
+    call = AsyncMock(return_value=result)
+    client = SimpleNamespace(**{client_method: call})
+    runtime = GwmCloudClient(region, client)
+    identifier = VehicleIdentifier("LGWTEST0000000003")
+    if region == "cn":
+        assert await getattr(runtime, method)(identifier, **kwargs) == result
+        call.assert_awaited_once_with(identifier, **kwargs)
+    else:
+        with pytest.raises(GwmRoutePolicyError):
+            await getattr(runtime, method)(identifier, **kwargs)
+        call.assert_not_awaited()

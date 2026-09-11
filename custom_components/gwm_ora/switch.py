@@ -36,18 +36,87 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up GWM switches."""
-    setup_vehicle_entities(
-        entry,
-        async_add_entities,
-        lambda vehicle: (
-            GwmChargingScheduleSwitch(
-                entry.runtime_data.api, entry.runtime_data.coordinator, vehicle["vin"]
+
+    def switches_for_vehicle(vehicle: dict) -> list[GwmEntity]:
+        vin = vehicle["vin"]
+        api = entry.runtime_data.api
+        coordinator = entry.runtime_data.coordinator
+        is_beantech = (
+            coordinator.region == "cn"
+            and str(vehicle.get("platform") or "").lower() == "beantech"
+        )
+        existing = [
+            GwmChargingScheduleSwitch(api, coordinator, vin),
+        ]
+        if not is_beantech:
+            return existing + [GwmFrontDefrosterSwitch(api, coordinator, vin)]
+        return existing + [
+            GwmRemoteControlSwitch(
+                api,
+                coordinator,
+                vin,
+                turn_on_action="seat_heating_start",
+                turn_off_action="seat_heating_stop",
+                state_key="front_driver_seat_heater_level",
+                translation_key="seat_heating",
             ),
-            GwmFrontDefrosterSwitch(
-                entry.runtime_data.api, entry.runtime_data.coordinator, vehicle["vin"]
+            GwmRemoteControlSwitch(
+                api,
+                coordinator,
+                vin,
+                turn_on_action="seat_heating_start_passenger",
+                turn_off_action="seat_heating_stop_passenger",
+                state_key="front_passenger_seat_heater_level",
+                translation_key="seat_heating_passenger",
             ),
-        ),
-    )
+            GwmRemoteControlSwitch(
+                api,
+                coordinator,
+                vin,
+                turn_on_action="seat_ventilation_start",
+                turn_off_action="seat_ventilation_stop",
+                state_key="front_driver_seat_vent_level",
+                translation_key="seat_ventilation",
+            ),
+            GwmRemoteControlSwitch(
+                api,
+                coordinator,
+                vin,
+                turn_on_action="seat_ventilation_start_passenger",
+                turn_off_action="seat_ventilation_stop_passenger",
+                state_key="front_passenger_seat_vent_level",
+                translation_key="seat_ventilation_passenger",
+            ),
+            GwmRemoteControlSwitch(
+                api,
+                coordinator,
+                vin,
+                turn_on_action="steering_wheel_heating",
+                turn_off_action="steering_wheel_heatless",
+                state_key="steering_wheel_heater_active",
+                translation_key="steering_wheel_heating",
+            ),
+            GwmRemoteControlSwitch(
+                api,
+                coordinator,
+                vin,
+                turn_on_action="defrost_front_start",
+                turn_off_action="defrost_front_stop",
+                state_key="front_defroster",
+                translation_key="defrost_front",
+            ),
+            GwmRemoteControlSwitch(
+                api,
+                coordinator,
+                vin,
+                turn_on_action="defrost_back_start",
+                turn_off_action="defrost_back_stop",
+                state_key="rear_defroster",
+                translation_key="defrost_back",
+            ),
+        ]
+
+    setup_vehicle_entities(entry, async_add_entities, switches_for_vehicle)
 
 
 class GwmFrontDefrosterSwitch(GwmEntity, SwitchEntity):
@@ -149,3 +218,59 @@ class GwmChargingScheduleSwitch(GwmEntity, SwitchEntity):
             forbidden_translation_key="charging_control_unavailable",
         )
         self.coordinator.set_charging_plan_active(self.vin, False)
+
+
+class GwmRemoteControlSwitch(GwmEntity, SwitchEntity):
+    """Generic BeanTech remote-control on/off switch.
+
+    Maps a paired ``turn_on_action``/``turn_off_action`` to the vehicle and
+    reads the polled status snapshot for its real state. Seat heating and
+    ventilation are exposed as separate driver and passenger switches, each
+    reading its own per-seat level from the snapshot.
+    """
+
+    def __init__(
+        self,
+        api,
+        coordinator,
+        vin: str,
+        *,
+        turn_on_action: str,
+        turn_off_action: str,
+        state_key: str,
+        translation_key: str,
+    ) -> None:
+        super().__init__(coordinator, vin)
+        self._api = api
+        self._turn_on_action = turn_on_action
+        self._turn_off_action = turn_off_action
+        self._state_key = state_key
+        self._attr_translation_key = translation_key
+        self._attr_unique_id = f"{vin}_{translation_key}"
+
+    @property
+    def is_on(self) -> bool | None:
+        value = vehicle_value(self.vehicle, self._state_key)
+        if value is None:
+            return None
+        return bool(value) if type(value) in {bool, int} else None
+
+    @property
+    def available(self) -> bool:
+        return (
+            super().available
+            and self.china_vehicle_commands_available
+            and self.is_china_beantech
+        )
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        command = await async_call_gwm_api(
+            self._api.async_vehicle_control(self.vin, self._turn_on_action)
+        )
+        self.coordinator.async_track_command(command)
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        command = await async_call_gwm_api(
+            self._api.async_vehicle_control(self.vin, self._turn_off_action)
+        )
+        self.coordinator.async_track_command(command)

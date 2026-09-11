@@ -45,6 +45,7 @@ from gwm_client import (
     RussiaAuthState,
     VehicleIdentifier,
 )
+from gwm_client.commands import BEANTECH_COMFORT_ACTIONS
 
 _NOW = datetime(2026, 8, 28, 18, 0, tzinfo=UTC)
 _VIN = "LGWEEUA50PK000001"
@@ -1086,9 +1087,9 @@ async def test_charging_acceptance_finishes_ownership_save_before_cancellation(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("action", ["horn", "flash_lights", "horn_and_lights"])
+@pytest.mark.parametrize("action", ["horn", "flash_lights", "horn_and_lights", *sorted(BEANTECH_COMFORT_ACTIONS)])
 @pytest.mark.parametrize("terminal_code,terminal_state", [("0", "completed"), ("7", "failed")])
-async def test_china_horn_lights_resume_polling_after_restart_without_resending(
+async def test_china_timely_controls_resume_polling_after_restart_without_resending(
     tmp_path: Path, action: str, terminal_code: str, terminal_state: str,
 ) -> None:
     clock = _Clock()
@@ -1120,8 +1121,8 @@ async def test_china_horn_lights_resume_polling_after_restart_without_resending(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("action", ["horn", "flash_lights", "horn_and_lights"])
-async def test_china_horn_lights_timeout_without_resending(tmp_path: Path, action: str) -> None:
+@pytest.mark.parametrize("action", ["horn", "flash_lights", "horn_and_lights", *sorted(BEANTECH_COMFORT_ACTIONS)])
+async def test_china_timely_controls_timeout_without_resending(tmp_path: Path, action: str) -> None:
     cloud = _Cloud()
     clock = _Clock()
     api, _, _ = await _china_api(tmp_path, cloud, clock)
@@ -1135,8 +1136,8 @@ async def test_china_horn_lights_timeout_without_resending(tmp_path: Path, actio
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("region", ["eu", "aus", "rus", "cn"])
-@pytest.mark.parametrize("action", ["horn", "flash_lights", "horn_and_lights"])
-async def test_horn_lights_require_china_and_remote_command_opt_in(
+@pytest.mark.parametrize("action", ["horn", "flash_lights", "horn_and_lights", *sorted(BEANTECH_COMFORT_ACTIONS)])
+async def test_timely_controls_require_china_and_remote_command_opt_in(
     tmp_path: Path, region: str, action: str,
 ) -> None:
     cloud = _Cloud()
@@ -1149,3 +1150,81 @@ async def test_horn_lights_require_china_and_remote_command_opt_in(
         await api.async_vehicle_control(_VIN, action)
     assert cloud.vehicle_controls_sent == []
     assert await store.async_get_command_journal(cloud_entry_data(credentials)) == ()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("family,command_id", [("climate", "provider-command-1"), ("comfort_mode", "provider-command-comfort")])
+@pytest.mark.parametrize("outcome", ["completed", "failed", "timeout"])
+async def test_beantech_climate_and_dynamic_comfort_resume_after_restart(tmp_path, family, command_id, outcome):
+    clock = _Clock()
+    cloud = _Cloud()
+    async def set_mode(identifier, *, mode_type):
+        assert identifier.value == _VIN and mode_type == "warm"
+        return command_id
+    cloud.async_set_bean_tech_comfort_mode = set_mode
+    api, store, credentials = await _china_api(tmp_path, cloud, clock)
+    accepted = (
+        await api.async_set_climate(_VIN, mode="auto") if family == "climate"
+        else await api.async_set_comfort_mode(_VIN, mode_type="warm")
+    )
+    cloud = _Cloud()
+    cloud.region = "cn"
+    cloud.poll_results = [
+        (RemoteCommandResultItem(command_id, "remote", "2000", "Waiting"),),
+        (RemoteCommandResultItem(command_id, "remote", "0" if outcome == "completed" else "7", "Result"),),
+    ]
+    recovered = GwmCommandApi(cloud, store, credentials, enabled=True, security_pin=None, clock=clock)
+    await recovered.async_restore(cloud_entry_data(credentials))
+    assert (await recovered.async_get_command(accepted["id"]))["state"] == "in_progress"
+    if outcome == "timeout":
+        clock.value += timedelta(seconds=91)
+    assert (await recovered.async_get_command(accepted["id"]))["state"] == outcome
+    assert cloud.poll_actions == [family] * (1 if outcome == "timeout" else 2)
+    assert cloud.sent == cloud.vehicle_controls_sent == []
+    journal = await store.async_get_command_journal(cloud_entry_data(credentials))
+    assert journal[0].cloud_command_id == command_id
+    assert journal[0].state == ("failed" if outcome == "timeout" else outcome)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("region", ["eu", "aus", "rus", "cn"])
+@pytest.mark.parametrize("method,kwargs", [
+    ("async_set_comfort_mode", {"mode_type": "warm"}),
+    ("async_set_cabin_clean_appointment", {"time_ms": 1735689600000}),
+    ("async_get_cabin_clean_appointment", {}),
+])
+async def test_beantech_additional_apis_require_china_and_opt_in(tmp_path, region, method, kwargs):
+    cloud = _Cloud()
+    if region == "cn":
+        api, _, _ = await _china_api(tmp_path, cloud, _Clock(), enabled=False)
+    else:
+        api, _, _ = await _api(tmp_path, cloud, _Clock(), region=region)
+    with pytest.raises(GwmCommandForbidden):
+        await getattr(api, method)(_VIN, **kwargs)
+
+
+@pytest.mark.asyncio
+async def test_beantech_appointment_api_maps_the_exact_epoch_value(tmp_path):
+    cloud = _Cloud()
+    written = []
+    async def write(identifier, *, time_ms):
+        assert identifier.value == _VIN
+        written.append(time_ms)
+    async def read(identifier):
+        assert identifier.value == _VIN
+        return 1788375600000
+    cloud.async_set_bean_tech_cabin_clean_appointment = write
+    cloud.async_get_bean_tech_cabin_clean_appointment = read
+    api, store, credentials = await _china_api(tmp_path, cloud, _Clock())
+    await api.async_set_cabin_clean_appointment(_VIN, time_ms=1788375600000)
+    assert written == [1788375600000]
+    assert await api.async_get_cabin_clean_appointment(_VIN) == 1788375600000
+    assert await store.async_get_command_journal(cloud_entry_data(credentials)) == ()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["bad", None, []])
+async def test_comfort_mode_api_rejects_invalid_mode_before_cloud_access(tmp_path, mode):
+    api, _, _ = await _china_api(tmp_path, _Cloud(), _Clock())
+    with pytest.raises(GwmCommandError, match="Unsupported comfort mode"):
+        await api.async_set_comfort_mode(_VIN, mode_type=mode)

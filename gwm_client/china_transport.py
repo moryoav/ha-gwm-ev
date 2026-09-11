@@ -62,6 +62,11 @@ type _ChinaOperation = Literal[
     "set_charging_plan",
     "send_climate_command",
     "save_climate_config",
+    "set_bean_tech_ac_temperature",
+    "get_bean_tech_comfort_modes",
+    "set_bean_tech_comfort_mode",
+    "set_bean_tech_cabin_clean_appointment",
+    "get_bean_tech_cabin_clean_appointment",
     "send_lock_command",
     "send_close_windows_command",
     "send_vehicle_control_command",
@@ -97,6 +102,14 @@ _BEAN_TECH_RESULT_URL = (
     "https://gw-app-gateway.gwmapp-h.com/app-api/api/v1.0/vehicle/getRemoteCtrlResultT5"
 )
 _BEAN_TECH_RESULT_PATH = "/app-api/api/v1.0/vehicle/getRemoteCtrlResultT5"
+_BEAN_TECH_SUBSCRIBE_URL = (
+    "https://gw-app-gateway.gwmapp-h.com/app-api/api/v3.0/vehicle/remote-ctrl/subscribe"
+)
+_BEAN_TECH_SUBSCRIBE_PATH = "/app-api/api/v3.0/vehicle/remote-ctrl/subscribe"
+_BEAN_TECH_ONE_TOUCH_MODE_URL = (
+    "https://gw-app-gateway.gwmapp-h.com/app-api/api/v3.0/vehicle/one-touch/mode"
+)
+_BEAN_TECH_ONE_TOUCH_MODE_PATH = "/app-api/api/v3.0/vehicle/one-touch/mode"
 _AUTO_AI_LOGIN_ORIGIN = _G_APP_ORIGIN
 _AUTO_AI_LOGIN_PATH = "/tsp/v1/proxy/navinfo/GW.M.APP_LOGIN"
 _DISCOVERY_URL = (
@@ -278,6 +291,16 @@ class _ChinaTransportRequest:
             _validate_charging_plan_request(self, copied)
         elif self.operation == "send_climate_command":
             _validate_climate_command_request(self, copied)
+        elif self.operation == "set_bean_tech_ac_temperature":
+            _validate_bean_tech_config_request(self, copied)
+        elif self.operation == "get_bean_tech_comfort_modes":
+            _validate_bean_tech_simple_get_request(self, copied)
+        elif self.operation == "set_bean_tech_comfort_mode":
+            _validate_bean_tech_comfort_mode_request(self, copied)
+        elif self.operation == "set_bean_tech_cabin_clean_appointment":
+            _validate_bean_tech_subscribe_request(self, copied)
+        elif self.operation == "get_bean_tech_cabin_clean_appointment":
+            _validate_bean_tech_subscribe_get_request(self, copied)
         elif self.operation == "save_climate_config":
             _validate_navinfo_climate_config_request(self, copied)
         elif self.operation == "send_lock_command":
@@ -976,6 +999,8 @@ def _validate_climate_command_request(
     request: _ChinaTransportRequest,
     headers: Mapping[str, str],
 ) -> None:
+    if _valid_bean_tech_timely_command_request(request, headers, command_kind="climate"):
+        return
     valid_route = any(
         _valid_auto_ai_url(
             request.url,
@@ -1154,6 +1179,8 @@ def _validate_vehicle_control_command_request(
     request: _ChinaTransportRequest,
     headers: Mapping[str, str],
 ) -> None:
+    if _valid_bean_tech_timely_command_request(request, headers, command_kind="vehicle_control"):
+        return
     if request.url == _BEAN_TECH_TIMELY_URL:
         if not _valid_bean_tech_horn_lights_request(request, headers):
             raise ValueError("route_invalid")
@@ -1268,6 +1295,386 @@ def _valid_lock_window_body(
         and body.get("cmdCode") in expected_codes
     )
 
+
+_BEAN_TECH_VEHICLE_CONTROL_BODIES: dict[str, object] = {
+    "SEAT_HEATING_START": (
+        {"leftFront": 3, "operationTime": 600},
+        {"rightFront": 3, "operationTime": 600},
+    ),
+    "SEAT_HEATING_STOP": (
+        {"leftFront": 0, "operationMode": 1},
+        {"rightFront": 0, "operationMode": 1},
+    ),
+    "SEAT_VENTILATION_START": (
+        {"leftFront": 3, "operationTime": 600},
+        {"rightFront": 3, "operationTime": 600},
+    ),
+    "SEAT_VENTILATION_STOP": (
+        {"leftFront": 0, "operationMode": 2},
+        {"rightFront": 0, "operationMode": 2},
+    ),
+    "STEERING_WHEEL_HEATING": {"operationTime": 600},
+    "STEERING_WHEEL_HEATLESS": None,
+    "DEFROST_FRONT_START": {"operationTime": 900},
+    "DEFROST_FRONT_STOP": None,
+    "DEFROST_BACK_START": {"operationTime": 900},
+    "DEFROST_BACK_STOP": None,
+    "CABIN_CLEANING_START": {"operationTime": 60},
+}
+
+def _valid_air_conditioner_start_body(cmd_body: object) -> bool:
+    if not isinstance(cmd_body, Mapping):
+        return False
+    operation_time = cmd_body.get("operationTime")
+    temperature = cmd_body.get("temperature")
+    return (
+        list(cmd_body) == ["allowStartEng", "operationTime", "temperature"]
+        and type(cmd_body.get("allowStartEng")) is int
+        and cmd_body.get("allowStartEng") == 1
+        and isinstance(operation_time, int)
+        and not isinstance(operation_time, bool)
+        and 300 <= operation_time <= 1800
+        and operation_time % 60 == 0
+        and isinstance(temperature, int)
+        and not isinstance(temperature, bool)
+        and 17 <= temperature <= 31
+    )
+
+def _valid_bean_tech_comfort_mode_body(cmd_body: object) -> bool:
+    """Return whether ``cmd_body`` is a COMFORT_MODE_CTRL body with a dynamic modeId."""
+    if not isinstance(cmd_body, Mapping):
+        return False
+    mode_id = cmd_body.get("modeId")
+    mode_type = cmd_body.get("type")
+    return (
+        list(cmd_body) == ["action", "modeId", "type"]
+        and type(cmd_body.get("action")) is int
+        and cmd_body.get("action") == 1
+        and isinstance(mode_id, str)
+        and bool(mode_id.strip())
+        and len(mode_id) <= 128
+        and all(0x21 <= ord(char) <= 0x7E for char in mode_id)
+        and mode_type in ("1", "2")
+    )
+
+def _bean_tech_vehicle_control_expects_body(control_type: str) -> bool:
+    """Return whether ``control_type`` carries a non-null ``cmdBody``."""
+    expected = _BEAN_TECH_VEHICLE_CONTROL_BODIES[control_type]
+    return any(isinstance(body, Mapping) for body in expected) if isinstance(
+        expected, tuple
+    ) else expected is not None
+
+def _bean_tech_vehicle_control_body_matches(
+    control_type: str, cmd_body: object
+) -> bool:
+    """Return whether ``cmd_body`` is one of the accepted bodies for ``control_type``."""
+    expected = _BEAN_TECH_VEHICLE_CONTROL_BODIES[control_type]
+    if isinstance(expected, tuple):
+        return any(encode_dotnet_json(cmd_body) == encode_dotnet_json(body) for body in expected)
+    return encode_dotnet_json(cmd_body) == encode_dotnet_json(expected)
+
+def _valid_bean_tech_comfort_off_commands(commands: object) -> bool:
+    """Return whether ``commands`` is the exact one-touch comfort-off sequence."""
+    return encode_dotnet_json(commands) == encode_dotnet_json([
+        {"controlType": "AIR_CONDITIONER_STOP"},
+        {
+            "controlType": "SEAT_HEATING_STOP",
+            "cmdBody": {"leftFront": 0, "operationMode": 1, "rightFront": 0},
+        },
+        {
+            "controlType": "SEAT_VENTILATION_STOP",
+            "cmdBody": {"leftFront": 0, "operationMode": 2, "rightFront": 0},
+        },
+        {"controlType": "STEERING_WHEEL_HEATLESS"},
+    ])
+
+def _valid_bean_tech_timely_command_request(
+    request: _ChinaTransportRequest,
+    headers: Mapping[str, str],
+    *,
+    command_kind: Literal["vehicle_control", "climate"],
+) -> bool:
+    raw_body = _utf8_body(request.body)
+    body = _decode_wire_object(raw_body) if raw_body is not None else None
+    if not isinstance(body, Mapping):
+        return False
+    commands = body.get("commands")
+    if isinstance(commands, list) and body.get("sendType") == 1:
+        return (
+            command_kind == "vehicle_control"
+            and _valid_bean_tech_comfort_off_commands(commands)
+            and _valid_bean_tech_timely_envelope(
+                request,
+                headers,
+                body=body,
+                sequence=body.get("seqNo"),
+                raw_body=raw_body,
+                send_type=1,
+            )
+        )
+    if (
+        not isinstance(commands, list)
+        or len(commands) != 1
+        or not isinstance(commands[0], dict)
+    ):
+        return False
+    command = commands[0]
+    sequence = body.get("seqNo")
+    has_cmd_body = "cmdBody" in command
+    if command_kind == "climate":
+        control_type = command.get("controlType")
+        if control_type == "AIR_CONDITIONER_START":
+            valid_command = (
+                has_cmd_body
+                and list(command) == ["controlType", "cmdBody"]
+                and _valid_air_conditioner_start_body(command.get("cmdBody"))
+            )
+        elif control_type == "AIR_CONDITIONER_STOP":
+            valid_command = (
+                not has_cmd_body
+                and list(command) == ["controlType"]
+            )
+        else:
+            valid_command = False
+    else:
+        control_type = command.get("controlType")
+        if isinstance(control_type, str) and control_type in _BEAN_TECH_VEHICLE_CONTROL_BODIES:
+            expects_body = _bean_tech_vehicle_control_expects_body(control_type)
+            valid_command = (
+                has_cmd_body == expects_body
+                and list(command)
+                == (
+                    ["controlType", "cmdBody"]
+                    if expects_body
+                    else ["controlType"]
+                )
+                and _bean_tech_vehicle_control_body_matches(
+                    control_type, command.get("cmdBody")
+                )
+            )
+        else:
+            valid_command = False
+    return valid_command and _valid_bean_tech_timely_envelope(
+        request,
+        headers,
+        body=body,
+        sequence=sequence,
+        raw_body=raw_body,
+        send_type=0,
+    )
+
+def _valid_bean_tech_timely_envelope(
+    request: _ChinaTransportRequest,
+    headers: Mapping[str, str],
+    *,
+    body: Mapping[str, object],
+    sequence: object,
+    raw_body: str | None,
+    send_type: object,
+) -> bool:
+    return (
+        request.service == "bean_tech"
+        and request.method == "POST"
+        and request.url == _BEAN_TECH_TIMELY_URL
+        and set(headers) == _BEAN_TECH_COMMAND_HEADERS
+        and list(body) == ["vin", "seqNo", "sendType", "commands"]
+        and _VIN.fullmatch(str(body.get("vin", ""))) is not None
+        and body.get("vin") == headers.get("vin")
+        and isinstance(sequence, str)
+        and _BEAN_TECH_SEQUENCE.fullmatch(sequence) is not None
+        and type(body.get("sendType")) is int
+        and body.get("sendType") == send_type
+        and raw_body is not None
+        and encode_dotnet_json(body) == raw_body
+        and headers.get("Content-Type") == "application/json; charset=UTF-8"
+        and _valid_bean_tech_authenticated_headers(headers)
+        and headers.get("bt-auth-sign")
+        == bean_tech_sign(
+            "POST",
+            _BEAN_TECH_TIMELY_PATH,
+            headers["bt-auth-nonce"],
+            headers["bt-auth-timestamp"],
+            "json=" + raw_body,
+        )
+    )
+
+def _validate_bean_tech_config_request(
+    request: _ChinaTransportRequest,
+    headers: Mapping[str, str],
+) -> None:
+    raw_body = _utf8_body(request.body)
+    body = _decode_wire_object(raw_body) if raw_body is not None else None
+    configs = body.get("configs") if isinstance(body, Mapping) else None
+    if (
+        request.service != "bean_tech"
+        or request.method != "POST"
+        or request.url != _NAVINFO_CLIMATE_CONFIG_URL
+        or raw_body is None
+        or not isinstance(body, Mapping)
+        or set(headers) != _BEAN_TECH_COMMAND_HEADERS
+        or list(body) != ["configs", "vin"]
+        or not isinstance(configs, list)
+        or len(configs) != 1
+        or not isinstance(configs[0], Mapping)
+        or list(configs[0]) != ["controlType", "cmdBody"]
+        or configs[0].get("controlType") != "AIR_CONDITIONER_START"
+        or not _valid_air_conditioner_start_body(configs[0].get("cmdBody"))
+        or _VIN.fullmatch(str(body.get("vin", ""))) is None
+        or body.get("vin") != headers.get("vin")
+        or encode_dotnet_json(body) != raw_body
+        or headers.get("Content-Type") != "application/json; charset=UTF-8"
+        or not _valid_bean_tech_authenticated_headers(headers)
+        or headers.get("bt-auth-sign")
+        != bean_tech_sign(
+            "POST",
+            _NAVINFO_CLIMATE_CONFIG_PATH,
+            headers["bt-auth-nonce"],
+            headers["bt-auth-timestamp"],
+            "json=" + raw_body,
+        )
+    ):
+        raise ValueError("route_invalid")
+
+def _validate_bean_tech_simple_get_request(
+    request: _ChinaTransportRequest,
+    headers: Mapping[str, str],
+) -> None:
+    path = _BEAN_TECH_ONE_TOUCH_MODE_PATH
+    expected_url = _BEAN_TECH_ONE_TOUCH_MODE_URL
+    vin = headers.get("vin", "")
+    if (
+        request.service != "bean_tech"
+        or request.method != "GET"
+        or request.body is not None
+        or request.url != expected_url + "?vin=" + quote(vin, safe="", encoding="utf-8", errors="strict")
+        or set(headers) != _BEAN_TECH_STATUS_HEADERS
+        or _VIN.fullmatch(vin) is None
+        or not _valid_bean_tech_authenticated_headers(headers)
+        or headers.get("bt-auth-sign")
+        != bean_tech_sign(
+            "GET",
+            path,
+            headers["bt-auth-nonce"],
+            headers["bt-auth-timestamp"],
+            "vin=" + vin,
+        )
+    ):
+        raise ValueError("route_invalid")
+
+def _validate_bean_tech_subscribe_request(
+    request: _ChinaTransportRequest,
+    headers: Mapping[str, str],
+) -> None:
+    raw_body = _utf8_body(request.body)
+    body = _decode_wire_object(raw_body) if raw_body is not None else None
+    commands = body.get("commands") if isinstance(body, Mapping) else None
+    subscribe_time = body.get("time") if isinstance(body, Mapping) else None
+    if (
+        request.service != "bean_tech"
+        or request.method != "POST"
+        or request.url != _BEAN_TECH_SUBSCRIBE_URL
+        or raw_body is None
+        or not isinstance(body, Mapping)
+        or set(headers) != _BEAN_TECH_COMMAND_HEADERS
+        or list(body) != ["commands", "subscribeType", "time", "vin"]
+        or type(body.get("subscribeType")) is not int
+        or body.get("subscribeType") != 0
+        or commands
+        != [
+            {
+                "controlType": "CABIN_CLEANING_START",
+                "cmdBody": {"operationTime": 60},
+            }
+        ]
+        or isinstance(subscribe_time, bool)
+        or not isinstance(subscribe_time, int)
+        or not 0 < subscribe_time <= 253402214399000
+        or _VIN.fullmatch(str(body.get("vin", ""))) is None
+        or body.get("vin") != headers.get("vin")
+        or encode_dotnet_json(body) != raw_body
+        or headers.get("Content-Type") != "application/json; charset=UTF-8"
+        or not _valid_bean_tech_authenticated_headers(headers)
+        or headers.get("bt-auth-sign")
+        != bean_tech_sign(
+            "POST",
+            _BEAN_TECH_SUBSCRIBE_PATH,
+            headers["bt-auth-nonce"],
+            headers["bt-auth-timestamp"],
+            "json=" + raw_body,
+        )
+    ):
+        raise ValueError("route_invalid")
+
+def _validate_bean_tech_subscribe_get_request(
+    request: _ChinaTransportRequest,
+    headers: Mapping[str, str],
+) -> None:
+    vin = headers.get("vin", "")
+    try:
+        parsed = urlsplit(request.url)
+        if (
+            parsed.path != _BEAN_TECH_SUBSCRIBE_PATH + "/" + vin
+            or parsed.query != "cmds=CABIN_CLEANING_START&type=0"
+        ):
+            raise ValueError
+    except ValueError:
+        raise ValueError("route_invalid") from None
+    expected_url = (
+        _BEAN_TECH_SUBSCRIBE_URL
+        + "/"
+        + quote(vin, safe="", encoding="utf-8", errors="strict")
+        + "?cmds=CABIN_CLEANING_START&type=0"
+    )
+    if (
+        request.service != "bean_tech"
+        or request.method != "GET"
+        or request.body is not None
+        or request.url != expected_url
+        or parsed.scheme != "https"
+        or parsed.hostname != "gw-app-gateway.gwmapp-h.com"
+        or parsed.port is not None
+        or set(headers) != _BEAN_TECH_STATUS_HEADERS
+        or _VIN.fullmatch(vin) is None
+        or not _valid_bean_tech_authenticated_headers(headers)
+        or headers.get("bt-auth-sign")
+        != bean_tech_sign(
+            "GET",
+            _BEAN_TECH_SUBSCRIBE_PATH + "/" + vin,
+            headers["bt-auth-nonce"],
+            headers["bt-auth-timestamp"],
+            "cmds=CABIN_CLEANING_START&type=0",
+        )
+    ):
+        raise ValueError("route_invalid")
+
+def _validate_bean_tech_comfort_mode_request(
+    request: _ChinaTransportRequest,
+    headers: Mapping[str, str],
+) -> None:
+    raw_body = _utf8_body(request.body)
+    body = _decode_wire_object(raw_body) if raw_body is not None else None
+    if not isinstance(body, Mapping):
+        raise ValueError("route_invalid")
+    commands = body.get("commands")
+    if not isinstance(commands, list) or len(commands) != 1:
+        raise ValueError("route_invalid")
+    command = commands[0]
+    if not isinstance(command, Mapping):
+        raise ValueError("route_invalid")
+    valid_command = (
+        command.get("controlType") == "COMFORT_MODE_CTRL"
+        and list(command) == ["controlType", "cmdBody"]
+        and _valid_bean_tech_comfort_mode_body(command.get("cmdBody"))
+    )
+    if not valid_command or not _valid_bean_tech_timely_envelope(
+        request,
+        headers,
+        body=body,
+        sequence=body.get("seqNo"),
+        raw_body=raw_body,
+        send_type=0,
+    ):
+        raise ValueError("route_invalid")
 
 def _valid_bean_tech_horn_lights_request(
     request: _ChinaTransportRequest,

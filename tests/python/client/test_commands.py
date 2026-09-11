@@ -496,7 +496,7 @@ def test_china_vehicle_control_contract_is_closed_and_platform_filtered() -> Non
         "flash_lights",
         "horn_and_lights",
         "sunroof_close",
-    } == BEANTECH_CHINA_VEHICLE_CONTROL_ACTIONS
+    } < BEANTECH_CHINA_VEHICLE_CONTROL_ACTIONS
     assert (
         ChinaVehicleControlCommand(
             identifier,

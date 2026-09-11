@@ -52,7 +52,6 @@ class GwmClimate(GwmEntity, ClimateEntity):
         return (
             super().available
             and self.climate_commands_available
-            and not self.is_china_beantech
         )
 
     @property

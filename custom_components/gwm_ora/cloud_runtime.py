@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import re
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -61,7 +61,7 @@ from gwm_client import (
     is_overseas_session_expired,
     map_vehicle_snapshot,
 )
-from gwm_client.commands import ChinaVehicleControlAction
+from gwm_client.commands import ChinaRemoteCommandAction
 
 from .cloud_auth import (
     CloudAuthenticationResult,
@@ -218,12 +218,36 @@ class _ChinaReadClient(Protocol):
         command: ChinaVehicleControlCommand,
     ) -> RemoteCommandAcceptance: ...
 
+    async def get_bean_tech_comfort_modes(
+        self,
+        identifier: VehicleIdentifier,
+    ) -> tuple[Mapping[str, object], ...]: ...
+
+    async def set_bean_tech_comfort_mode(
+        self,
+        identifier: VehicleIdentifier,
+        *,
+        mode_type: str,
+    ) -> str: ...
+
+    async def set_bean_tech_cabin_clean_appointment(
+        self,
+        identifier: VehicleIdentifier,
+        *,
+        time_ms: int,
+    ) -> None: ...
+
+    async def get_bean_tech_cabin_clean_appointment(
+        self,
+        identifier: VehicleIdentifier,
+    ) -> int | None: ...
+
     async def get_remote_command_results(
         self,
         identifier: VehicleIdentifier,
         command_id: str,
         *,
-        control_action: ChinaVehicleControlAction | None = None,
+        control_action: ChinaRemoteCommandAction | None = None,
     ) -> tuple[RemoteCommandResultItem, ...]: ...
 
     async def aclose(self) -> None: ...
@@ -553,7 +577,7 @@ class GwmCloudClient:
                     raise TypeError("capabilities_invalid")
                 capabilities = dict(capability_data)
                 capabilities["climate_commands"] = self._climate_commands_enabled and (
-                    self.region != REGION_CHINA or china_navinfo
+                    self.region != REGION_CHINA or china_supported
                 )
                 capabilities["lock_window_commands"] = self._lock_window_commands_enabled and (
                     self.region != REGION_CHINA or china_supported
@@ -613,7 +637,7 @@ class GwmCloudClient:
         if vehicle is None:
             raise GwmRoutePolicyError(operation="send_climate_command")
         if self.region == REGION_CHINA:
-            if (vehicle.platform or "").strip().casefold() != "navinfo":
+            if (vehicle.platform or "").strip().casefold() not in {"navinfo", "beantech"}:
                 raise GwmRoutePolicyError(operation="send_climate_command")
             basics = self._china_vehicle_basics(identifier)
         else:
@@ -636,7 +660,7 @@ class GwmCloudClient:
     ) -> None:
         if self.region == REGION_CHINA:
             vehicle = self._vehicles.get(identifier.value)
-            if vehicle is None or (vehicle.platform or "").strip().casefold() != "navinfo":
+            if vehicle is None or (vehicle.platform or "").strip().casefold() not in {"navinfo", "beantech"}:
                 raise GwmRoutePolicyError(operation="send_climate_command")
             self._china_climate_defaults[identifier.value] = CloudClimateConfiguration(
                 temperature=str(temperature),
@@ -771,12 +795,69 @@ class GwmCloudClient:
             lambda: cast(_ChinaReadClient, self._client).send_vehicle_control_command(command)
         )
 
+    async def async_get_bean_tech_comfort_modes(
+        self,
+        identifier: VehicleIdentifier,
+    ) -> tuple[Mapping[str, object], ...]:
+        """Read the BeanTech one-touch comfort modes through the client."""
+        if self.region != REGION_CHINA:
+            raise GwmRoutePolicyError(operation="get_bean_tech_comfort_modes")
+        return await self._async_with_session_renewal(
+            lambda: cast(_ChinaReadClient, self._client).get_bean_tech_comfort_modes(
+                identifier
+            )
+        )
+
+    async def async_set_bean_tech_comfort_mode(
+        self,
+        identifier: VehicleIdentifier,
+        *,
+        mode_type: str,
+    ) -> str:
+        """Execute a BeanTech one-touch comfort mode through the client."""
+        if self.region != REGION_CHINA:
+            raise GwmRoutePolicyError(operation="set_bean_tech_comfort_mode")
+        return await self._async_with_session_renewal(
+            lambda: cast(_ChinaReadClient, self._client).set_bean_tech_comfort_mode(
+                identifier,
+                mode_type=mode_type,
+            )
+        )
+
+    async def async_set_bean_tech_cabin_clean_appointment(
+        self,
+        identifier: VehicleIdentifier,
+        *,
+        time_ms: int,
+    ) -> None:
+        """Schedule one BeanTech cabin-clean run through the client."""
+        if self.region != REGION_CHINA:
+            raise GwmRoutePolicyError(operation="set_bean_tech_cabin_clean_appointment")
+        await self._async_with_session_renewal(
+            lambda: cast(
+                _ChinaReadClient, self._client
+            ).set_bean_tech_cabin_clean_appointment(identifier, time_ms=time_ms)
+        )
+
+    async def async_get_bean_tech_cabin_clean_appointment(
+        self,
+        identifier: VehicleIdentifier,
+    ) -> int | None:
+        """Read the scheduled BeanTech cabin-clean epoch-ms through the client."""
+        if self.region != REGION_CHINA:
+            raise GwmRoutePolicyError(operation="get_bean_tech_cabin_clean_appointment")
+        return await self._async_with_session_renewal(
+            lambda: cast(
+                _ChinaReadClient, self._client
+            ).get_bean_tech_cabin_clean_appointment(identifier)
+        )
+
     async def async_get_remote_command_results(
         self,
         identifier: VehicleIdentifier,
         command_id: str,
         *,
-        control_action: ChinaVehicleControlAction | None = None,
+        control_action: ChinaRemoteCommandAction | None = None,
     ) -> tuple[RemoteCommandResultItem, ...]:
         if self.region == REGION_CHINA and control_action is not None:
             return await self._async_with_session_renewal(
