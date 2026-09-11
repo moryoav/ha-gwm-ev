@@ -10,7 +10,7 @@ from typing import Literal
 from .models import VehicleIdentifier
 from .regions import Region
 
-type ClimateMode = Literal["cool", "heat", "off", "auto"]
+type ClimateMode = Literal["auto", "off"]
 type ChinaVehicleControlAction = Literal[
     "remote_start",
     "remote_stop",
@@ -40,14 +40,14 @@ type ChinaVehicleControlAction = Literal[
     "defrost_back_start",
     "defrost_back_stop",
     "cabin_clean",
-    "comfort_warm",
-    "comfort_cool",
     "comfort_off",
     "battery_gun_heat",
     "battery_gun_heat_stop",
     "battery_initiative_heat",
     "battery_initiative_heat_stop",
 ]
+type ChinaRemoteCommandAction = ChinaVehicleControlAction | Literal["climate", "comfort_mode", "charging_mode", "charge_window", "charge_soc", "battery_appointment"]
+
 type RemoteCommandState = Literal["pending", "completed", "failed"]
 
 NAVINFO_CHINA_VEHICLE_CONTROL_ACTIONS: frozenset[ChinaVehicleControlAction] = frozenset(
@@ -69,27 +69,46 @@ NAVINFO_CHINA_VEHICLE_CONTROL_ACTIONS: frozenset[ChinaVehicleControlAction] = fr
 )
 BEANTECH_CHINA_VEHICLE_CONTROL_ACTIONS: frozenset[ChinaVehicleControlAction] = frozenset(
     {
-        "seat_heating_start",
-        "seat_heating_stop",
-        "seat_heating_start_passenger",
-        "seat_heating_stop_passenger",
-        "seat_ventilation_start",
-        "seat_ventilation_stop",
-        "seat_ventilation_start_passenger",
-        "seat_ventilation_stop_passenger",
-        "steering_wheel_heating",
-        "steering_wheel_heatless",
-        "defrost_front_start",
-        "defrost_front_stop",
-        "defrost_back_start",
-        "defrost_back_stop",
-        "cabin_clean",
-        "comfort_off",
-        "battery_gun_heat",
-        "battery_gun_heat_stop",
-        "battery_initiative_heat",
-        "battery_initiative_heat_stop",
+        "remote_start",
+        "remote_stop",
+        "horn",
+        "flash_lights",
+        "horn_and_lights",
+        "sunroof_close",
     }
+)
+BEANTECH_HORN_LIGHT_ACTIONS: frozenset[ChinaVehicleControlAction] = frozenset(
+    {"horn", "flash_lights", "horn_and_lights"}
+)
+
+BEANTECH_COMFORT_ACTIONS: frozenset[ChinaVehicleControlAction] = frozenset({
+    "seat_heating_start",
+    "seat_heating_stop",
+    "seat_heating_start_passenger",
+    "seat_heating_stop_passenger",
+    "seat_ventilation_start",
+    "seat_ventilation_stop",
+    "seat_ventilation_start_passenger",
+    "seat_ventilation_stop_passenger",
+    "steering_wheel_heating",
+    "steering_wheel_heatless",
+    "defrost_front_start",
+    "defrost_front_stop",
+    "defrost_back_start",
+    "defrost_back_stop",
+    "cabin_clean",
+    "comfort_off",
+})
+BEANTECH_BATTERY_HEAT_ACTIONS: frozenset[ChinaVehicleControlAction] = frozenset({
+    "battery_gun_heat", "battery_gun_heat_stop", "battery_initiative_heat", "battery_initiative_heat_stop",
+})
+BEANTECH_CHARGING_RESULT_ACTIONS: frozenset[ChinaRemoteCommandAction] = frozenset({"charging_mode", "charge_window"})
+BEANTECH_CHARGING_ACTIONS: frozenset[ChinaRemoteCommandAction] = (
+    BEANTECH_BATTERY_HEAT_ACTIONS | BEANTECH_CHARGING_RESULT_ACTIONS | frozenset[ChinaRemoteCommandAction]({"charge_soc", "battery_appointment"})
+)
+BEANTECH_CHINA_VEHICLE_CONTROL_ACTIONS |= BEANTECH_COMFORT_ACTIONS | BEANTECH_BATTERY_HEAT_ACTIONS
+BEANTECH_TIMELY_ACTIONS: frozenset[ChinaRemoteCommandAction] = (
+    BEANTECH_HORN_LIGHT_ACTIONS | BEANTECH_COMFORT_ACTIONS | frozenset[ChinaRemoteCommandAction]({"climate", "comfort_mode"}) | BEANTECH_CHARGING_ACTIONS
 )
 
 _COMMAND_IDENTIFIER = re.compile(r"[\x21-\x7e]{1,512}")
@@ -110,7 +129,7 @@ class ClimateCommand:
     def __post_init__(self) -> None:
         if (
             type(self.identifier) is not VehicleIdentifier
-            or self.mode not in {"cool", "heat", "off", "auto"}
+            or self.mode not in {"auto", "off"}
             or isinstance(self.temperature, bool)
             or not isinstance(self.temperature, int)
             or not 16 <= self.temperature <= 32
@@ -184,10 +203,7 @@ class ChinaVehicleControlCommand:
         )
         if (
             type(self.identifier) is not VehicleIdentifier
-            or (
-                self.action not in NAVINFO_CHINA_VEHICLE_CONTROL_ACTIONS
-                and self.action not in BEANTECH_CHINA_VEHICLE_CONTROL_ACTIONS
-            )
+            or self.action not in NAVINFO_CHINA_VEHICLE_CONTROL_ACTIONS | BEANTECH_CHINA_VEHICLE_CONTROL_ACTIONS
             or not valid_run_time
             or (self.action != "remote_start" and self.run_time_minutes is not None)
         ):
@@ -270,7 +286,6 @@ def validate_overseas_command_inputs(
         }
         or type(region) is not Region
         or region not in {Region.EU, Region.ANZ, Region.RUSSIA}
-        or (type(command) is ClimateCommand and command.mode == "heat")
         or not isinstance(security_password_hash, str)
         or _MD5_HASH.fullmatch(security_password_hash) is None
         or not isinstance(sequence_number, str)

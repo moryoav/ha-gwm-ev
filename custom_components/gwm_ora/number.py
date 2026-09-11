@@ -12,6 +12,7 @@ from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import GwmConfigEntry
+from .beantech_charging import BeanTechChargingEntity
 from .const import DOMAIN
 from .entity import GwmEntity, async_call_gwm_api, setup_vehicle_entities
 
@@ -33,11 +34,13 @@ async def async_setup_entry(
                 entry.runtime_data.coordinator,
                 vehicle["vin"],
             ),
-            GwmChargeSocNumber(
-                entry.runtime_data.api,
-                entry.runtime_data.coordinator,
-                vehicle["vin"],
-            ),
+        ) + (
+            (GwmChargeSocNumber(
+                entry.runtime_data.api, entry.runtime_data.coordinator, vehicle["vin"]
+            ),)
+            if entry.runtime_data.coordinator.region == "cn"
+            and str(vehicle.get("platform") or "").lower() == "beantech"
+            else ()
         ),
     )
 
@@ -58,15 +61,14 @@ class GwmClimateRunTimeNumber(GwmEntity, NumberEntity):
         super().__init__(coordinator, vin)
         self._api = api
         self._attr_unique_id = f"{vin}_climate_run_time"
-        # BeanTech only accepts whole 5-minute steps (5/10/.../30); other
-        # platforms keep the upstream 1-minute step.
-        if self.is_china_beantech:
-            self._attr_native_step = 5
 
     @property
     def available(self) -> bool:
         """Return whether the climate run-time setting is available."""
-        return super().available and self.climate_commands_available
+        return (
+            super().available
+            and self.climate_commands_available
+        )
 
     @property
     def native_value(self) -> float | None:
@@ -92,12 +94,8 @@ class GwmClimateRunTimeNumber(GwmEntity, NumberEntity):
         self.coordinator.async_track_command(command)
 
 
-class GwmChargeSocNumber(GwmEntity, NumberEntity):
-    """BeanTech charge limit (50-100 %, step 10).
-
-    The car does not report the current limit in the polled snapshot, so the
-    value shown is the last one sent from Home Assistant (command-only).
-    """
+class GwmChargeSocNumber(BeanTechChargingEntity, NumberEntity):
+    """Show the last confirmed HA charge limit; the cloud has no limit readback."""
 
     _attr_translation_key = "charge_soc_limit"
     _attr_entity_category = EntityCategory.CONFIG
@@ -106,40 +104,27 @@ class GwmChargeSocNumber(GwmEntity, NumberEntity):
     _attr_native_max_value = 100
     _attr_native_step = 10
     _attr_native_unit_of_measurement = PERCENTAGE
+    _attr_assumed_state = True
+    _requires_charging_control = True
 
     def __init__(self, api, coordinator, vin: str) -> None:
-        super().__init__(coordinator, vin)
-        self._api = api
+        super().__init__(api, coordinator, vin)
         self._attr_unique_id = f"{vin}_charge_soc_limit"
-
-    @property
-    def available(self) -> bool:
-        return (
-            super().available
-            and self.remote_commands_available
-            and self.is_china_beantech
-        )
+        self._confirmed_percent: float | None = None
 
     @property
     def native_value(self) -> float | None:
-        """Return the last charge limit sent from Home Assistant.
-
-        The car does not report the current limit, so fall back to 100 % until
-        the user sets one.
-        """
-        value = self.coordinator.local_flag(self.vin, "charge_soc_limit")
-        return float(value) if value else 100.0
+        """Keep the value unknown until GWM confirms a command."""
+        return self._confirmed_percent
 
     async def async_set_native_value(self, value: float) -> None:
-        """Send a new charge limit to the vehicle."""
-        percent = int(value)
-        if percent % 10 != 0 or percent < 50 or percent > 100:
+        if type(value) not in {int, float} or value not in range(50, 101, 10):
             raise HomeAssistantError(
-                translation_domain=DOMAIN,
-                translation_key="invalid_charge_soc_limit",
+                translation_domain=DOMAIN, translation_key="invalid_charge_soc_limit"
             )
-        command = await async_call_gwm_api(
-            self._api.async_set_charge_soc(self.vin, percent=percent)
+        percent = int(value)
+        await self._async_send_command(
+            lambda: self._api.async_set_charge_soc(self.vin, percent=percent),
+            confirmed=lambda: setattr(self, "_confirmed_percent", float(percent)),
+            accepted=lambda: setattr(self, "_confirmed_percent", None),
         )
-        self.coordinator.set_local_flag(self.vin, "charge_soc_limit", percent)
-        self.coordinator.async_track_command(command)

@@ -255,7 +255,7 @@
     "select": {
       "charge_window_start": { "name": "Charge window start" },
       "charge_window_end": { "name": "Charge window end" },
-      "battery_appointment_time": { "name": "Battery appointment departure" },
+      "battery_appointment_time": { "name": "Battery heating departure time" },
       "cabin_clean_appointment_time": { "name": "Cabin clean appointment" }
     },
     "lock": {
@@ -280,7 +280,7 @@
       "cabin_clean": { "name": "Cabin clean" },
       "comfort_warm": { "name": "Comfort warm" },
       "comfort_cool": { "name": "Comfort cool" },
-      "comfort_last": { "name": "Comfort (last used)" },
+      "comfort_last": { "name": "Saved comfort mode" },
       "comfort_off": { "name": "Comfort off" },
       "fast_cool": { "name": "Fast cool" },
       "fast_heat": { "name": "Fast heat" }
@@ -295,9 +295,9 @@
       "steering_wheel_heating": { "name": "Steering wheel heating" },
       "defrost_front": { "name": "Front defrost" },
       "defrost_back": { "name": "Rear defrost" },
-      "battery_gun_heat": { "name": "Battery pack heating while plugged in" },
-      "battery_initiative_heat": { "name": "Battery pack active heating" },
-      "smart_charge": { "name": "Smart scheduled charging" },
+      "battery_gun_heat": { "name": "Plugged-in battery heating" },
+      "battery_initiative_heat": { "name": "Active battery heating" },
+      "smart_charge": { "name": "Smart charge" },
       "battery_appointment_heating": { "name": "Battery appointment heating" }
     }
   },

@@ -8,17 +8,15 @@
 
 ## ❤️ Help support this project
 
-**Maintaining this integration requires a significant investment of time and money.** GWM operates different platforms across regions, and supporting its many vehicle brands and models requires continuous research, testing, and development.
+<p>
+  <a href="https://ko-fi.com/Y5B124NZ2L"><img src="https://storage.ko-fi.com/cdn/kofi3.png?v=6" alt="Support me on Ko-fi" height="36"></a>
+  &nbsp;
+  <a href="https://github.com/sponsors/moryoav"><img src="https://img.shields.io/badge/Sponsor_on_GitHub-EA4AAA?style=for-the-badge&amp;logo=githubsponsors&amp;logoColor=white" alt="Sponsor on GitHub" height="36"></a>
+  &nbsp;
+  <a href="https://garage.yoavmor.com"><img src="https://img.shields.io/badge/Shop_the_Garage-F97316?style=for-the-badge" alt="Shop The GWM Garage" height="36"></a>
+</p>
 
-If you would like to support my work, please consider visiting **[The GWM Garage](https://garage.yoavmor.com)**. I personally select useful products for GWM vehicles from AliExpress. I also try some of these products myself and recommend the ones I genuinely find useful. The website will be updated regularly, so please check back from time to time.
-
-This is not a traditional online store. The website contains links to products sold on AliExpress. If you purchase something through one of these links, I may receive a small commission at no additional cost to you. This helps fund the continued development and maintenance of this integration.
-
-For more direct support, you can also **[☕ support me on Ko-fi](https://ko-fi.com/Y5B124NZ2L)**.
-
-### [Visit The GWM Garage](https://garage.yoavmor.com) | [☕ Support me on Ko-fi](https://ko-fi.com/Y5B124NZ2L)
-
-*I am not directly affiliated with AliExpress or GWM.*
+If you'd like to support my work, you can donate on Ko-fi, sponsor the project on GitHub, or shop through The GWM Garage. I receive a tiny commission on purchases made through its AliExpress links, at no extra cost to you.
 
 ---
 
@@ -26,29 +24,13 @@ For more direct support, you can also **[☕ support me on Ko-fi](https://ko-fi.
 
 This custom integration connects Home Assistant directly to supported regional GWM cloud services. It discovers vehicles on the account, creates native Home Assistant entities, polls vehicle status, and provides explicitly enabled remote controls.
 
-This repository is the integration-only successor to `ha-gwm`. The previous Docker add-on is not required. Europe, Australia and New Zealand, Russia, and mainland China are available in the setup flow.
+Europe, Australia and New Zealand, Russia, and mainland China are available in the setup flow.
 
 ## Roadmap and Feedback
 
 I track confirmed bugs, protocol research, planned features, and work waiting for regional validation in the public [ha-gwm-ev Roadmap](https://github.com/users/moryoav/projects/3).
 
 Use the [Regional testing discussions](https://github.com/moryoav/ha-gwm-ev/discussions/categories/regional-testing) to share account-region and vehicle-model results. Once a report becomes actionable, I track the work in an issue and add it to the roadmap.
-
-## Important Upgrade Note
-
-This integration does not import credentials, tokens, or state from the retired add-on.
-
-If you are updating an existing installation, you must:
-
-1. Remove the existing **GWM** integration entry from **Settings** > **Devices & services**.
-2. Stop the old GWM add-on.
-3. Install this integration from the `ha-gwm-ev` custom HACS repository.
-4. Restart Home Assistant.
-5. Add **GWM** again and complete a fresh sign-in.
-6. Confirm that polling and entities work before enabling remote commands.
-7. Uninstall the old add-on after you no longer need it as a rollback reference.
-
-I chose a fresh sign-in because it is simpler, easier to audit, and avoids transferring passwords, tokens, certificates, device identities, and command state between two different storage designs.
 
 ## Supported Accounts
 
@@ -72,9 +54,25 @@ The project has been tested with these vehicles:
 
 Other compatible GWM vehicles may also work. If you test another model, please [open an issue](https://github.com/moryoav/ha-gwm-ev/issues/new/choose) with the model, account region, and features you verified. Never include credentials, tokens, verification codes, VINs, or exact locations.
 
+## Prerequisites
+
+The integration requires Home Assistant 2026.1.0 or newer.
+
+**You must create a separate GWM account dedicated to this integration. Do not use the account you use on your phone.** Sharing one account between the integration and the official app can cause sign-in failures and refresh token errors.
+
+Before setting up the integration:
+
+1. Create a new GWM account for the integration.
+2. From the vehicle owner's account in the official GWM app, invite the new user and share access to the vehicle. Accept the invitation with the new account.
+3. Sign in to the official GWM app on a phone with the new account once. Complete any required verification and set up a vehicle security PIN for remote controls outside mainland China.
+4. Confirm that the new account can see the vehicle and that the controls you intend to use work in the app.
+5. Sign out of the new account on the phone. You can then return to your usual account on the phone. Keep the new account dedicated to the integration and use it for the installation and authentication steps below.
+
+**A vehicle security PIN is required to enable remote commands outside mainland China.** Enter the PIN in the integration options. Mainland-China remote commands and charging schedule control do not use a PIN.
+
 ## Installation
 
-This is currently installed as a custom HACS repository. Back up Home Assistant before replacing the previous add-on based installation.
+This is currently installed as a custom HACS repository.
 
 1. Open HACS.
 2. Open **Custom repositories**.
@@ -83,15 +81,11 @@ This is currently installed as a custom HACS repository. Back up Home Assistant 
 5. Restart Home Assistant.
 6. Open **Settings** > **Devices & services** > **Add integration**.
 7. Search for **GWM**.
-8. Select the account region and complete authentication.
-
-Home Assistant installs the bundled `gwm-client` dependency from the same immutable GitHub release tag recorded in the integration manifest. The dependency cannot silently change when `main` advances.
-
-The integration requires Home Assistant 2026.1.0 or newer.
+8. Select the account region and complete authentication with the dedicated account prepared under [Prerequisites](#prerequisites).
 
 ## Authentication
 
-Enter the account details used by the official GWM app. The integration authenticates directly with the selected GWM cloud.
+Enter the dedicated account details prepared under [Prerequisites](#prerequisites). Make sure this account is signed out of the official GWM app on all phones. The integration authenticates directly with the selected GWM cloud.
 
 GWM may send a one-time verification code during first setup or reauthentication. Enter the code in the Home Assistant flow. Verification codes are not stored.
 
@@ -99,15 +93,15 @@ For European accounts, the message may come from `noreply@gwm-eu.com` with the s
 
 <img src="https://raw.githubusercontent.com/moryoav/ha-gwm-ev/main/docs/images/gwm-verification-code-email.jpeg" alt="Example GWM verification code email" width="320">
 
-Australia and New Zealand accounts normally permit one active session. The setup flow requires explicit confirmation before it can replace the official app session. I recommend a dedicated account that has been shared access to the vehicle.
+Australia and New Zealand accounts normally permit one active session. The setup flow requires explicit confirmation before it can replace the official app session. Use your dedicated integration account and keep it signed out of the app.
 
-Australia and New Zealand setup offers two authentication methods. **Current GWM ANZ app login** is the recommended beta method for new setups and newer account types. **Legacy add-on-compatible login** preserves the method used by the retired add-on for accounts that previously worked with it. The integration stores the selected method and never tries both automatically because unsuccessful password attempts can temporarily lock GWM account login.
+For Australia and New Zealand, select **Current GWM ANZ app login**, the recommended beta authentication method for new setups and newer account types.
 
 Current GWM ANZ app sessions are renewed automatically when GWM reports that the access token has expired. The integration privately stores rotated access and refresh tokens and retries the interrupted request once. If GWM rejects renewal or the account did not provide a refresh token, Home Assistant requests reauthentication instead of repeatedly using an expired session.
 
 Mainland-China accounts use the registered phone number and an SMS verification flow. They do not use an account password or vehicle security PIN in this integration. If GWM requests a risk-control challenge, complete it in the official app before trying again.
 
-The integration privately stores the generated device identity and account-bound authentication state so it can resume after a Home Assistant restart. Passwords and the optional vehicle security PIN are redacted from diagnostics.
+The integration privately stores the generated device identity and account-bound authentication state so it can resume after a Home Assistant restart. Passwords and the vehicle security PIN are redacted from diagnostics.
 
 ## Options
 
@@ -142,7 +136,9 @@ Missing vehicle signals remain unavailable without interrupting the other entiti
 
 Remote commands are slower than ordinary Home Assistant operations because the request travels through the GWM cloud and then waits for the vehicle result. The **Remote command status** sensor shows the current progress.
 
-Set **Climate run time** and the target temperature before starting A/C. Changing either setting only saves it for the next start. It does not start the climate system, and neither setting can be changed after A/C has started.
+The climate entity exposes **Off** and **Auto**. The vehicle determines whether heating or cooling is needed from the selected target temperature.
+
+Set **Climate run time** and the target temperature before starting A/C. Changing the run time only saves it for the next start and does not start the climate system. Changing the target temperature while A/C is off saves it for the next start; changing it while A/C is active sends the new target to the vehicle. Some vehicles and regions only accept temperature changes while A/C is off. In those cases, turn A/C off, set the temperature, and then turn it on again.
 
 On supported Europe, Australia and New Zealand, and Russia vehicles, the **Front defroster** switch starts the official app's 15-minute defrost cycle and can stop it early. The **Start air circulation** button starts the official app's 60-second external-air cabin-clean cycle. GWM does not provide a stop action for that cycle. I expose these controls only when the vehicle reports their matching status signals and remote commands are enabled.
 
@@ -153,6 +149,8 @@ Remote operations can affect a real vehicle. Test them manually before using the
 ## Charging Schedule Control
 
 Charging control has its own opt-in. It does not use the vehicle security PIN.
+
+For mainland-China BeanTech vehicles, use the [BeanTech charging controls](#beantech-charging-and-battery-heating) below. The scheduled-charging switch and `gwm_ora.set_charging_plan` service described in this section apply to supported overseas and mainland-China NavInfo vehicles.
 
 The **Scheduled charging** switch is a convenience control:
 
@@ -179,7 +177,28 @@ data:
 
 The integration records the exact plan it writes. If charging control is later disabled, it retries cleanup only while that exact plan is still present. It leaves schedules changed by the official app untouched.
 
-Charging control was live-tested on an Australia and New Zealand ORA 5 through the previous implementation. The Python integration path is fixture-tested but still needs direct live confirmation.
+Charging control is fixture-tested but still needs direct live confirmation.
+
+### BeanTech charging and battery heating
+
+I expose these controls only for mainland-China vehicles identified as BeanTech:
+
+| Control | Required option | Behavior |
+| --- | --- | --- |
+| Smart charge | Enable charging control | Selects the saved scheduled-charging mode when on, or plug-and-charge mode when off. |
+| Charge window start / end | Enable charging control | Changes one boundary of the saved charging window. |
+| Charge SOC limit | Enable charging control | Sets the charging limit from 50% to 100% in steps of 10%. |
+| Plugged-in / active battery heating | Enable remote commands | Starts or stops the corresponding battery-heating function. |
+| Battery heating departure time | Enable remote commands | Schedules battery heating for the next occurrence of the selected time in Home Assistant's timezone. |
+| Battery appointment heating | Enable remote commands | Cancels the appointment when off, or enables it using the future departure time previously confirmed in this Home Assistant session. |
+
+Set a departure time before enabling battery appointment heating. Selecting a time sends the appointment immediately. Charging-window times use the vehicle app's clock; existing times are shown exactly, and new selections use five-minute steps.
+
+I preserve the charging strategy, the other window boundary, and additional schedule fields saved by the phone app. Set up a complete charging window in the app before editing one boundary in Home Assistant. Turning smart charge off selects plug-and-charge mode, so a connected vehicle may begin charging. Disabling the integration's charging-control option makes these controls unavailable and leaves the BeanTech app settings in place.
+
+Smart charge, charging-window times, and heating switches read their state back from GWM. Missing values remain unknown. GWM does not provide charge-limit or battery-departure-time readback through these endpoints, so I show those values only after a successful command in the current Home Assistant session. They return to unknown after a restart and cannot reflect changes made in the phone app. The **Remote command status** sensor reports acceptance, progress, and the final vehicle result separately.
+
+These commands do not require a PIN or the unresolved encrypted-PIN layer. The contributor tested the original protocol on a BeanTech vehicle; the integration changes have offline regression coverage and still need confirmation on each supported vehicle model.
 
 ## evcc
 
@@ -209,13 +228,11 @@ Replace the example entity IDs with the IDs from your Home Assistant installatio
 - Clear the browser cache if the integration list is stale.
 - Check the Home Assistant log for dependency installation or import errors.
 
-### An old entry requests reauthentication
+### Sign-in fails or refresh token errors occur
 
-The previous add-on entry cannot be converted. Remove that entry and add GWM again. The new flow will ask for the GWM account directly.
+A likely cause is using the same GWM account for the integration and the app on your phone. **A dedicated integration account is required.** Follow [Prerequisites](#prerequisites) to create the account, share vehicle access, complete the phone setup, and sign out of the app before authenticating in Home Assistant.
 
-### Sign-in fails
-
-- Confirm the same account works in the official GWM app.
+- Confirm that you are using the dedicated account and that it is signed out of the official app on all phones. If you sign in to the app to check the account, sign out again before reauthenticating in Home Assistant.
 - Confirm that the selected cloud region and registration country are correct.
 - Enter any requested one-time code before it expires.
 - For Australia and New Zealand, confirm the single-session warning if you want the integration to take the active session.
@@ -235,15 +252,28 @@ The previous add-on entry cannot be converted. Remove that entry and add GWM aga
 - Reload the integration after changing options.
 - Confirm read-only polling works before testing a command.
 
+### A/C does not turn on or the temperature does not change
+
+Restrictions vary by vehicle and region. These conditions do not apply to every car:
+
+- A low vehicle battery level can prevent remote A/C from starting.
+- Some vehicles require the car to be locked before remote A/C can start.
+- Some vehicles cannot start remote A/C while connected to a charger.
+- Some vehicles only accept temperature changes while A/C is off. Turn A/C off, set the target temperature first, and then turn A/C on again.
+
 ## Mainland China
 
 Mainland China is available in the setup flow. The integration uses the registered phone number, SMS authentication, and separate G-App, BeanTech, and AutoAI sessions. Remote commands do not use a vehicle security PIN.
 
-The integration preserves the released add-on capability boundaries:
+Available features depend on the vehicle's platform:
 
-- NavInfo vehicles provide status polling, climate cooling and heating from 17 to 31 C, climate stop and parameter changes, lock and unlock, close windows, sunroof positions, cabin purge, force refresh, and charging schedules when the matching options are enabled.
-- BeanTech vehicles provide status polling, lock and unlock, close windows, remote start and stop, horn, flashing lights, and close sunroof when remote commands are enabled.
-- BeanTech does not expose climate control, charging schedules, tailgate actions, other sunroof positions, or combined horn and lights.
+- NavInfo vehicles provide status polling, automatic climate control from 17 to 31 C, climate stop and parameter changes, lock and unlock, close windows, sunroof positions, cabin purge, force refresh, and charging schedules when the matching options are enabled.
+- BeanTech vehicles provide status polling, lock and unlock, close windows, remote start and stop, horn, flashing lights, combined horn and lights, and close sunroof when remote commands are enabled.
+- BeanTech horn and light buttons use the updated command endpoint and do not require a security PIN. These controls remain behind **Enable remote commands** and depend on vehicle support.
+- BeanTech A/C supports **Auto** and **Off**, target temperatures from 17 to 31 °C, and the existing climate run-time setting. Fast cool and fast heat start Auto at 17 °C and 31 °C respectively. The A/C request permits the vehicle to start its engine for climate operation, matching the tested app request.
+- BeanTech comfort controls include driver and passenger seat heating and ventilation, steering-wheel heating, front and rear defrost, cabin cleaning, and saved comfort modes. These controls use **Enable remote commands**. Switches show the state reported by the vehicle; the command-status sensor tracks the submitted action.
+- **Cabin clean appointment** schedules one run at the next selected time in Home Assistant's configured timezone. Times can be selected in five-minute steps, and the saved appointment is read back from the vehicle service. An unset or past appointment shows an unknown value.
+- BeanTech does not expose charging schedules, tailgate actions, or other sunroof positions.
 - Missing or unknown China platforms fail closed instead of using another platform's route.
 
 Start with remote commands and charging control disabled. Compare read-only values with the official app before enabling any operation that affects the vehicle.
@@ -258,25 +288,11 @@ Removing the entry also removes its private integration-owned authentication and
 
 ## Privacy and Safety
 
-The integration handles GWM account credentials, authentication tokens, a generated device identity, an optional vehicle security PIN, vehicle identifiers, and potentially precise location data.
+The integration handles GWM account credentials, authentication tokens, a generated device identity, a vehicle security PIN when required, vehicle identifiers, and potentially precise location data.
 
 Diagnostics redact known credentials, tokens, identifiers, and locations. Review every diagnostic file before sharing it.
 
 Never publish raw cloud responses, packet captures, account data, verification codes, private keys, VINs, or exact vehicle locations.
-
-## Naming and Compatibility
-
-I use **GWM** for the project and new code because support is not limited to ORA vehicles. The Python distribution is `gwm-client`, and the import package is `gwm_client`.
-
-I retain `gwm_ora` as the Home Assistant domain and action namespace. Changing the domain would break entity and device registry links, automations, dashboards, and existing Home Assistant references. The compatibility identifier does not limit supported vehicle brands or models.
-
-Historical ORA test results and attribution to `ora2mqtt` remain named where they are factually relevant.
-
-## Protocol Materials
-
-Some protocol values and bootstrap materials were obtained through interoperability research on official GWM applications. I record their sources, hashes, certificate renewal deadlines, and unresolved redistribution conditions in [Third-Party and Protocol Material Notice](https://github.com/moryoav/ha-gwm-ev/blob/main/THIRD_PARTY_NOTICES.md).
-
-This remains an early integration release. Publishing the standalone client through a public package index remains blocked until the recorded permission or authorized-replacement conditions are resolved.
 
 ## Disclaimer
 

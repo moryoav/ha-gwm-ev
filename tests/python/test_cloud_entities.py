@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, Mock, call, patch
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -14,11 +14,14 @@ from homeassistant.components.climate import HVACMode
 from homeassistant.core import HomeAssistant
 
 from custom_components.gwm_ora.button import (
-    GwmBeanTechComfortButton,
+    BEANTECH_REMOTE_ACTIONS,
+    CHINA_REMOTE_BUTTONS,
     GwmCabinCleanButton,
     GwmChinaRemoteButton,
-    GwmClimatePresetButton,
     GwmCloseWindowsButton,
+)
+from custom_components.gwm_ora.button import (
+    async_setup_entry as async_setup_buttons,
 )
 from custom_components.gwm_ora.climate import GwmClimate
 from custom_components.gwm_ora.coordinator import GwmDataUpdateCoordinator
@@ -31,10 +34,8 @@ from custom_components.gwm_ora.sensor import (
     _sensor_descriptions_for_vehicle,
 )
 from custom_components.gwm_ora.switch import (
-    GwmBatteryHeatSwitch,
     GwmChargingScheduleSwitch,
     GwmFrontDefrosterSwitch,
-    GwmRemoteControlSwitch,
 )
 
 
@@ -192,7 +193,7 @@ async def test_cloud_coordinator_keeps_mixed_china_platform_entities_isolated() 
 
 
 @pytest.mark.asyncio
-async def test_task17_capability_exposes_climate_without_pin_gate_beantech() -> None:
+async def test_climate_capability_enables_beantech_without_enabling_other_controls() -> None:
     coordinator = GwmDataUpdateCoordinator(
         HomeAssistant("synthetic-config"),
         SimpleNamespace(),
@@ -210,50 +211,6 @@ async def test_task17_capability_exposes_climate_without_pin_gate_beantech() -> 
     ).available
     assert not GwmDoorLock(SimpleNamespace(), coordinator, "SYNTHETIC-A").available
 
-    config_entry = SimpleNamespace(
-        options={},
-        async_on_unload=lambda callback: None,
-    )
-    pin_coordinator = GwmDataUpdateCoordinator(
-        HomeAssistant("synthetic-config"),
-        SimpleNamespace(),
-        cloud_client=SimpleNamespace(),  # type: ignore[arg-type]
-        config_entry=config_entry,  # type: ignore[arg-type]
-    )
-    pin_coordinator.async_set_updated_data(
-        {
-            "region": "cn",
-            "vehicles": [
-                _vehicle(
-                    "SYNTHETIC-BEANTECH",
-                    70,
-                    platform="beantech",
-                    climate_commands=True,
-                )
-            ],
-        }
-    )
-    # BeanTech climate control is PIN-exempt, so it is exposed without a PIN.
-    assert GwmClimate(
-        SimpleNamespace(), pin_coordinator, "SYNTHETIC-BEANTECH"
-    ).available
-    assert GwmClimateRunTimeNumber(
-        SimpleNamespace(), pin_coordinator, "SYNTHETIC-BEANTECH"
-    ).available
-
-
-@pytest.mark.asyncio
-async def test_beantech_climate_entity_uses_auto_mode_and_17_to_31_range() -> None:
-    config_entry = SimpleNamespace(
-        options={},
-        async_on_unload=lambda callback: None,
-    )
-    coordinator = GwmDataUpdateCoordinator(
-        HomeAssistant("synthetic-config"),
-        SimpleNamespace(),
-        cloud_client=SimpleNamespace(),  # type: ignore[arg-type]
-        config_entry=config_entry,  # type: ignore[arg-type]
-    )
     coordinator.async_set_updated_data(
         {
             "region": "cn",
@@ -267,13 +224,61 @@ async def test_beantech_climate_entity_uses_auto_mode_and_17_to_31_range() -> No
             ],
         }
     )
+    assert GwmClimate(
+        SimpleNamespace(), coordinator, "SYNTHETIC-BEANTECH"
+    ).available
+    assert GwmClimateRunTimeNumber(
+        SimpleNamespace(), coordinator, "SYNTHETIC-BEANTECH"
+    ).available
 
-    climate = GwmClimate(SimpleNamespace(), coordinator, "SYNTHETIC-BEANTECH")
-    assert climate.available
-    assert climate.hvac_modes == [HVACMode.OFF, HVACMode.AUTO]
-    assert climate.min_temp == 17
-    assert climate.max_temp == 31
-    assert climate.hvac_mode == HVACMode.AUTO
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("region", ["eu", "aus", "rus", "cn"])
+async def test_climate_exposes_auto_and_rejects_legacy_hvac_modes(region: str) -> None:
+    api = SimpleNamespace(
+        async_set_climate=AsyncMock(
+            side_effect=(
+                {"id": "climate-auto", "state": "in_progress"},
+                {"id": "climate-off", "state": "in_progress"},
+            )
+        )
+    )
+    coordinator = GwmDataUpdateCoordinator(
+        HomeAssistant("synthetic-config"),
+        api,
+        cloud_client=SimpleNamespace(),  # type: ignore[arg-type]
+    )
+    vehicle = _vehicle("SYNTHETIC-A", 80, climate_commands=True)
+    vehicle["climate"] = {
+        "mode": "auto",
+        "action": None,
+        "target_temperature_c": 22,
+    }
+    coordinator.async_set_updated_data({"region": region, "vehicles": [vehicle]})
+    coordinator.async_track_command = Mock()  # type: ignore[method-assign]
+    entity = GwmClimate(api, coordinator, "SYNTHETIC-A")
+
+    assert entity.hvac_modes == [HVACMode.OFF, HVACMode.AUTO]
+    assert entity.hvac_mode == HVACMode.AUTO
+    assert entity.hvac_action is None
+
+    await entity.async_set_hvac_mode(HVACMode.AUTO)
+    await entity.async_set_hvac_mode(HVACMode.OFF)
+    for legacy_mode in (HVACMode.COOL, HVACMode.HEAT):
+        with pytest.raises(ValueError, match="Unsupported HVAC mode"):
+            await entity.async_set_hvac_mode(legacy_mode)
+
+    assert api.async_set_climate.await_args_list[0].args == ("SYNTHETIC-A",)
+    assert api.async_set_climate.await_args_list[0].kwargs == {"mode": "auto"}
+    assert api.async_set_climate.await_args_list[1].args == ("SYNTHETIC-A",)
+    assert api.async_set_climate.await_args_list[1].kwargs == {"mode": "off"}
+    assert api.async_set_climate.await_count == 2
+    assert coordinator.async_track_command.call_count == 2
+
+    vehicle["climate"] = {"mode": "off", "action": "off"}
+    coordinator.async_set_updated_data({"region": region, "vehicles": [vehicle]})
+    assert entity.hvac_mode == HVACMode.OFF
+    assert entity.hvac_action == "off"
 
 
 @pytest.mark.asyncio
@@ -368,9 +373,7 @@ async def test_task19_china_buttons_are_capability_and_platform_filtered() -> No
         "tailgate_open",
         "open_tailgate",
     ).available
-    # BeanTech no longer exposes remote/horn/flash/sunroof buttons (they arrive
-    # in a later PR); the NavInfo ``remote_start`` button above is unaffected.
-    assert not GwmChinaRemoteButton(
+    assert GwmChinaRemoteButton(
         api,
         coordinator,
         "SYNTHETIC-BEANTECH",
@@ -473,187 +476,41 @@ async def test_overseas_front_defroster_switch_and_air_circulation_button_are_ca
 
 
 @pytest.mark.asyncio
-async def test_beantech_comfort_switches_and_buttons_are_pin_exempt_and_dispatch() -> None:
-    api = SimpleNamespace(
-        async_vehicle_control=AsyncMock(
-            return_value={"id": "comfort", "state": "in_progress"}
-        ),
-        async_set_climate=AsyncMock(
-            return_value={"id": "climate", "state": "in_progress"}
-        ),
+@pytest.mark.parametrize("region,platform", [
+    ("cn", "beantech"), ("cn", "navinfo"), ("cn", "unknown"),
+    ("eu", "beantech"), ("aus", "beantech"), ("rus", "beantech"),
+])
+async def test_horn_lights_button_registration_and_press_are_region_isolated(region: str, platform: str) -> None:
+    hass = HomeAssistant("synthetic-config")
+    api = SimpleNamespace(async_vehicle_control=AsyncMock(return_value={"id": "accepted", "state": "in_progress"}))
+    coordinator = GwmDataUpdateCoordinator(hass, api, cloud_client=SimpleNamespace())  # type: ignore[arg-type]
+    vehicle = _vehicle("SYNTHETIC-A", 80, platform=platform, china_vehicle_commands=True)
+    coordinator.async_set_updated_data({"region": region, "vehicles": [vehicle]})
+    coordinator.async_track_command = Mock()
+    entry = SimpleNamespace(
+        runtime_data=SimpleNamespace(api=api, coordinator=coordinator), async_on_unload=lambda callback: None,
     )
-    config_entry = SimpleNamespace(
-        options={},
-        async_on_unload=lambda callback: None,
+    added: list[Any] = []
+    await async_setup_buttons(hass, entry, lambda entities: added.extend(entities))
+    remote = [entity for entity in added if isinstance(entity, GwmChinaRemoteButton)]
+    expected = (
+        BEANTECH_REMOTE_ACTIONS if region == "cn" and platform == "beantech"
+        else {action for action, _ in CHINA_REMOTE_BUTTONS} if region == "cn" and platform == "navinfo"
+        else set()
     )
-    coordinator = GwmDataUpdateCoordinator(
-        HomeAssistant("synthetic-config"),
-        api,
-        cloud_client=SimpleNamespace(),  # type: ignore[arg-type]
-        config_entry=config_entry,  # type: ignore[arg-type]
-    )
-
-    def china_vehicle(vin: str, platform: str) -> dict[str, Any]:
-        return {
-            "vin": vin,
-            "platform": platform,
-            "name": f"Vehicle {vin[-1]}",
-            "manufacturer": "GWM",
-            "model": "Synthetic",
-            "serial_number": f"SERIAL-{vin[-1]}",
-            "capabilities": {
-                "remote_commands": True,
-                "climate_commands": True,
-                "china_vehicle_commands": True,
-            },
-            "values": {
-                "front_driver_seat_heater_level": 3,
-                "front_driver_seat_vent_level": 0,
-                "steering_wheel_heater_active": False,
-                "front_defroster": False,
-                "rear_defroster": False,
-            },
-            "timestamps": {},
-            "climate": {"mode": "auto", "target_temperature_c": 17},
-            "raw_items": {},
-        }
-
-    coordinator.async_set_updated_data(
-        {
-            "region": "cn",
-            "vehicles": [
-                china_vehicle("SYNTHETIC-BEANTECH", "beantech"),
-                china_vehicle("SYNTHETIC-NAVINFO", "navinfo"),
-            ],
-        }
-    )
-    coordinator.async_track_command = Mock()  # type: ignore[method-assign]
-
-    seat = GwmRemoteControlSwitch(
-        api,
-        coordinator,
-        "SYNTHETIC-BEANTECH",
-        turn_on_action="seat_heating_start",
-        turn_off_action="seat_heating_stop",
-        state_key="front_driver_seat_heater_level",
-        translation_key="seat_heating",
-    )
-    assert seat.available
-    assert seat.is_on is True
-    # NavInfo vehicles must not expose BeanTech comfort switches.
-    assert not GwmRemoteControlSwitch(
-        api,
-        coordinator,
-        "SYNTHETIC-NAVINFO",
-        turn_on_action="seat_heating_start",
-        turn_off_action="seat_heating_stop",
-        state_key="front_driver_seat_heater_level",
-        translation_key="seat_heating",
-    ).available
-
-    fast_cool = GwmClimatePresetButton(
-        api, coordinator, "SYNTHETIC-BEANTECH", temperature=17, translation_key="fast_cool"
-    )
-    assert fast_cool.available
-
-    # Cabin clean is PIN-exempt, so it is exposed without a PIN.
-    cabin_clean = GwmBeanTechComfortButton(
-        api, coordinator, "SYNTHETIC-BEANTECH", "cabin_clean", "cabin_clean"
-    )
-    assert cabin_clean.available
-
-    # Comfort controls are PIN-exempt under PR ②, so the one-touch comfort-off
-    # multi-command is available alongside the other BeanTech comfort buttons.
-    comfort_off = GwmBeanTechComfortButton(
-        api, coordinator, "SYNTHETIC-BEANTECH", "comfort_off", "comfort_off"
-    )
-    assert comfort_off.available
-
-    with patch.object(seat, "async_write_ha_state"):
-        await seat.async_turn_off()
-        assert seat.is_on is False
-    await fast_cool.async_press()
-    await cabin_clean.async_press()
-
-    assert api.async_vehicle_control.await_args_list == [
-        call("SYNTHETIC-BEANTECH", "seat_heating_stop"),
-        call("SYNTHETIC-BEANTECH", "cabin_clean"),
-    ]
-    api.async_set_climate.assert_awaited_once_with(
-        "SYNTHETIC-BEANTECH", mode="auto", temperature=17
-    )
-
-
-@pytest.mark.asyncio
-async def test_beantech_battery_heat_switch_dispatches_and_stays_china_only() -> None:
-    api = SimpleNamespace(
-        async_vehicle_control=AsyncMock(
-            return_value={"id": "heat", "state": "in_progress"}
-        ),
-        async_get_battery_heat_status=AsyncMock(
-            return_value={"gun_warm": False, "active_warm": False}
-        ),
-    )
-    config_entry = SimpleNamespace(
-        options={},
-        async_on_unload=lambda callback: None,
-    )
-    coordinator = GwmDataUpdateCoordinator(
-        HomeAssistant("synthetic-config"),
-        api,
-        cloud_client=SimpleNamespace(),  # type: ignore[arg-type]
-        config_entry=config_entry,  # type: ignore[arg-type]
-    )
-
-    def china_vehicle(vin: str, platform: str) -> dict[str, Any]:
-        return {
-            "vin": vin,
-            "platform": platform,
-            "name": f"Vehicle {vin[-1]}",
-            "manufacturer": "GWM",
-            "model": "Synthetic",
-            "serial_number": f"SERIAL-{vin[-1]}",
-            "capabilities": {"remote_commands": True, "china_vehicle_commands": True},
-            "values": {},
-            "timestamps": {},
-            "climate": {},
-            "raw_items": {},
-        }
-
-    coordinator.async_set_updated_data(
-        {
-            "region": "cn",
-            "vehicles": [
-                china_vehicle("SYNTHETIC-BEANTECH", "beantech"),
-                china_vehicle("SYNTHETIC-NAVINFO", "navinfo"),
-            ],
-        }
-    )
-    coordinator.async_track_command = Mock()  # type: ignore[method-assign]
-
-    battery_heat = GwmBatteryHeatSwitch(
-        api,
-        coordinator,
-        "SYNTHETIC-BEANTECH",
-        turn_on_action="battery_gun_heat",
-        turn_off_action="battery_gun_heat_stop",
-        translation_key="battery_gun_heat",
-    )
-    assert battery_heat.available
-    assert not GwmBatteryHeatSwitch(
-        api,
-        coordinator,
-        "SYNTHETIC-NAVINFO",
-        turn_on_action="battery_gun_heat",
-        turn_off_action="battery_gun_heat_stop",
-        translation_key="battery_gun_heat",
-    ).available
-
-    with patch.object(battery_heat, "async_write_ha_state"):
-        await battery_heat.async_turn_on()
-        await battery_heat.async_turn_off()
-
-    assert api.async_vehicle_control.await_args_list == [
-        call("SYNTHETIC-BEANTECH", "battery_gun_heat"),
-        call("SYNTHETIC-BEANTECH", "battery_gun_heat_stop"),
-    ]
+    assert {entity._action for entity in remote} == expected
+    for entity in remote:
+        if entity._action not in {"horn", "flash_lights", "horn_and_lights"}:
+            continue
+        assert entity.available
+        assert entity.unique_id == "SYNTHETIC-A_" + entity._action
+        await entity.async_press()
+        api.async_vehicle_control.assert_awaited_with("SYNTHETIC-A", entity._action)
+        coordinator.async_track_command.assert_called_with({"id": "accepted", "state": "in_progress"})
+        vehicle["capabilities"]["china_vehicle_commands"] = False
+        assert not entity.available
+        vehicle["capabilities"]["china_vehicle_commands"] = True
+        coordinator.last_update_success = False
+        assert not entity.available
+        coordinator.last_update_success = True
+    assert api.async_vehicle_control.await_count == (3 if expected else 0)

@@ -1,4 +1,11 @@
 {
   "name": "GWM",
+  "country": [
+    "AD", "AE", "AL", "AM", "AT", "AU", "AZ", "BA", "BE", "BG", "BY", "CH",
+    "CN", "CY", "CZ", "DE", "DK", "EE", "ES", "FI", "FO", "FR", "GB", "GE",
+    "GI", "GR", "HR", "HU", "IE", "IL", "IS", "IT", "KZ", "LI", "LT", "LU",
+    "LV", "MC", "MD", "ME", "MK", "MT", "NL", "NO", "NZ", "PL", "PT", "RO",
+    "RS", "RU", "SE", "SI", "SK", "SM", "TR", "UA", "VA", "ZA"
+  ],
   "homeassistant": "2026.1.0"
 }

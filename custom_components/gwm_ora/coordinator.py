@@ -51,7 +51,6 @@ class GwmDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._command_tasks: dict[str, asyncio.Task[None]] = {}
         self._command_statuses: dict[str, str] = {}
         self._charging_plan_active: dict[str, bool] = {}
-        self._local_flags: dict[tuple[str, str], Any] = {}
 
     async def _async_update_data(self) -> dict[str, Any]:
         try:
@@ -137,42 +136,26 @@ class GwmDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._charging_plan_active[vin] = active
         self.async_update_listeners()
 
-    def local_flag(self, vin: str, key: str) -> Any:
-        """Return a locally tracked value for a vehicle.
-
-        For features the vehicle accepts commands for but never reports back in
-        the polled snapshot, so the entity can at least show what was last sent
-        from Home Assistant.
-        """
-        return self._local_flags.get((vin, key))
-
-    def set_local_flag(self, vin: str, key: str, value: Any) -> None:
-        """Update a locally tracked value."""
-        self._local_flags[(vin, key)] = value
-        self.async_update_listeners()
-
     def async_track_command(
         self,
         command: dict[str, Any],
-        on_terminal: Callable[[], Awaitable[None]] | None = None,
+        *,
+        on_terminal: Callable[[dict[str, Any] | None], Awaitable[None]] | None = None,
     ) -> None:
-        """Track a queued remote command and push status updates into HA.
-
-        ``on_terminal``, when given, runs once the command reaches a terminal
-        state (completed, failed, timeout or canceled) so an entity can reconcile
-        its state with the vehicle instead of trusting an optimistic update.
-        """
+        """Track a command, optionally refreshing a BeanTech setting when it ends."""
         self._apply_command_status(command)
         command_id = command.get("id")
-        if not command_id or command.get("state") in self._TERMINAL_COMMAND_STATES:
+        terminal = command.get("state") in self._TERMINAL_COMMAND_STATES
+        if not command_id or (terminal and on_terminal is None):
             return
-
         if command_id in self._command_tasks:
             return
-
-        task = self.hass.async_create_task(
-            self._async_follow_command(command_id, on_terminal)
+        follow = (
+            self._async_follow_command(command_id)
+            if on_terminal is None
+            else self._async_follow_and_notify(command, on_terminal)
         )
+        task = self.hass.async_create_task(follow)
         self._command_tasks[command_id] = task
         task.add_done_callback(lambda _: self._command_tasks.pop(command_id, None))
 
@@ -186,11 +169,7 @@ class GwmDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
 
-    async def _async_follow_command(
-        self,
-        command_id: str,
-        on_terminal: Callable[[], Awaitable[None]] | None = None,
-    ) -> None:
+    async def _async_follow_command(self, command_id: str) -> dict[str, Any] | None:
         """Poll one command until the provider reports a terminal state."""
         deadline_seconds = 310 if self.region == "rus" else 130
         poll_interval = 5
@@ -209,9 +188,8 @@ class GwmDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
             if command.get("state") == "completed":
                 await self._async_refresh_after_completed_command()
-            if on_terminal is not None:
-                await on_terminal()
-            return
+            return command
+        return None
 
     async def _async_refresh_after_completed_command(self) -> None:
         """Refresh cached vehicle data immediately after a successful command."""
@@ -263,3 +241,18 @@ class GwmDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         updated_data = dict(data)
         updated_data["vehicles"] = vehicles
         return updated_data
+
+
+    async def _async_follow_and_notify(
+        self,
+        command: dict[str, Any],
+        callback: Callable[[dict[str, Any] | None], Awaitable[None]],
+    ) -> None:
+        """Read back after terminal results or polling expiry, never after cancellation."""
+        result = command
+        if command.get("state") not in self._TERMINAL_COMMAND_STATES:
+            result = await self._async_follow_command(command["id"])
+        try:
+            await callback(result)
+        except Exception as err:
+            _LOGGER.debug("Could not refresh BeanTech command state (%s)", type(err).__name__)

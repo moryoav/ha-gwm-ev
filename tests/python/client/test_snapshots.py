@@ -199,8 +199,8 @@ def test_complete_known_signal_contract_matches_addon_mapper() -> None:
         front_driver_seat_vent_level=3,
         front_passenger_seat_vent_level=1,
     )
-    assert snapshot.climate.mode == "cool"
-    assert snapshot.climate.action == "cooling"
+    assert snapshot.climate.mode == "auto"
+    assert snapshot.climate.action is None
     assert snapshot.climate.target_temperature_c == 23
     assert snapshot.climate.operation_time_minutes == 15
     assert snapshot.climate.current_temperature_c == 23.4

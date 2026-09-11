@@ -11,6 +11,7 @@ from typing import Any, Self
 import aiohttp
 from yarl import URL
 
+from ._diagnostics import log_failure, log_request, log_response
 from ._protocol import _Deadline, _TransportRequest, _TransportResponse
 from .errors import (
     GwmClientError,
@@ -137,6 +138,7 @@ class AiohttpTransport:
             sock_read=min(read_timeout, remaining),
         )
 
+        log_request(request)
         failure: GwmClientError | None = None
         try:
             async with self._session.request(
@@ -157,10 +159,13 @@ class AiohttpTransport:
                 ssl=request.ssl_context,
                 timeout=timeout,
             ) as response:
-                return await self._read_response(response, operation=operation)
+                result = await self._read_response(response, operation=operation)
+                log_response(request, result)
+                return result
         except asyncio.CancelledError:
             raise
-        except GwmClientError:
+        except GwmClientError as error:
+            log_failure(request, error)
             raise
         except TimeoutError:
             failure = GwmDeadlineExceededError(operation=operation)
@@ -179,6 +184,7 @@ class AiohttpTransport:
             failure = GwmNetworkError(operation=operation)
 
         if failure is not None:
+            log_failure(request, failure)
             raise failure
         raise GwmNetworkError(operation=operation)
 

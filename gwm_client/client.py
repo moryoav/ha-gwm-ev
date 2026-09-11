@@ -1702,6 +1702,8 @@ def _classify_regional_read_error[T](
 
 
 def _decode_envelope(response: _TransportResponse, *, operation: str) -> object:
+    """Validate overseas success; payload requirements belong to each reader."""
+
     if response.status in {401, 403}:
         raise GwmAuthenticationError(operation=operation)
     if response.status == 429:
@@ -1732,9 +1734,7 @@ def _decode_envelope(response: _TransportResponse, *, operation: str) -> object:
     code = envelope.get("code")
     if code != "000000":
         raise GwmApiError(operation=operation, api_code=code)
-    if "data" not in envelope:
-        raise GwmSchemaError(operation=operation)
-    return envelope["data"]
+    return envelope.get("data")
 
 
 def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
