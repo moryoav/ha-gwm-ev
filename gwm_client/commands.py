@@ -41,8 +41,12 @@ type ChinaVehicleControlAction = Literal[
     "defrost_back_stop",
     "cabin_clean",
     "comfort_off",
+    "battery_gun_heat",
+    "battery_gun_heat_stop",
+    "battery_initiative_heat",
+    "battery_initiative_heat_stop",
 ]
-type ChinaRemoteCommandAction = ChinaVehicleControlAction | Literal["climate", "comfort_mode"]
+type ChinaRemoteCommandAction = ChinaVehicleControlAction | Literal["climate", "comfort_mode", "charging_mode", "charge_window", "charge_soc", "battery_appointment"]
 
 type RemoteCommandState = Literal["pending", "completed", "failed"]
 
@@ -95,9 +99,16 @@ BEANTECH_COMFORT_ACTIONS: frozenset[ChinaVehicleControlAction] = frozenset({
     "cabin_clean",
     "comfort_off",
 })
-BEANTECH_CHINA_VEHICLE_CONTROL_ACTIONS |= BEANTECH_COMFORT_ACTIONS
+BEANTECH_BATTERY_HEAT_ACTIONS: frozenset[ChinaVehicleControlAction] = frozenset({
+    "battery_gun_heat", "battery_gun_heat_stop", "battery_initiative_heat", "battery_initiative_heat_stop",
+})
+BEANTECH_CHARGING_RESULT_ACTIONS: frozenset[ChinaRemoteCommandAction] = frozenset({"charging_mode", "charge_window"})
+BEANTECH_CHARGING_ACTIONS: frozenset[ChinaRemoteCommandAction] = (
+    BEANTECH_BATTERY_HEAT_ACTIONS | BEANTECH_CHARGING_RESULT_ACTIONS | frozenset[ChinaRemoteCommandAction]({"charge_soc", "battery_appointment"})
+)
+BEANTECH_CHINA_VEHICLE_CONTROL_ACTIONS |= BEANTECH_COMFORT_ACTIONS | BEANTECH_BATTERY_HEAT_ACTIONS
 BEANTECH_TIMELY_ACTIONS: frozenset[ChinaRemoteCommandAction] = (
-    BEANTECH_HORN_LIGHT_ACTIONS | BEANTECH_COMFORT_ACTIONS | {"climate", "comfort_mode"}
+    BEANTECH_HORN_LIGHT_ACTIONS | BEANTECH_COMFORT_ACTIONS | frozenset[ChinaRemoteCommandAction]({"climate", "comfort_mode"}) | BEANTECH_CHARGING_ACTIONS
 )
 
 _COMMAND_IDENTIFIER = re.compile(r"[\x21-\x7e]{1,512}")

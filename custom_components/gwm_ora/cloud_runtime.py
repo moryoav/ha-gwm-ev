@@ -253,6 +253,52 @@ class _ChinaReadClient(Protocol):
     async def aclose(self) -> None: ...
 
 
+    async def get_bean_tech_charge_setting(
+        self,
+        identifier: VehicleIdentifier,
+    ) -> Mapping[str, object]: ...
+
+    async def get_bean_tech_switch_status(
+        self,
+        identifier: VehicleIdentifier,
+    ) -> Mapping[str, object]: ...
+
+    async def get_bean_tech_battery_heating_appointment(
+        self,
+        identifier: VehicleIdentifier,
+    ) -> bool | None: ...
+
+    async def set_bean_tech_battery_heating_appointment(
+        self,
+        identifier: VehicleIdentifier,
+        *,
+        enable: bool,
+        use_car_time_ms: int | None,
+    ) -> str: ...
+
+    async def set_bean_tech_charge_soc(
+        self,
+        identifier: VehicleIdentifier,
+        *,
+        percent: int,
+    ) -> str: ...
+
+    async def set_bean_tech_charge_window(
+        self,
+        identifier: VehicleIdentifier,
+        *,
+        start_time: str | None = None,
+        end_time: str | None = None,
+    ) -> str: ...
+
+    async def set_bean_tech_charging_mode(
+        self,
+        identifier: VehicleIdentifier,
+        *,
+        enable: bool,
+    ) -> str: ...
+
+
 class _AuthStateStore(Protocol):
     async def async_save_auth_state(
         self,
@@ -583,6 +629,8 @@ class GwmCloudClient:
                     self.region != REGION_CHINA or china_supported
                 )
                 capabilities["charging_control"] = charging_control_available
+                if self.region == REGION_CHINA and platform == "beantech":
+                    capabilities["beantech_charging_commands"] = self._charging_control_enabled
                 capabilities["china_vehicle_commands"] = self._lock_window_commands_enabled and china_supported
                 raw_items = snapshot.get("raw_items")
                 overseas_status_codes = (
@@ -1031,6 +1079,123 @@ class GwmCloudClient:
             ),
         )
         return CloudVehicleBasics(climate=climate)
+
+
+    async def async_get_bean_tech_charge_setting(
+        self,
+        identifier: VehicleIdentifier,
+    ) -> Mapping[str, object]:
+        """Read one BeanTech vehicle's smart-charge setting through the client."""
+
+        self._require_bean_tech_charging_vehicle(identifier, operation="get_bean_tech_charge_setting")
+        return await self._async_with_session_renewal(
+            lambda: cast(_ChinaReadClient, self._client).get_bean_tech_charge_setting(
+                identifier
+            )
+        )
+
+    async def async_set_bean_tech_charging_mode(
+        self,
+        identifier: VehicleIdentifier,
+        *,
+        enable: bool,
+    ) -> str:
+        """Set one BeanTech smart-charge mode and return the pollable seqNo."""
+
+        self._require_bean_tech_charging_vehicle(identifier, operation="set_bean_tech_charging_mode")
+        return await self._async_with_session_renewal(
+            lambda: cast(_ChinaReadClient, self._client).set_bean_tech_charging_mode(
+                identifier,
+                enable=enable,
+            )
+        )
+
+    async def async_get_bean_tech_switch_status(
+        self,
+        identifier: VehicleIdentifier,
+    ) -> Mapping[str, object]:
+        """Read the BeanTech switch/status block through the client."""
+        self._require_bean_tech_charging_vehicle(identifier, operation="get_bean_tech_switch_status")
+        return await self._async_with_session_renewal(
+            lambda: cast(_ChinaReadClient, self._client).get_bean_tech_switch_status(
+                identifier
+            )
+        )
+
+    async def async_get_bean_tech_battery_heating_appointment(
+        self,
+        identifier: VehicleIdentifier,
+    ) -> bool | None:
+        """Read whether BeanTech battery appointment heating is armed."""
+        self._require_bean_tech_charging_vehicle(identifier, operation="get_bean_tech_battery_heating_appointment")
+        return await self._async_with_session_renewal(
+            lambda: cast(
+                _ChinaReadClient, self._client
+            ).get_bean_tech_battery_heating_appointment(identifier)
+        )
+
+    async def async_set_bean_tech_battery_heating_appointment(
+        self,
+        identifier: VehicleIdentifier,
+        *,
+        enable: bool,
+        use_car_time_ms: int | None = None,
+    ) -> str:
+        """Arm or disarm BeanTech battery appointment heating and return seqNo."""
+        self._require_bean_tech_charging_vehicle(identifier, operation="set_bean_tech_battery_heating_appointment")
+        return await self._async_with_session_renewal(
+            lambda: cast(
+                _ChinaReadClient, self._client
+            ).set_bean_tech_battery_heating_appointment(
+                identifier,
+                enable=enable,
+                use_car_time_ms=use_car_time_ms,
+            )
+        )
+
+    async def async_set_bean_tech_charge_soc(
+        self,
+        identifier: VehicleIdentifier,
+        *,
+        percent: int,
+    ) -> str:
+        """Set the BeanTech charge limit and return the pollable seqNo."""
+        self._require_bean_tech_charging_vehicle(identifier, operation="set_bean_tech_charge_soc")
+        return await self._async_with_session_renewal(
+            lambda: cast(_ChinaReadClient, self._client).set_bean_tech_charge_soc(
+                identifier,
+                percent=percent,
+            )
+        )
+
+    async def async_set_bean_tech_charge_window(
+        self,
+        identifier: VehicleIdentifier,
+        *,
+        start_time: str | None = None,
+        end_time: str | None = None,
+    ) -> str:
+        """Write the BeanTech smart-charge window and return the pollable seqNo."""
+        self._require_bean_tech_charging_vehicle(identifier, operation="set_bean_tech_charge_window")
+        return await self._async_with_session_renewal(
+            lambda: cast(_ChinaReadClient, self._client).set_bean_tech_charge_window(
+                identifier,
+                start_time=start_time,
+                end_time=end_time,
+            )
+        )
+
+
+    def _require_bean_tech_charging_vehicle(self, identifier: VehicleIdentifier, *, operation: str) -> None:
+        """Reject an unrelated platform before authentication renewal or transport."""
+        if type(identifier) is not VehicleIdentifier:
+            raise GwmConfigurationError(operation=operation)
+        vehicle = self._vehicles.get(identifier.value)
+        if (
+            self.region != REGION_CHINA or vehicle is None
+            or str(vehicle.platform or "").strip().casefold() != "beantech"
+        ):
+            raise GwmRoutePolicyError(operation=operation)
 
 
 def _bootstrap_state_matches(

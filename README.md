@@ -150,6 +150,8 @@ Remote operations can affect a real vehicle. Test them manually before using the
 
 Charging control has its own opt-in. It does not use the vehicle security PIN.
 
+For mainland-China BeanTech vehicles, use the [BeanTech charging controls](#beantech-charging-and-battery-heating) below. The scheduled-charging switch and `gwm_ora.set_charging_plan` service described in this section apply to supported overseas and mainland-China NavInfo vehicles.
+
 The **Scheduled charging** switch is a convenience control:
 
 - Turning it on creates an eight-hour charging window starting now.
@@ -176,6 +178,27 @@ data:
 The integration records the exact plan it writes. If charging control is later disabled, it retries cleanup only while that exact plan is still present. It leaves schedules changed by the official app untouched.
 
 Charging control is fixture-tested but still needs direct live confirmation.
+
+### BeanTech charging and battery heating
+
+I expose these controls only for mainland-China vehicles identified as BeanTech:
+
+| Control | Required option | Behavior |
+| --- | --- | --- |
+| Smart charge | Enable charging control | Selects the saved scheduled-charging mode when on, or plug-and-charge mode when off. |
+| Charge window start / end | Enable charging control | Changes one boundary of the saved charging window. |
+| Charge SOC limit | Enable charging control | Sets the charging limit from 50% to 100% in steps of 10%. |
+| Plugged-in / active battery heating | Enable remote commands | Starts or stops the corresponding battery-heating function. |
+| Battery heating departure time | Enable remote commands | Schedules battery heating for the next occurrence of the selected time in Home Assistant's timezone. |
+| Battery appointment heating | Enable remote commands | Cancels the appointment when off, or enables it using the future departure time previously confirmed in this Home Assistant session. |
+
+Set a departure time before enabling battery appointment heating. Selecting a time sends the appointment immediately. Charging-window times use the vehicle app's clock; existing times are shown exactly, and new selections use five-minute steps.
+
+I preserve the charging strategy, the other window boundary, and additional schedule fields saved by the phone app. Set up a complete charging window in the app before editing one boundary in Home Assistant. Turning smart charge off selects plug-and-charge mode, so a connected vehicle may begin charging. Disabling the integration's charging-control option makes these controls unavailable and leaves the BeanTech app settings in place.
+
+Smart charge, charging-window times, and heating switches read their state back from GWM. Missing values remain unknown. GWM does not provide charge-limit or battery-departure-time readback through these endpoints, so I show those values only after a successful command in the current Home Assistant session. They return to unknown after a restart and cannot reflect changes made in the phone app. The **Remote command status** sensor reports acceptance, progress, and the final vehicle result separately.
+
+These commands do not require a PIN or the unresolved encrypted-PIN layer. The contributor tested the original protocol on a BeanTech vehicle; the integration changes have offline regression coverage and still need confirmation on each supported vehicle model.
 
 ## evcc
 

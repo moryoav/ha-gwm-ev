@@ -883,6 +883,7 @@ async def test_china_runtime_handoff_maps_platform_capabilities_and_no_pin_write
         "cabin_clean_commands": False,
     }
     assert snapshots[1]["capabilities"] == {
+        "beantech_charging_commands": True,
         "remote_commands": True,
         "charging_control": False,
         "climate_commands": True,
@@ -966,3 +967,31 @@ async def test_beantech_runtime_adapters_are_china_only_and_preserve_values(regi
         with pytest.raises(GwmRoutePolicyError):
             await getattr(runtime, method)(identifier, **kwargs)
         call.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("region,platform", [("cn", "beantech"), ("cn", "navinfo"), ("cn", None), ("eu", "beantech"), ("aus", "beantech"), ("rus", "beantech")])
+@pytest.mark.parametrize("method,kwargs,result", [
+    ("get_bean_tech_charge_setting", {}, {"chargingMode": 0, "chargeStrategy": 5, "chargeSetParam": {}}),
+    ("set_bean_tech_charging_mode", {"enable": True}, "seq-mode"),
+    ("get_bean_tech_switch_status", {}, {"activeKeepWarm": None, "insertGunKeepWarm": True}),
+    ("get_bean_tech_battery_heating_appointment", {}, None),
+    ("set_bean_tech_battery_heating_appointment", {"enable": True, "use_car_time_ms": 1789200000000}, "seq-appointment"),
+    ("set_bean_tech_charge_soc", {"percent": 80}, "seq-soc"),
+    ("set_bean_tech_charge_window", {"start_time": None, "end_time": "07:07"}, "seq-window"),
+])
+async def test_charging_runtime_adapters_require_discovered_beantech_vehicle(region, platform, method, kwargs, result):
+    call = AsyncMock(return_value=result)
+    runtime = GwmCloudClient(region, SimpleNamespace(**{method: call}))
+    identifier = VehicleIdentifier("LGWTEST0000000003")
+    if platform is not None:
+        runtime._vehicles[identifier.value] = ChinaVehicle(identifier=identifier, platform=platform)
+    if (region, platform) == ("cn", "beantech"):
+        assert await getattr(runtime, "async_" + method)(identifier, **kwargs) == result
+        call.assert_awaited_once_with(identifier, **kwargs)
+    else:
+        with pytest.raises(GwmRoutePolicyError):
+            await getattr(runtime, "async_" + method)(identifier, **kwargs)
+        call.assert_not_awaited()
+    with pytest.raises(GwmConfigurationError):
+        await getattr(runtime, "async_" + method)(identifier.value, **kwargs)

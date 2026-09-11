@@ -5,13 +5,14 @@ from __future__ import annotations
 from typing import Any
 
 from homeassistant.components.number import NumberDeviceClass, NumberEntity, NumberMode
-from homeassistant.const import UnitOfTime
+from homeassistant.const import PERCENTAGE, UnitOfTime
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import GwmConfigEntry
+from .beantech_charging import BeanTechChargingEntity
 from .const import DOMAIN
 from .entity import GwmEntity, async_call_gwm_api, setup_vehicle_entities
 
@@ -33,6 +34,13 @@ async def async_setup_entry(
                 entry.runtime_data.coordinator,
                 vehicle["vin"],
             ),
+        ) + (
+            (GwmChargeSocNumber(
+                entry.runtime_data.api, entry.runtime_data.coordinator, vehicle["vin"]
+            ),)
+            if entry.runtime_data.coordinator.region == "cn"
+            and str(vehicle.get("platform") or "").lower() == "beantech"
+            else ()
         ),
     )
 
@@ -84,3 +92,39 @@ class GwmClimateRunTimeNumber(GwmEntity, NumberEntity):
             self._api.async_set_climate(self.vin, operation_time_minutes=int(value))
         )
         self.coordinator.async_track_command(command)
+
+
+class GwmChargeSocNumber(BeanTechChargingEntity, NumberEntity):
+    """Show the last confirmed HA charge limit; the cloud has no limit readback."""
+
+    _attr_translation_key = "charge_soc_limit"
+    _attr_entity_category = EntityCategory.CONFIG
+    _attr_mode = NumberMode.SLIDER
+    _attr_native_min_value = 50
+    _attr_native_max_value = 100
+    _attr_native_step = 10
+    _attr_native_unit_of_measurement = PERCENTAGE
+    _attr_assumed_state = True
+    _requires_charging_control = True
+
+    def __init__(self, api, coordinator, vin: str) -> None:
+        super().__init__(api, coordinator, vin)
+        self._attr_unique_id = f"{vin}_charge_soc_limit"
+        self._confirmed_percent: float | None = None
+
+    @property
+    def native_value(self) -> float | None:
+        """Keep the value unknown until GWM confirms a command."""
+        return self._confirmed_percent
+
+    async def async_set_native_value(self, value: float) -> None:
+        if type(value) not in {int, float} or value not in range(50, 101, 10):
+            raise HomeAssistantError(
+                translation_domain=DOMAIN, translation_key="invalid_charge_soc_limit"
+            )
+        percent = int(value)
+        await self._async_send_command(
+            lambda: self._api.async_set_charge_soc(self.vin, percent=percent),
+            confirmed=lambda: setattr(self, "_confirmed_percent", float(percent)),
+            accepted=lambda: setattr(self, "_confirmed_percent", None),
+        )

@@ -71,6 +71,14 @@ type _ChinaOperation = Literal[
     "send_close_windows_command",
     "send_vehicle_control_command",
     "get_remote_command_result",
+    "get_bean_tech_charge_setting",
+    "set_bean_tech_charging_mode",
+    "get_bean_tech_battery_heating_appointment",
+    "get_bean_tech_switch_status",
+    "set_bean_tech_battery_heating_appointment",
+    "set_bean_tech_charge_soc",
+    "set_bean_tech_charge_window",
+
 ]
 
 _G_APP_ORIGIN = "https://gapp-api.gwmapp-h.com"
@@ -96,6 +104,13 @@ _BEAN_TECH_SEND_URL = (
     "https://gw-app-gateway.gwmapp-h.com/app-api/api/v1.0/vehicle/T5/sendCmd"
 )
 _BEAN_TECH_SEND_PATH = "/app-api/api/v1.0/vehicle/T5/sendCmd"
+_BEAN_TECH_CHARGE_SETTING_PATH = "/app-api/api/v3.0/vehicle/charge/setting"
+_BEAN_TECH_CHARGE_SETTING_URL = "https://gw-app-gateway.gwmapp-h.com" + _BEAN_TECH_CHARGE_SETTING_PATH
+_BEAN_TECH_SWITCH_STATUS_PATH = "/app-api/api/v3.0/vehicle/switch/status"
+_BEAN_TECH_SWITCH_STATUS_URL = "https://gw-app-gateway.gwmapp-h.com" + _BEAN_TECH_SWITCH_STATUS_PATH
+_BEAN_TECH_CONFIG_QUERY_PATH = "/app-api/api/v3.0/vehicle/remote-ctrl/config/query"
+_BEAN_TECH_CONFIG_QUERY_URL = "https://gw-app-gateway.gwmapp-h.com" + _BEAN_TECH_CONFIG_QUERY_PATH
+
 _BEAN_TECH_TIMELY_PATH = "/app-api/api/v3.0/vehicle/remote-ctrl/timely"
 _BEAN_TECH_TIMELY_URL = "https://gw-app-gateway.gwmapp-h.com" + _BEAN_TECH_TIMELY_PATH
 _BEAN_TECH_RESULT_URL = (
@@ -293,6 +308,18 @@ class _ChinaTransportRequest:
             _validate_climate_command_request(self, copied)
         elif self.operation == "set_bean_tech_ac_temperature":
             _validate_bean_tech_config_request(self, copied)
+        elif self.operation == "get_bean_tech_charge_setting":
+            _validate_bean_tech_charge_setting_request(self, copied)
+        elif self.operation in {"set_bean_tech_charging_mode", "set_bean_tech_charge_window"}:
+            _validate_bean_tech_charge_setting_write_request(self, copied)
+        elif self.operation == "get_bean_tech_battery_heating_appointment":
+            _validate_bean_tech_config_query_request(self, copied)
+        elif self.operation == "get_bean_tech_switch_status":
+            _validate_bean_tech_switch_status_request(self, copied)
+        elif self.operation == "set_bean_tech_battery_heating_appointment":
+            _validate_bean_tech_battery_heating_appointment_request(self, copied)
+        elif self.operation == "set_bean_tech_charge_soc":
+            _validate_bean_tech_charge_soc_request(self, copied)
         elif self.operation == "get_bean_tech_comfort_modes":
             _validate_bean_tech_simple_get_request(self, copied)
         elif self.operation == "set_bean_tech_comfort_mode":
@@ -310,7 +337,10 @@ class _ChinaTransportRequest:
         elif self.operation == "send_vehicle_control_command":
             _validate_vehicle_control_command_request(self, copied)
         elif self.operation == "get_remote_command_result":
-            _validate_remote_command_result_request(self, copied)
+            if self.url.endswith("&msgType=charge"):
+                _validate_bean_tech_charge_result_request(self, copied)
+            else:
+                _validate_remote_command_result_request(self, copied)
         else:  # pragma: no cover - the Literal is still a runtime boundary
             raise ValueError("operation_invalid")
         object.__setattr__(self, "headers", MappingProxyType(copied))
@@ -1320,6 +1350,11 @@ _BEAN_TECH_VEHICLE_CONTROL_BODIES: dict[str, object] = {
     "DEFROST_BACK_START": {"operationTime": 900},
     "DEFROST_BACK_STOP": None,
     "CABIN_CLEANING_START": {"operationTime": 60},
+    "BATTERY_GUN_HEAT_START": None,
+    "BATTERY_GUN_HEAT_STOP": None,
+    "BATTERY_INITIATIVE_HEAT_START": None,
+    "BATTERY_INITIATIVE_HEAT_STOP": None,
+
 }
 
 def _valid_air_conditioner_start_body(cmd_body: object) -> bool:
@@ -2297,6 +2332,301 @@ def _valid_phase_timeout(value: object) -> bool:
         and math.isfinite(value)
         and value > 0
     )
+
+
+def _validate_bean_tech_charge_setting_request(
+    request: _ChinaTransportRequest,
+    headers: Mapping[str, str],
+) -> None:
+    vin = headers.get("vin", "")
+    try:
+        parsed = urlsplit(request.url)
+        expected_path = _BEAN_TECH_CHARGE_SETTING_PATH + "/" + vin
+        if parsed.path != expected_path or parsed.query != "strategy=5":
+            raise ValueError
+    except ValueError:
+        raise ValueError("route_invalid") from None
+    expected_url = (
+        _BEAN_TECH_CHARGE_SETTING_URL
+        + "/"
+        + quote(vin, safe="", encoding="utf-8", errors="strict")
+        + "?strategy=5"
+    )
+    if (
+        request.service != "bean_tech"
+        or request.method != "GET"
+        or request.body is not None
+        or request.url != expected_url
+        or parsed.scheme != "https"
+        or parsed.hostname != "gw-app-gateway.gwmapp-h.com"
+        or parsed.port is not None
+        or set(headers) != _BEAN_TECH_STATUS_HEADERS
+        or _VIN.fullmatch(vin) is None
+        or not _valid_bean_tech_authenticated_headers(headers)
+        or headers.get("bt-auth-sign")
+        != bean_tech_sign(
+            "GET",
+            _BEAN_TECH_CHARGE_SETTING_PATH + "/" + vin,
+            headers["bt-auth-nonce"],
+            headers["bt-auth-timestamp"],
+            "strategy=5",
+        )
+    ):
+        raise ValueError("route_invalid")
+
+def _validate_bean_tech_charge_setting_write_request(
+    request: _ChinaTransportRequest,
+    headers: Mapping[str, str],
+) -> None:
+    raw_body = _utf8_body(request.body)
+    body = _decode_wire_object(raw_body) if raw_body is not None else None
+    charging_mode = body.get("chargingMode") if isinstance(body, Mapping) else None
+    charge_strategy = body.get("chargeStrategy") if isinstance(body, Mapping) else None
+    charge_set_param = body.get("chargeSetParam") if isinstance(body, Mapping) else None
+    sequence = body.get("seqNo") if isinstance(body, Mapping) else None
+    if (
+        request.service != "bean_tech"
+        or request.method != "POST"
+        or request.url != _BEAN_TECH_CHARGE_SETTING_URL
+        or raw_body is None
+        or not isinstance(body, Mapping)
+        or set(headers) != _BEAN_TECH_COMMAND_HEADERS
+        or list(body)
+        != ["vin", "chargingMode", "chargeStrategy", "chargeSetParam", "seqNo"]
+        or type(charging_mode) is not int
+        or charging_mode not in {0, 1}
+        or isinstance(charge_strategy, bool)
+        or not isinstance(charge_strategy, int)
+        or charge_strategy < 0
+        or not isinstance(charge_set_param, Mapping)
+        or _VIN.fullmatch(str(body.get("vin", ""))) is None
+        or body.get("vin") != headers.get("vin")
+        or not isinstance(sequence, str)
+        or _BEAN_TECH_SEQUENCE.fullmatch(sequence) is None
+        or encode_dotnet_json(body) != raw_body
+        or headers.get("Content-Type") != "application/json; charset=UTF-8"
+        or not _valid_bean_tech_authenticated_headers(headers)
+        or headers.get("bt-auth-sign")
+        != bean_tech_sign(
+            "POST",
+            _BEAN_TECH_CHARGE_SETTING_PATH,
+            headers["bt-auth-nonce"],
+            headers["bt-auth-timestamp"],
+            "json=" + raw_body,
+        )
+    ):
+        raise ValueError("route_invalid")
+
+def _validate_bean_tech_config_query_request(
+    request: _ChinaTransportRequest,
+    headers: Mapping[str, str],
+) -> None:
+    raw_body = _utf8_body(request.body)
+    body = _decode_wire_object(raw_body) if raw_body is not None else None
+    types = body.get("types") if isinstance(body, Mapping) else None
+    user_id = body.get("userId") if isinstance(body, Mapping) else None
+    if (
+        request.service != "bean_tech"
+        or request.method != "POST"
+        or request.url != _BEAN_TECH_CONFIG_QUERY_URL
+        or raw_body is None
+        or not isinstance(body, Mapping)
+        or set(headers) != _BEAN_TECH_COMMAND_HEADERS
+        or list(body) != ["sendType", "types", "userId", "vin"]
+        or type(body.get("sendType")) is not int
+        or body.get("sendType") != 0
+        or types != ["BATTERY_HEATING_APPOINTMENT"]
+        or not isinstance(user_id, str)
+        or not user_id
+        or _VIN.fullmatch(str(body.get("vin", ""))) is None
+        or body.get("vin") != headers.get("vin")
+        or encode_dotnet_json(body) != raw_body
+        or headers.get("Content-Type") != "application/json; charset=UTF-8"
+        or not _valid_bean_tech_authenticated_headers(headers)
+        or headers.get("bt-auth-sign")
+        != bean_tech_sign(
+            "POST",
+            _BEAN_TECH_CONFIG_QUERY_PATH,
+            headers["bt-auth-nonce"],
+            headers["bt-auth-timestamp"],
+            "json=" + raw_body,
+        )
+    ):
+        raise ValueError("route_invalid")
+
+def _validate_bean_tech_battery_heating_appointment_request(
+    request: _ChinaTransportRequest,
+    headers: Mapping[str, str],
+) -> None:
+    raw_body = _utf8_body(request.body)
+    body = _decode_wire_object(raw_body) if raw_body is not None else None
+    if not isinstance(body, Mapping):
+        raise ValueError("route_invalid")
+    commands = body.get("commands")
+    if not isinstance(commands, list) or len(commands) != 1:
+        raise ValueError("route_invalid")
+    command = commands[0]
+    if not isinstance(command, Mapping):
+        raise ValueError("route_invalid")
+    control_type = command.get("controlType")
+    if control_type == "BATTERY_HEATING_APPOINTMENT":
+        cmd_body = command.get("cmdBody")
+        use_car_time = (
+            cmd_body.get("useCarTime") if isinstance(cmd_body, Mapping) else None
+        )
+        valid_command = (
+            list(command) == ["controlType", "cmdBody"]
+            and isinstance(use_car_time, int)
+            and not isinstance(use_car_time, bool)
+            and 0 < use_car_time <= 253402214399000
+            and isinstance(cmd_body, Mapping)
+            and list(cmd_body) == ["useCarTime"]
+        )
+    elif control_type == "BATTERY_TC_STOP":
+        valid_command = list(command) == ["controlType"]
+    else:
+        valid_command = False
+    if not valid_command or not _valid_bean_tech_timely_envelope(
+        request,
+        headers,
+        body=body,
+        sequence=body.get("seqNo"),
+        raw_body=raw_body,
+        send_type=0,
+    ):
+        raise ValueError("route_invalid")
+
+def _validate_bean_tech_charge_soc_request(
+    request: _ChinaTransportRequest,
+    headers: Mapping[str, str],
+) -> None:
+    raw_body = _utf8_body(request.body)
+    body = _decode_wire_object(raw_body) if raw_body is not None else None
+    if not isinstance(body, Mapping):
+        raise ValueError("route_invalid")
+    commands = body.get("commands")
+    if not isinstance(commands, list) or len(commands) != 1:
+        raise ValueError("route_invalid")
+    command = commands[0]
+    if not isinstance(command, Mapping):
+        raise ValueError("route_invalid")
+    cmd_body = command.get("cmdBody")
+    charge_soc = (
+        cmd_body.get("chargeSoc") if isinstance(cmd_body, Mapping) else None
+    )
+    valid_command = (
+        command.get("controlType") == "CTRL_CHARGE_SOC"
+        and list(command) == ["controlType", "cmdBody"]
+        and isinstance(charge_soc, int)
+        and not isinstance(charge_soc, bool)
+        and 50 <= charge_soc <= 100
+        and charge_soc % 10 == 0
+        and isinstance(cmd_body, Mapping)
+        and list(cmd_body) == ["chargeSoc"]
+    )
+    if not valid_command or not _valid_bean_tech_timely_envelope(
+        request,
+        headers,
+        body=body,
+        sequence=body.get("seqNo"),
+        raw_body=raw_body,
+        send_type=0,
+    ):
+        raise ValueError("route_invalid")
+
+
+def _validate_bean_tech_switch_status_request(
+    request: _ChinaTransportRequest,
+    headers: Mapping[str, str],
+) -> None:
+    path = _BEAN_TECH_SWITCH_STATUS_PATH
+    expected_url = _BEAN_TECH_SWITCH_STATUS_URL
+    vin = headers.get("vin", "")
+    if (
+        request.service != "bean_tech"
+        or request.method != "GET"
+        or request.body is not None
+        or request.url != expected_url + "?vin=" + quote(vin, safe="", encoding="utf-8", errors="strict")
+        or set(headers) != _BEAN_TECH_STATUS_HEADERS
+        or _VIN.fullmatch(vin) is None
+        or not _valid_bean_tech_authenticated_headers(headers)
+        or headers.get("bt-auth-sign")
+        != bean_tech_sign(
+            "GET",
+            path,
+            headers["bt-auth-nonce"],
+            headers["bt-auth-timestamp"],
+            "vin=" + vin,
+        )
+    ):
+        raise ValueError("route_invalid")
+
+
+def _validate_bean_tech_charge_result_request(
+    request: _ChinaTransportRequest,
+    headers: Mapping[str, str],
+) -> None:
+    vin = headers.get("vin", "")
+    try:
+        parsed = urlsplit(request.url)
+        tokens = parsed.query.split("&")
+        if len(tokens) != 3:
+            raise ValueError
+        sequence_token, vin_token, message_token = tokens
+        if not sequence_token.startswith("seqNo=") or not vin_token.startswith("vin="):
+            raise ValueError
+        sequence = unquote_to_bytes(sequence_token[6:]).decode("utf-8", errors="strict")
+        query_vin = unquote_to_bytes(vin_token[4:]).decode("utf-8", errors="strict")
+        canonical_url = (
+            _NAVINFO_RESULT_URL
+            + "?seqNo="
+            + quote(sequence, safe="", encoding="utf-8", errors="strict")
+            + "&vin="
+            + quote(query_vin, safe="", encoding="utf-8", errors="strict")
+            + "&msgType=charge"
+        )
+    except (UnicodeError, ValueError):
+        raise ValueError("route_invalid") from None
+    if (
+        request.service != "bean_tech"
+        or request.method != "GET"
+        or request.body is not None
+        or parsed.scheme != "https"
+        or parsed.hostname != "gw-app-gateway.gwmapp-h.com"
+        or parsed.port is not None
+        or parsed.path != _NAVINFO_RESULT_PATH
+        or message_token != "msgType=charge"
+        or request.url != canonical_url
+        or query_vin != vin
+        or not _safe_wire_text(sequence, maximum=512)
+        or set(headers) != _BEAN_TECH_STATUS_HEADERS
+        or _VIN.fullmatch(vin) is None
+        or headers.get("bt-auth-appkey") != BEAN_TECH_APP_KEY
+        or _LOWER_HEX_16.fullmatch(headers.get("bt-auth-nonce", "")) is None
+        or not _epoch_milliseconds(headers.get("bt-auth-timestamp", ""))
+        or headers.get("rs") != "2"
+        or headers.get("appId") != "097a7099af30d960"
+        or headers.get("brand") != "10"
+        or headers.get("terminal") != "GW_APP_GWM"
+        or headers.get("enterPriseId") != "CC01"
+        or not _safe_wire_text(headers.get("accessToken"), maximum=16 * 1024)
+        or not _safe_wire_text(headers.get("beanId"), maximum=16 * 1024)
+        or headers.get("cVer") != "2.1.5"
+        or headers.get("tenantId") != "1"
+        or headers.get("operatorRole") != "0"
+        or not _safe_wire_text(headers.get("tokenId"), maximum=16 * 1024)
+        or headers.get("Accept-Encoding") != "gzip"
+        or headers.get("User-Agent") != _OFFICIAL_USER_AGENT
+        or headers.get("bt-auth-sign")
+        != bean_tech_sign(
+            "GET",
+            _NAVINFO_RESULT_PATH,
+            headers["bt-auth-nonce"],
+            headers["bt-auth-timestamp"],
+            "msgtype=charge" + "seqno=" + sequence + "vin=" + vin,
+        )
+    ):
+        raise ValueError("route_invalid")
 
 
 __all__ = ["ChinaAiohttpTransport", "ChinaTransportCapabilities"]

@@ -1,4 +1,4 @@
-"""BeanTech cabin-clean appointment time."""
+"""BeanTech charging windows and appointment times."""
 
 from __future__ import annotations
 
@@ -17,6 +17,7 @@ from homeassistant.util import dt as dt_util
 from gwm_client import GwmClientError
 
 from . import GwmConfigEntry
+from .beantech_charging import BeanTechChargingEntity
 from .entity import GwmEntity, async_call_gwm_api, setup_vehicle_entities
 from .errors import GwmCommandError
 
@@ -54,18 +55,87 @@ async def async_setup_entry(
     entry: GwmConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Register the appointment only for mainland-China BeanTech vehicles."""
+    """Register charging and appointment selectors for China BeanTech vehicles."""
     setup_vehicle_entities(
         entry, async_add_entities,
         lambda vehicle: (
             (GwmCabinCleanAppointmentSelect(
                 entry.runtime_data.api, entry.runtime_data.coordinator, vehicle["vin"]
-            ),)
+            ), GwmChargeWindowSelect(
+                entry.runtime_data.api, entry.runtime_data.coordinator, vehicle["vin"], start=True
+            ), GwmChargeWindowSelect(
+                entry.runtime_data.api, entry.runtime_data.coordinator, vehicle["vin"], start=False
+            ), GwmBatteryAppointmentTimeSelect(
+                entry.runtime_data.api, entry.runtime_data.coordinator, vehicle["vin"]
+            ))
             if entry.runtime_data.coordinator.region == "cn"
             and str(vehicle.get("platform") or "").strip().casefold() == "beantech"
             else ()
         ),
     )
+
+
+class GwmChargeWindowSelect(BeanTechChargingEntity, SelectEntity):
+    """Edit one window boundary while preserving the other boundary read from GWM."""
+
+    _attr_entity_category = EntityCategory.CONFIG
+    _requires_charging_control = True
+
+    def __init__(self, api, coordinator, vin: str, *, start: bool) -> None:
+        super().__init__(api, coordinator, vin, read=api.async_get_charging_mode)
+        self._field = "start_time" if start else "end_time"
+        self._attr_translation_key = "charge_window_start" if start else "charge_window_end"
+        self._attr_unique_id = f"{vin}_{self._attr_translation_key}"
+
+    @property
+    def current_option(self) -> str | None:
+        """Preserve exact app-configured minutes on readback."""
+        return self._data.get(self._field)
+
+    @property
+    def options(self) -> list[str]:
+        current = self.current_option
+        return sorted(set(_FIVE_MINUTE_TIMES) | ({current} if current else set()))
+
+    async def async_select_option(self, option: str) -> None:
+        if option == self.current_option:
+            return
+        if option not in _FIVE_MINUTE_TIMES:
+            raise HomeAssistantError("Choose a charging time in five-minute steps")
+        await self._async_send_command(lambda: self._api.async_set_charge_window(self.vin, **{self._field: option}))
+
+
+class GwmBatteryAppointmentTimeSelect(BeanTechChargingEntity, SelectEntity):
+    """Arm one battery-heating appointment in Home Assistant's timezone."""
+
+    _attr_entity_category = EntityCategory.CONFIG
+    _attr_translation_key = "battery_appointment_time"
+    _attr_options = _FIVE_MINUTE_TIMES
+    _attr_assumed_state = True
+
+    def __init__(self, api, coordinator, vin: str) -> None:
+        super().__init__(api, coordinator, vin)
+        self._attr_unique_id = f"{vin}_battery_appointment_time"
+
+    @property
+    def current_option(self) -> str | None:
+        """Show only a future departure confirmed during this HA session."""
+        value = self._api.battery_heating_departure_time(self.vin)
+        if value is None or value <= dt_util.utcnow().timestamp() * 1000:
+            return None
+        return _ms_to_clock(value)
+
+    async def async_select_option(self, option: str) -> None:
+        if option == self.current_option:
+            return
+        if option not in _FIVE_MINUTE_TIMES:
+            raise HomeAssistantError("Choose a battery heating time in five-minute steps")
+        time_ms = _clock_to_today_ms(option)
+        await self._async_send_command(
+            lambda: self._api.async_set_battery_heating_appointment(self.vin, enable=True, use_car_time_ms=time_ms),
+            confirmed=lambda: self._api.remember_battery_heating_departure_time(self.vin, time_ms),
+            accepted=lambda: self._api.remember_battery_heating_departure_time(self.vin, None),
+        )
 
 
 class GwmCabinCleanAppointmentSelect(GwmEntity, SelectEntity):

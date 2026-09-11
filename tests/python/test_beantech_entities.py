@@ -33,6 +33,7 @@ def _context(region="cn", platform="beantech", enabled=True):
     hass = HomeAssistant("synthetic-config")
     api = SimpleNamespace(**{name: AsyncMock(return_value=ACCEPTED) for name in (
         "async_vehicle_control", "async_set_comfort_mode", "async_set_climate",
+        "async_get_charging_mode", "async_get_battery_heat_status", "async_get_battery_heating_appointment",
     )}, async_get_cabin_clean_appointment=AsyncMock(return_value=None), async_set_cabin_clean_appointment=AsyncMock())
     coordinator = GwmDataUpdateCoordinator(hass, api, cloud_client=SimpleNamespace())
     vehicle = {"vin": VIN, "platform": platform, "values": {}, "capabilities": {
@@ -59,7 +60,7 @@ async def test_beantech_entities_are_registered_only_on_the_intended_platform(re
         await setup(hass, entry, added.extend)
         assert len({entity.unique_id for entity in added}) == len(added)
         if setup is setup_switches:
-            assert sum(isinstance(entity, GwmChargingScheduleSwitch) for entity in added) == 1
+            assert sum(isinstance(entity, GwmChargingScheduleSwitch) for entity in added) == int(not expected)
             assert sum(isinstance(entity, GwmFrontDefrosterSwitch) for entity in added) == int(not expected)
             assert sum(entity.translation_key == "defrost_front" for entity in added) == int(expected)
         new = [entity for entity in added if isinstance(entity, new_classes)]

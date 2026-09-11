@@ -8,11 +8,14 @@ from typing import Any
 
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.util import dt as dt_util
 
 from gwm_client import GwmClientError
 
 from . import GwmConfigEntry
+from .beantech_charging import BeanTechChargingEntity
 from .const import DEFAULT_CHARGE_WINDOW_HOURS
 from .entity import GwmEntity, async_call_gwm_api, setup_vehicle_entities, vehicle_value
 from .errors import GwmCommandError
@@ -20,6 +23,76 @@ from .errors import GwmCommandError
 PARALLEL_UPDATES = 0
 
 _LOGGER = logging.getLogger(__name__)
+
+
+class GwmSmartChargeSwitch(BeanTechChargingEntity, SwitchEntity):
+    """Select scheduled or plug-and-charge mode without changing the saved plan."""
+
+    _attr_translation_key = "smart_charge"
+    _requires_charging_control = True
+
+    def __init__(self, api, coordinator, vin: str) -> None:
+        super().__init__(api, coordinator, vin, read=api.async_get_charging_mode)
+        self._attr_unique_id = f"{vin}_smart_charge"
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return the mode last reported by the vehicle."""
+        return self._data.get("enabled")
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        await self._async_send_command(lambda: self._api.async_set_charging_mode(self.vin, enable=True))
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        await self._async_send_command(lambda: self._api.async_set_charging_mode(self.vin, enable=False))
+
+
+class GwmBatteryHeatSwitch(BeanTechChargingEntity, SwitchEntity):
+    """Control plugged-in or active battery heating with vehicle state readback."""
+
+    def __init__(self, api, coordinator, vin: str, *, plugged_in: bool) -> None:
+        super().__init__(api, coordinator, vin, read=api.async_get_battery_heat_status)
+        self._action = "battery_gun_heat" if plugged_in else "battery_initiative_heat"
+        self._state_key = "gun_warm" if plugged_in else "active_warm"
+        self._attr_translation_key = self._action
+        self._attr_unique_id = f"{vin}_{self._action}"
+
+    @property
+    def is_on(self) -> bool | None:
+        """Keep missing switch fields unknown instead of showing them as off."""
+        return self._data.get(self._state_key)
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        await self._async_send_command(lambda: self._api.async_vehicle_control(self.vin, self._action))
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        await self._async_send_command(lambda: self._api.async_vehicle_control(self.vin, self._action + "_stop"))
+
+
+class GwmBatteryAppointmentHeatingSwitch(BeanTechChargingEntity, SwitchEntity):
+    """Enable battery heating at a chosen departure time or cancel it."""
+
+    _attr_translation_key = "battery_appointment_heating"
+
+    def __init__(self, api, coordinator, vin: str) -> None:
+        super().__init__(api, coordinator, vin, read=api.async_get_battery_heating_appointment)
+        self._attr_unique_id = f"{vin}_battery_appointment_heating"
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return the appointment state reported by the vehicle."""
+        return self._data.get("enabled")
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        time_ms = self._api.battery_heating_departure_time(self.vin)
+        if time_ms is None or time_ms <= dt_util.utcnow().timestamp() * 1000:
+            raise HomeAssistantError("Choose a future battery heating departure time first")
+        await self._async_send_command(
+            lambda: self._api.async_set_battery_heating_appointment(self.vin, enable=True, use_car_time_ms=time_ms)
+        )
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        await self._async_send_command(lambda: self._api.async_set_battery_heating_appointment(self.vin, enable=False))
 
 
 def _charging_plan_is_active(response: dict[str, Any]) -> bool:
@@ -50,7 +123,11 @@ async def async_setup_entry(
         ]
         if not is_beantech:
             return existing + [GwmFrontDefrosterSwitch(api, coordinator, vin)]
-        return existing + [
+        return [
+            GwmSmartChargeSwitch(api, coordinator, vin),
+            GwmBatteryHeatSwitch(api, coordinator, vin, plugged_in=True),
+            GwmBatteryHeatSwitch(api, coordinator, vin, plugged_in=False),
+            GwmBatteryAppointmentHeatingSwitch(api, coordinator, vin),
             GwmRemoteControlSwitch(
                 api,
                 coordinator,

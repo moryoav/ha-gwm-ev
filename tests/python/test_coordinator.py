@@ -258,3 +258,61 @@ async def test_command_polling_tasks_are_cancelled_and_joined_before_shutdown(
 
     assert finished.is_set()
     assert coordinator._command_tasks == {}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("initial", ["in_progress", "completed", "failed", "timeout"])
+@pytest.mark.parametrize("outcome", ["completed", "failed", "timeout", "expiry", "errors"])
+async def test_command_terminal_callback_runs_once_after_result_or_deadline(monkeypatch, initial, outcome):
+    elapsed = [0.0]
+    async def sleep(delay):
+        elapsed[0] += delay
+    monkeypatch.setattr("custom_components.gwm_ora.coordinator.asyncio.sleep", sleep)
+    monkeypatch.setattr("custom_components.gwm_ora.coordinator.time.monotonic", lambda: elapsed[0])
+    api = AsyncMock()
+    api.async_get_command.return_value = {"id": "command", "state": outcome if outcome not in {"expiry", "errors"} else "in_progress"}
+    if outcome == "errors":
+        api.async_get_command.side_effect = GwmNetworkError()
+    coordinator = GwmDataUpdateCoordinator(HomeAssistant("synthetic-config"), api, cloud_client=object())
+    coordinator.data = {"region": "cn", "vehicles": []}
+    coordinator._async_refresh_after_completed_command = AsyncMock()
+    callback = AsyncMock()
+    command = {"id": "command", "state": initial}
+    coordinator.async_track_command(command, on_terminal=callback)
+    task = coordinator._command_tasks["command"]
+    # Duplicate registration must not create another poller or callback.
+    coordinator.async_track_command(command, on_terminal=callback)
+    assert coordinator._command_tasks["command"] is task
+    await task
+    if initial != "in_progress":
+        callback.assert_awaited_once_with(command)
+        api.async_get_command.assert_not_awaited()
+    elif outcome in {"expiry", "errors"}:
+        callback.assert_awaited_once_with(None)
+        assert elapsed[0] == 130
+    else:
+        callback.assert_awaited_once_with(api.async_get_command.return_value)
+        assert coordinator._async_refresh_after_completed_command.await_count == int(outcome == "completed")
+
+
+@pytest.mark.asyncio
+async def test_command_callback_cancellation_on_unload_and_failure_logging(monkeypatch, caplog):
+    coordinator = GwmDataUpdateCoordinator(HomeAssistant("synthetic-config"), AsyncMock(), cloud_client=object())
+    coordinator.data = {"region": "cn", "vehicles": []}
+    callback = AsyncMock(side_effect=RuntimeError("PRIVATE-VIN-TOKEN"))
+    with caplog.at_level(logging.DEBUG):
+        coordinator.async_track_command({"id": "completed", "state": "completed"}, on_terminal=callback)
+        await coordinator._command_tasks["completed"]
+    assert "RuntimeError" in caplog.text
+    assert "PRIVATE-VIN-TOKEN" not in caplog.text
+    started = asyncio.Event()
+    async def blocked(_delay):
+        started.set()
+        await asyncio.Event().wait()
+    monkeypatch.setattr("custom_components.gwm_ora.coordinator.asyncio.sleep", blocked)
+    callback.reset_mock()
+    coordinator.async_track_command({"id": "pending", "state": "in_progress"}, on_terminal=callback)
+    await started.wait()
+    await coordinator.async_cancel_command_tasks()
+    callback.assert_not_awaited()
+    assert coordinator._command_tasks == {}

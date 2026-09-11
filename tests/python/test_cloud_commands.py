@@ -8,6 +8,7 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -45,7 +46,7 @@ from gwm_client import (
     RussiaAuthState,
     VehicleIdentifier,
 )
-from gwm_client.commands import BEANTECH_COMFORT_ACTIONS
+from gwm_client.commands import BEANTECH_BATTERY_HEAT_ACTIONS, BEANTECH_COMFORT_ACTIONS
 
 _NOW = datetime(2026, 8, 28, 18, 0, tzinfo=UTC)
 _VIN = "LGWEEUA50PK000001"
@@ -296,6 +297,7 @@ async def _china_api(
     clock: _Clock,
     *,
     enabled: bool = True,
+    charging_enabled: bool = False,
 ) -> tuple[GwmCommandApi, Any, GwmCloudCredentials]:
     credentials = GwmCloudCredentials(
         "cn",
@@ -318,6 +320,7 @@ async def _china_api(
         store,
         credentials,
         enabled=enabled,
+        charging_enabled=charging_enabled,
         security_pin=None,
         clock=clock,
     )
@@ -1087,7 +1090,7 @@ async def test_charging_acceptance_finishes_ownership_save_before_cancellation(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("action", ["horn", "flash_lights", "horn_and_lights", *sorted(BEANTECH_COMFORT_ACTIONS)])
+@pytest.mark.parametrize("action", ["horn", "flash_lights", "horn_and_lights", *sorted(BEANTECH_COMFORT_ACTIONS | BEANTECH_BATTERY_HEAT_ACTIONS)])
 @pytest.mark.parametrize("terminal_code,terminal_state", [("0", "completed"), ("7", "failed")])
 async def test_china_timely_controls_resume_polling_after_restart_without_resending(
     tmp_path: Path, action: str, terminal_code: str, terminal_state: str,
@@ -1121,7 +1124,7 @@ async def test_china_timely_controls_resume_polling_after_restart_without_resend
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("action", ["horn", "flash_lights", "horn_and_lights", *sorted(BEANTECH_COMFORT_ACTIONS)])
+@pytest.mark.parametrize("action", ["horn", "flash_lights", "horn_and_lights", *sorted(BEANTECH_COMFORT_ACTIONS | BEANTECH_BATTERY_HEAT_ACTIONS)])
 async def test_china_timely_controls_timeout_without_resending(tmp_path: Path, action: str) -> None:
     cloud = _Cloud()
     clock = _Clock()
@@ -1136,7 +1139,7 @@ async def test_china_timely_controls_timeout_without_resending(tmp_path: Path, a
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("region", ["eu", "aus", "rus", "cn"])
-@pytest.mark.parametrize("action", ["horn", "flash_lights", "horn_and_lights", *sorted(BEANTECH_COMFORT_ACTIONS)])
+@pytest.mark.parametrize("action", ["horn", "flash_lights", "horn_and_lights", *sorted(BEANTECH_COMFORT_ACTIONS | BEANTECH_BATTERY_HEAT_ACTIONS)])
 async def test_timely_controls_require_china_and_remote_command_opt_in(
     tmp_path: Path, region: str, action: str,
 ) -> None:
@@ -1228,3 +1231,99 @@ async def test_comfort_mode_api_rejects_invalid_mode_before_cloud_access(tmp_pat
     api, _, _ = await _china_api(tmp_path, _Cloud(), _Clock())
     with pytest.raises(GwmCommandError, match="Unsupported comfort mode"):
         await api.async_set_comfort_mode(_VIN, mode_type=mode)
+
+
+_BEANTECH_CHARGING_CALLS = [
+    ("async_get_charging_mode", "async_get_bean_tech_charge_setting", {}, {"chargingMode": 0, "chargeSetParam": {}}, True),
+    ("async_set_charging_mode", "async_set_bean_tech_charging_mode", {"enable": True}, "provider-command-charge", True),
+    ("async_set_charge_window", "async_set_bean_tech_charge_window", {"start_time": "23:00", "end_time": None}, "provider-command-charge", True),
+    ("async_set_charge_soc", "async_set_bean_tech_charge_soc", {"percent": 60}, "provider-command-charge", True),
+    ("async_get_battery_heat_status", "async_get_bean_tech_switch_status", {}, {}, False),
+    ("async_get_battery_heating_appointment", "async_get_bean_tech_battery_heating_appointment", {}, None, False),
+    ("async_set_battery_heating_appointment", "async_set_bean_tech_battery_heating_appointment", {"enable": True, "use_car_time_ms": 1789200000000}, "provider-command-charge", False),
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("region", ["cn", "eu", "aus", "rus"])
+@pytest.mark.parametrize("remote,charging", [(True, True), (False, True), (True, False), (False, False)])
+@pytest.mark.parametrize("method,cloud_method,kwargs,result,requires_charging", _BEANTECH_CHARGING_CALLS)
+async def test_beantech_charging_api_enforces_region_and_independent_consent(tmp_path, region, remote, charging, method, cloud_method, kwargs, result, requires_charging):
+    cloud = _Cloud()
+    call = AsyncMock(return_value=result)
+    setattr(cloud, cloud_method, call)
+    factory = _china_api if region == "cn" else _api
+    api, store, credentials = await factory(tmp_path, cloud, _Clock(), enabled=remote, charging_enabled=charging, **({} if region == "cn" else {"region": region}))
+    allowed = region == "cn" and (charging if requires_charging else remote)
+    if allowed:
+        await getattr(api, method)(_VIN, **kwargs)
+        call.assert_awaited_once_with(VehicleIdentifier(_VIN), **kwargs)
+    else:
+        with pytest.raises(GwmCommandForbidden):
+            await getattr(api, method)(_VIN, **kwargs)
+        call.assert_not_awaited()
+        assert await store.async_get_command_journal(cloud_entry_data(credentials)) == ()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method,kwargs,action,result_type", [
+    ("charging_mode", {"enable": True}, "charging_mode", "charge"),
+    ("charge_window", {"end_time": "07:00"}, "charge_window", "charge"),
+    ("charge_soc", {"percent": 80}, "charge_soc", "remote"),
+    ("battery_heating_appointment", {"enable": False}, "battery_appointment", "remote"),
+])
+@pytest.mark.parametrize("outcome", ["completed", "failed", "timeout"])
+async def test_beantech_charging_recovery_uses_durable_action_and_never_resubmits(tmp_path, method, kwargs, action, result_type, outcome):
+    clock = _Clock()
+    cloud = _Cloud()
+    send = AsyncMock(return_value="provider-command-charge")
+    setattr(cloud, "async_set_bean_tech_" + method, send)
+    api, store, credentials = await _china_api(tmp_path, cloud, clock, charging_enabled=True)
+    accepted = await getattr(api, "async_set_" + method)(_VIN, **kwargs)
+    assert accepted["state"] == "in_progress"
+    cloud = _Cloud()
+    cloud.region = "cn"
+    cloud.poll_results = [
+        (RemoteCommandResultItem("unrelated", result_type, "0", "Other command"), RemoteCommandResultItem("provider-command-charge", result_type, "2000", "Pending")),
+        (RemoteCommandResultItem("provider-command-charge", result_type, "0" if outcome == "completed" else "7", "Result"),),
+    ]
+    recovered = GwmCommandApi(cloud, store, credentials, enabled=True, charging_enabled=True, security_pin=None, clock=clock)
+    assert (await recovered.async_restore(cloud_entry_data(credentials)))[0]["id"] == accepted["id"]
+    assert (await recovered.async_get_command(accepted["id"]))["state"] == "in_progress"
+    if outcome == "timeout":
+        clock.value += timedelta(seconds=91)
+    assert (await recovered.async_get_command(accepted["id"]))["state"] == outcome
+    assert cloud.poll_actions == [action] * (1 if outcome == "timeout" else 2)
+    assert cloud.sent == cloud.vehicle_controls_sent == cloud.charging_sent == []
+    send.assert_awaited_once()
+    assert (await store.async_get_command_journal(cloud_entry_data(credentials)))[0].state == ("failed" if outcome == "timeout" else outcome)
+    await recovered.async_get_command(accepted["id"])
+    assert cloud.poll_actions == [action] * (1 if outcome == "timeout" else 2)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode,custom,expected", [(0, {"startTime": "23:03", "endTime": "07:07"}, (True, "23:03", "07:07")), (1, None, (False, None, None))])
+async def test_beantech_charging_state_and_confirmed_departure_context(tmp_path, mode, custom, expected):
+    cloud = _Cloud()
+    cloud.async_get_bean_tech_charge_setting = AsyncMock(return_value={"chargingMode": mode, "chargeSetParam": {"customTime": custom}})
+    cloud.async_get_bean_tech_switch_status = AsyncMock(return_value={"insertGunKeepWarm": True, "activeKeepWarm": None})
+    cloud.async_get_bean_tech_battery_heating_appointment = AsyncMock(return_value=None)
+    api, _, _ = await _china_api(tmp_path, cloud, _Clock(), charging_enabled=True)
+    assert await api.async_get_charging_mode(_VIN) == dict(zip(("enabled", "start_time", "end_time"), expected, strict=True))
+    assert await api.async_get_battery_heat_status(_VIN) == {"gun_warm": True, "active_warm": None}
+    assert await api.async_get_battery_heating_appointment(_VIN) == {"enabled": None}
+    assert api.battery_heating_departure_time(_VIN) is None
+    api.remember_battery_heating_departure_time(_VIN, 1789200000000)
+    assert api.battery_heating_departure_time(_VIN) == 1789200000000
+    assert api.battery_heating_departure_time("another-vehicle") is None
+    api.remember_battery_heating_departure_time(_VIN, None)
+    assert api.battery_heating_departure_time(_VIN) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method", ["async_set_charging_mode", "async_set_battery_heating_appointment"])
+@pytest.mark.parametrize("enable", [None, 0, 1, "true", []])
+async def test_beantech_charging_api_rejects_ambiguous_on_off_values(tmp_path, method, enable):
+    api, _, _ = await _china_api(tmp_path, _Cloud(), _Clock(), charging_enabled=True)
+    with pytest.raises(GwmCommandError):
+        await getattr(api, method)(_VIN, enable=enable)

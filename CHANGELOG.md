@@ -8,6 +8,18 @@ This project follows semantic versioning. HACS uses the latest GitHub release ta
 
 ## [Unreleased]
 
+## [0.17.5] - 2026-09-11
+
+### Added
+
+- Added mainland-China BeanTech smart charging, charging-window selectors, and a 50–100% charge-limit control behind the charging-control opt-in.
+- Added BeanTech plugged-in and active battery heating, a departure-time selector, and appointment heating behind the remote-command opt-in.
+
+### Fixed
+
+- Preserved phone-app charging strategies and schedule fields when editing BeanTech charging mode or one window boundary.
+- Added strict request and response validation, restart-safe command polling, and confirmed state readback for BeanTech charging and battery heating while preserving NavInfo and overseas control paths.
+
 ## [0.17.4] - 2026-09-11
 
 ### Added
