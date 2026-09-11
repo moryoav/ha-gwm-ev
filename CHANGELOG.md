@@ -8,6 +8,8 @@ This project follows semantic versioning. HACS uses the latest GitHub release ta
 
 ## [Unreleased]
 
+## [0.17.5] - 2026-09-11
+
 ### Added
 
 - Added mainland-China BeanTech smart charging, charging-window selectors, and a 50–100% charge-limit control behind the charging-control opt-in.
