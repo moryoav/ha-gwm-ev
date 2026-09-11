@@ -8,6 +8,8 @@ This project follows semantic versioning. HACS uses the latest GitHub release ta
 
 ## [Unreleased]
 
+## [0.17.4] - 2026-09-11
+
 ### Added
 
 - Added mainland-China BeanTech A/C, fast cool and heat presets, seat heating and ventilation, steering-wheel heating, defrost, cabin cleaning, and saved comfort modes behind the existing remote-command opt-in.
@@ -16,6 +18,8 @@ This project follows semantic versioning. HACS uses the latest GitHub release ta
 ### Fixed
 
 - Added strict acceptance validation and restart-safe result polling for BeanTech A/C and comfort commands while preserving existing horn/light, lock/window, charging, NavInfo, and overseas paths.
+- Preserved accepted A/C commands when saving companion settings fails or times out.
+- Preserved exact phone-app appointment times when reselected and removed duplicate BeanTech cabin-clean and front-defroster controls.
 
 ## [0.17.3] - 2026-09-10
 
