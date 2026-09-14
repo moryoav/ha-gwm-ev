@@ -8,6 +8,12 @@ This project follows semantic versioning. HACS uses the latest GitHub release ta
 
 ## [Unreleased]
 
+## [0.17.6] - 2026-09-14
+
+### Special thanks
+
+Special thanks to **Oleg Vekhov** for generously supporting the project with a donation. Support like this makes a real difference, helping cover project costs and making it easier to dedicate time to maintenance, fixes, and new features. Thank you for helping keep this project moving forward!
+
 ## [0.17.5] - 2026-09-11
 
 ### Added
