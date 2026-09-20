@@ -21,6 +21,7 @@ from datetime import UTC, datetime, timedelta, timezone
 from typing import Literal, Self, cast
 from urllib.parse import quote
 
+from . import china_gtsp
 from ._dotnet_json import encode_dotnet_json
 from ._protocol import _Deadline
 from .charging import ChargingPlanCommand, ChargingPlanInfo, ChargingPlanItem
@@ -1237,8 +1238,29 @@ class ChinaClient:
         if vehicle is None:
             raise GwmRoutePolicyError(operation="get_last_status")
         platform = None if vehicle.platform is None else vehicle.platform.strip().casefold()
-        if platform not in {"navinfo", "beantech"}:
+        if platform not in {"navinfo", "beantech", "gtsp"}:
             raise GwmRoutePolicyError(operation="get_last_status")
+        if platform == "gtsp":
+            response = await self._send_locked(
+                self._build_gtsp_status_request(state, vehicle.identifier), deadline=deadline,
+            )
+            try:
+                body = china_gtsp.decode_status_envelope(
+                    _decode_json_response(response, operation="get_last_status"),
+                )
+                mapped = china_gtsp.map_gtsp_status(
+                    body, identifier=vehicle.identifier, vehicle_id=vehicle.vehicle_id,
+                )
+                return ChinaVehicleStatus(
+                    device_id=mapped.device_id,
+                    acquisition_time_ms=mapped.acquisition_time_ms,
+                    update_time_ms=mapped.update_time_ms,
+                    items=mapped.items,
+                )
+            except GwmClientError:
+                raise
+            except (RecursionError, OverflowError, TypeError, ValueError):
+                raise GwmSchemaError(operation="get_last_status") from None
         request = (
             self._build_auto_ai_request(
                 operation="get_last_status",
@@ -1947,14 +1969,21 @@ class ChinaClient:
         *,
         deadline: _Deadline,
     ) -> _ChinaTransportResponse:
-        response = await self._transport.execute(
-            request,
-            deadline=deadline,
-            connect_timeout=self._config.timeouts.connect,
-            read_timeout=self._config.timeouts.read,
-        )
+        try:
+            response = await self._transport.execute(
+                request,
+                deadline=deadline,
+                connect_timeout=self._config.timeouts.connect,
+                read_timeout=self._config.timeouts.read,
+            )
+        except GwmClientError as error:
+            if request.service == "gtsp":
+                china_gtsp.log_failure(error.category)
+            raise
         if type(response) is not _ChinaTransportResponse:
             raise GwmProtocolError(operation=request.operation)
+        if request.service == "gtsp":
+            china_gtsp.log_response(response.status, response.body)
         return response
 
     def _build_g_app_request(
@@ -2106,6 +2135,29 @@ class ChinaClient:
             },
             url=_AUTO_AI_LOGIN_URL,
             include_token=False,
+        )
+
+    def _build_gtsp_status_request(
+        self, state: ChinaAuthState, identifier: VehicleIdentifier,
+    ) -> _ChinaTransportRequest:
+        operation = "get_last_status"
+        if state.pt_token is None or state.bean_tech_access_token is None or state.auto_ai_token_id is None:
+            raise GwmAuthenticationError(operation=operation)
+        timestamp = str(_epoch_milliseconds(self._read_clock(operation=operation)))
+        try:
+            nonce = self._nonce_source()
+        except Exception:
+            raise GwmConfigurationError(operation=operation) from None
+        if not isinstance(nonce, str) or _NONCE.fullmatch(nonce) is None:
+            raise GwmConfigurationError(operation=operation)
+        return _ChinaTransportRequest(
+            operation="get_last_status", service="gtsp", method="GET",
+            url=china_gtsp.STATUS_URL + "?vin=" + identifier.encoded,
+            headers=china_gtsp.status_headers(
+                vin=identifier.value, pt_token=state.pt_token,
+                access_token=state.bean_tech_access_token, token_id=state.auto_ai_token_id,
+                nonce=nonce, timestamp=timestamp,
+            ),
         )
 
     def _build_bean_tech_status_request(

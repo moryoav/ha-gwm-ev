@@ -8,6 +8,17 @@ This project follows semantic versioning. HACS uses the latest GitHub release ta
 
 ## [Unreleased]
 
+## [0.17.7] - 2026-09-20
+
+### Added
+
+- Added experimental read-only status polling for mainland-China GTSP vehicles, with provisional battery SOC and electric-range mapping.
+- Added an isolated GTSP signer, strict status route, sanitized diagnostics, and a live-testing guide. Kept all GTSP commands and charging controls unavailable.
+
+### Validation
+
+- Verified signing against the privately supplied vector and added synthetic protocol, parsing, privacy, and platform-isolation coverage. Live GTSP authentication, transport compatibility, and sensor meanings still require tester confirmation.
+
 ## [0.17.6] - 2026-09-14
 
 ### Special thanks

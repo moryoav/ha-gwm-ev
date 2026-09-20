@@ -274,6 +274,7 @@ Available features depend on the vehicle's platform:
 - BeanTech comfort controls include driver and passenger seat heating and ventilation, steering-wheel heating, front and rear defrost, cabin cleaning, and saved comfort modes. These controls use **Enable remote commands**. Switches show the state reported by the vehicle; the command-status sensor tracks the submitted action.
 - **Cabin clean appointment** schedules one run at the next selected time in Home Assistant's configured timezone. Times can be selected in five-minute steps, and the saved appointment is read back from the vehicle service. An unset or past appointment shows an unknown value.
 - BeanTech does not expose charging schedules, tailgate actions, or other sunroof positions.
+- GTSP vehicles have experimental, read-only battery SOC and electric-range polling. Remote commands and charging controls are unavailable for GTSP. Live validation is still needed; see the [GTSP testing guide](docs/GTSP_TESTING.md).
 - Missing or unknown China platforms fail closed instead of using another platform's route.
 
 Start with remote commands and charging control disabled. Compare read-only values with the official app before enabling any operation that affects the vehicle.
