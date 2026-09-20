@@ -8,6 +8,19 @@ This project follows semantic versioning. HACS uses the latest GitHub release ta
 
 ## [Unreleased]
 
+## [0.17.8] - 2026-09-20
+
+### Added
+
+- Added experimental GTSP location and odometer mapping, with validation for missing coordinates, disabled GPS, invalid numbers, and unsupported units.
+- Added 12 optional GTSP diagnostic sensors for raw fuel, charging, connection, T-Box, and reported-range values. Kept their units and state meanings unclassified pending live confirmation.
+- Added GTSP debug output for recognized field paths, types, and allowlisted unit labels without logging values, coordinates, credentials, or unknown property names.
+- Expanded the GTSP testing guide with telemetry comparisons, timestamp freshness checks, and the protocol evidence needed for future controls.
+
+### Validation
+
+- Added synthetic parser, entity, privacy, and platform-isolation coverage. Kept existing regional mappings and the GTSP read-only command boundary unchanged; new telemetry requires live tester confirmation.
+
 ## [0.17.7] - 2026-09-20
 
 ### Added

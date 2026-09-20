@@ -13,7 +13,7 @@ from collections.abc import Mapping
 from contextlib import suppress
 from urllib.parse import quote, unquote
 
-from ._diagnostics import _envelope_shape
+from ._diagnostics import _envelope_shape, _json_type
 from .china_crypto import _BEAN_TECH_SECRET, BEAN_TECH_APP_KEY, _java_url_encode, sha256_hex
 from .china_status import _copy_object, _validated_device_id
 from .errors import GwmApiError, GwmSchemaError
@@ -39,6 +39,39 @@ _HEADERS = frozenset(_FIXED_HEADERS) | frozenset(_TOKEN_HEADERS) | {
     "vin", "gwm-auth-appkey", "gwm-auth-nonce", "gwm-auth-timestamp", "gwm-auth-sign",
 }
 _FIELDS = ("powerbatterypercent", "remainelectricpercent", "evcontnsdistance", "premileage")
+
+# Separate signal names prevent unverified GTSP codes acquiring another
+# platform's units or enum meanings in the shared snapshot mapper.
+GTSP_DIAGNOSTIC_FIELDS = {
+    "gtsp_oil_quantity_raw": ("root", "oilqty"),
+    "gtsp_secondary_oil_quantity_raw": ("root", "secoilqty"),
+    "gtsp_tbox_status_code": ("root", "tboxstatus"),
+    "gtsp_charge_status_code": ("charge", "chargestatus"),
+    "gtsp_charge_mode_code": ("charge", "chargemode"),
+    "gtsp_charge_connected_code": ("charge", "chargeconnected"),
+    "gtsp_connect_status_code": ("charge", "connectsts"),
+    "gtsp_dc_charge_connection_code": ("charge", "bmsdcchrgconnect"),
+    "gtsp_charge_limit_raw": ("charge", "bmsbattsoclim"),
+    "gtsp_charging_time_raw": ("charge", "chargingtime"),
+    "gtsp_charge_duration_raw": ("charge", "chargedurationtime"),
+    "gtsp_reported_range_raw": ("status", "premileage"),
+}
+_RAW_UNITS = frozenset({"%", "km", "min", "s", "h", "l", "km/h", "kpa", "bar", "c", "℃", "°c", "a", "v", "w", "kw"})
+_ROOT_FIELDS = frozenset({"latitude", "longitude", "gpsswitchon", "hutswitchon", "acquisitiontime", "updatetime", "oilqty", "secoilqty", "tboxstatus"})
+_STATUS_FIELDS = frozenset(_FIELDS) | {
+    "mileage", "speed", "vehiclespeed", "vehspeed", "enginests", "ignitionstatus", "drivingstatus",
+    "hcupowertrainsts", "remainoil", "oilqty", "powerbatterydisplayval", "batterypremileage",
+    "incartemperature", "airconditionsts", "battpackcurr", "battpackvolt", "efficiency", "power",
+}
+_CHARGE_FIELDS = frozenset(_FIELDS) | {field for group, field in GTSP_DIAGNOSTIC_FIELDS.values() if group == "charge"} | {
+    "charginggunstatus", "charginggunmodel", "chargesoc",
+}
+_GROUP_FIELDS = {
+    "door": frozenset({"maindrvedoorlocksts", "maindrvedoorsts", "vicedoorsts", "lbdoorsts", "rbdoorsts", "tailgateopenupsts"}),
+    "tirepress": frozenset({"lftirepressval", "rftirepressval", "lbtirepressval", "rbtirepressval"}),
+    "tiretemp": frozenset({"lftiretempval", "rftiretempval", "lbtiretempval", "rbtiretempval"}),
+    "windows": frozenset({"lfwinposnsts", "rfwinposnsts", "lbwinposnsts", "rbwinposnsts", "skylightsts"}),
+}
 
 
 def gtsp_sign(method: str, path: str, nonce: str, timestamp: str, parameter: str) -> str:
@@ -126,16 +159,22 @@ def _number(value: object, *, unit: str, maximum: float) -> str | None:
 def map_gtsp_status(
     data: object, *, identifier: VehicleIdentifier, vehicle_id: str | None,
 ) -> CloudVehicleStatus:
-    """Map provisional SOC/electric range only, without retaining raw responses.
+    """Map supported telemetry and isolated raw codes, never retaining responses.
 
-    preMileage is intentionally excluded: its electric/combined range meaning
-    is not confirmed. Plain electric-range numbers provisionally use km.
+    preMileage stays a raw diagnostic: its electric/combined range meaning is
+    not confirmed. Plain electric-range and mileage numbers provisionally use km.
     """
     root = _copy_object(data)
-    status = _copy_object(root.get("vehiclestatusinfo"))
+    log_status_shape(root)
+    status_value = root.get("vehiclestatusinfo")
+    status = {} if status_value is None else _copy_object(status_value)
     charge_value = status.get("charge")
     charge = {} if charge_value is None else _copy_object(charge_value)
-    if not any(name in node for node in (status, charge) for name in _FIELDS):
+    if not (
+        any(name in node for node in (status, charge) for name in _FIELDS)
+        or "mileage" in status or any(name in root for name in _ROOT_FIELDS)
+        or any(field in charge for group, field in GTSP_DIAGNOSTIC_FIELDS.values() if group == "charge")
+    ):
         raise ValueError("status_schema_invalid")
     items: list[CloudStatusItem] = []
     for code, unit, maximum, candidates in (
@@ -152,27 +191,123 @@ def map_gtsp_status(
             if value is not None:
                 items.append(CloudStatusItem(code, value, unit))
                 break
+    odometer = _number(status.get("mileage"), unit="km", maximum=10_000_000)
+    if odometer is not None:
+        items.append(CloudStatusItem("2103010", odometer, "km"))
+    nodes = {"root": root, "status": status, "charge": charge}
+    for code, (group, name) in GTSP_DIAGNOSTIC_FIELDS.items():
+        raw_value = nodes[group].get(name)
+        if code == "gtsp_reported_range_raw" and raw_value is None:
+            raw_value = charge.get(name)
+        item = _raw_number(code, raw_value)
+        if item is not None:
+            items.append(item)
     timestamp = root.get("acquisitiontime")
     # Do not invent freshness or guess seconds vs milliseconds.
     acquisition_time = (
         timestamp if type(timestamp) is int and 100_000_000_000 <= timestamp <= 253_402_300_799_999 else None
     )
+    latitude, longitude = _coordinates(root)
     with suppress(Exception):
         _LOGGER.debug(
             "GWM GTSP fields: status_present=%s charge_present=%s soc_mapped=%s "
-            "electric_range_mapped=%s timestamp_ms_valid=%s",
+            "electric_range_mapped=%s timestamp_ms_valid=%s odometer_mapped=%s location_mapped=%s",
             tuple(name for name in _FIELDS if name in status),
             tuple(name for name in _FIELDS if name in charge),
             any(item.code == "2013021" for item in items),
             any(item.code == "2011501" for item in items),
             acquisition_time is not None,
+            odometer is not None,
+            latitude is not None,
         )
     return CloudVehicleStatus(
         device_id=_validated_device_id(vehicle_id, identifier),
         acquisition_time_ms=acquisition_time,
         update_time_ms=acquisition_time,
+        latitude=latitude,
+        longitude=longitude,
         items=tuple(items),
     )
+
+
+def _raw_number(code: str, value: object) -> CloudStatusItem | None:
+    """Keep bounded numeric diagnostics with no assumed enum or unit semantics."""
+    if type(value) not in {str, int, float} or len(str(value)) > 128:
+        return None
+    text, separator, suffix = str(value).partition(",")
+    unit = suffix.strip().casefold() if separator else None
+    if unit is not None and unit not in _RAW_UNITS:
+        return None
+    try:
+        number = float(text)
+    except ValueError:
+        return None
+    if not math.isfinite(number) or not -(2**31) <= number <= 2**32 - 1:
+        return None
+    return CloudStatusItem(code, format(number, ".15g"), unit)
+
+
+def _coordinates(root: Mapping[str, object]) -> tuple[float | None, float | None]:
+    """Retain reported coordinates without inventing a fix or a conversion."""
+    gps = root.get("gpsswitchon")
+    if gps is not None and gps is not True:
+        return None, None
+    values: list[float] = []
+    for name, limit in (("latitude", 90), ("longitude", 180)):
+        raw = root.get(name)
+        if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+            return None, None
+        try:
+            value = float(raw)
+        except OverflowError:
+            return None, None
+        if not math.isfinite(value) or not -limit <= value <= limit:
+            return None, None
+        values.append(value)
+    if values == [0.0, 0.0]:
+        return None, None
+    return values[0], values[1]
+
+
+def log_status_shape(root: Mapping[str, object]) -> None:
+    """Log fixed property paths and types only, with bounded shallow traversal.
+
+    Unknown keys can contain identifiers, so only their count is reported.
+    Candidate names do not claim that any of those fields are supported.
+    """
+    with suppress(Exception):
+        if not _LOGGER.isEnabledFor(logging.DEBUG):
+            return
+        fields: list[str] = []
+        unknown = 0
+
+        def record(node: Mapping[str, object], path: str, names: frozenset[str], groups: frozenset[str]) -> None:
+            nonlocal unknown
+            unknown += len(set(node) - names - groups)
+            for name in sorted(names):
+                if name not in node:
+                    continue
+                value = node[name]
+                unit = ""
+                if isinstance(value, str) and len(value) <= 128 and "," in value:
+                    suffix = value.partition(",")[2].strip().casefold()
+                    unit = ":unit=" + (suffix if suffix in _RAW_UNITS else "unrecognized")
+                fields.append(f"{path}.{name}:{_json_type(value)}{unit}")
+
+        record(root, "data", _ROOT_FIELDS, frozenset({"vehiclestatusinfo"}))
+        if "vehiclestatusinfo" in root:
+            fields.append("data.vehiclestatusinfo:" + _json_type(root["vehiclestatusinfo"]))
+        status_value = root.get("vehiclestatusinfo")
+        if isinstance(status_value, Mapping):
+            status = _copy_object(status_value)
+            record(status, "data.vehiclestatusinfo", _STATUS_FIELDS, frozenset(_GROUP_FIELDS) | {"charge"})
+            for group, names in {"charge": _CHARGE_FIELDS, **_GROUP_FIELDS}.items():
+                if group in status:
+                    fields.append(f"data.vehiclestatusinfo.{group}:" + _json_type(status[group]))
+                if isinstance(status.get(group), Mapping):
+                    node = _copy_object(status[group])
+                    record(node, "data.vehiclestatusinfo." + group, names, frozenset())
+        _LOGGER.debug("GWM GTSP schema: fields=%s unlisted_fields=%s", tuple(fields), unknown)
 
 
 def log_response(status: int, body: bytes) -> None:

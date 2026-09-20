@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
@@ -23,6 +24,8 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.util import dt as dt_util
+
+from gwm_client.china_gtsp import GTSP_DIAGNOSTIC_FIELDS
 
 from . import GwmConfigEntry
 from .entity import GwmEntity, setup_vehicle_entities, vehicle_value
@@ -505,6 +508,32 @@ SENSORS: tuple[GwmSensorEntityDescription, ...] = (
 )
 
 
+def _gtsp_raw_value(key: str) -> Callable[[dict[str, Any] | None], int | float | None]:
+    """Read only the client's validated numeric GTSP diagnostic signals."""
+    def read(vehicle: dict[str, Any] | None) -> int | float | None:
+        raw = ((vehicle or {}).get("raw_items") or {}).get(key) or {}
+        value = raw.get("value")
+        if type(value) not in {int, float, str}:
+            return None
+        try:
+            number = float(value)
+        except ValueError:
+            return None
+        if not math.isfinite(number) or not -(2**31) <= number <= 2**32 - 1:
+            return None
+        return int(number) if number.is_integer() else number
+    return read
+
+
+GTSP_SENSORS = tuple(
+    GwmSensorEntityDescription(
+        key=key, translation_key=key, entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False, value_fn=_gtsp_raw_value(key),
+    )
+    for key in GTSP_DIAGNOSTIC_FIELDS
+)
+
+
 def _sensor_descriptions_for_vehicle(
     vehicle: dict[str, Any],
     region: str,
@@ -512,7 +541,10 @@ def _sensor_descriptions_for_vehicle(
     """Return descriptions supported by the vehicle backend."""
     if str(region or "").lower() == "cn" and str(vehicle.get("platform") or "").lower() == "beantech":
         return SENSORS
-    return tuple(description for description in SENSORS if description.key not in BEANTECH_SENSOR_KEYS)
+    descriptions = tuple(description for description in SENSORS if description.key not in BEANTECH_SENSOR_KEYS)
+    if str(region or "").lower() == "cn" and str(vehicle.get("platform") or "").strip().lower() == "gtsp":
+        return descriptions + GTSP_SENSORS
+    return descriptions
 
 
 async def async_setup_entry(
