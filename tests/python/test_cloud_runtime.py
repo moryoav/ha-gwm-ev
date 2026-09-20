@@ -796,7 +796,7 @@ async def test_china_runtime_handoff_maps_platform_capabilities_and_no_pin_write
             self.closed = False
 
         async def acquire_vehicles(self) -> tuple[ChinaVehicle, ...]:
-            return (navinfo, beantech)
+            return (navinfo, beantech, ChinaVehicle(identifier=VehicleIdentifier("LGWTEST0000000003"), platform="gtsp"))
 
         async def get_last_status(
             self,
@@ -892,6 +892,9 @@ async def test_china_runtime_handoff_maps_platform_capabilities_and_no_pin_write
         "front_defroster_commands": False,
         "cabin_clean_commands": False,
     }
+
+    assert snapshots[2]["platform"] == "gtsp"
+    assert all(value is False for value in snapshots[2]["capabilities"].values())
 
     context = await runtime.async_get_climate_context(
         navinfo.identifier,

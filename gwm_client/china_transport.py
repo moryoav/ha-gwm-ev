@@ -36,6 +36,7 @@ from .china_crypto import (
     default_sign,
     format_china_timestamp,
 )
+from .china_gtsp import validate_status_request as validate_gtsp_status_request
 from .errors import (
     GwmClientError,
     GwmClosedError,
@@ -49,7 +50,7 @@ from .errors import (
     GwmTlsError,
 )
 
-type _ChinaService = Literal["g_app", "bean_tech", "auto_ai"]
+type _ChinaService = Literal["g_app", "bean_tech", "auto_ai", "gtsp"]
 type _ChinaOperation = Literal[
     "request_verification",
     "login",
@@ -271,8 +272,8 @@ _BEAN_TECH_COMMAND_HEADERS = _BEAN_TECH_STATUS_HEADERS | frozenset({"Content-Typ
 class ChinaTransportCapabilities:
     """Non-secret evidence about the deliberately selected China adapter."""
 
-    protocol_service_aliases: tuple[str, ...] = ("g_app", "bean_tech", "auto_ai")
-    enabled_read_service_aliases: tuple[str, ...] = ("g_app", "bean_tech", "auto_ai")
+    protocol_service_aliases: tuple[str, ...] = ("g_app", "bean_tech", "auto_ai", "gtsp")
+    enabled_read_service_aliases: tuple[str, ...] = ("g_app", "bean_tech", "auto_ai", "gtsp")
     enabled_auth_service_aliases: tuple[str, ...] = ("g_app", "bean_tech", "auto_ai")
     bean_tech_http_deferred: bool = False
     bounded_gzip: bool = True
@@ -292,7 +293,12 @@ class _ChinaTransportRequest:
 
     def __post_init__(self) -> None:
         copied = _validated_headers(self.headers)
-        if self.operation in {"request_verification", "login", "refresh_token"}:
+        if self.service == "gtsp":
+            validate_gtsp_status_request(
+                operation=self.operation, method=self.method, url=self.url,
+                headers=copied, body=self.body,
+            )
+        elif self.operation in {"request_verification", "login", "refresh_token"}:
             _validate_g_app_auth_request(self, copied)
         elif self.operation == "initialize_bean_tech":
             _validate_bean_tech_login_request(self, copied)

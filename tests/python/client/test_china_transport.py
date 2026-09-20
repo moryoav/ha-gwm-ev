@@ -493,17 +493,19 @@ async def _execute(
     return result.body, session
 
 
-def test_capabilities_name_all_three_services_without_claiming_http2() -> None:
+def test_capabilities_include_gtsp_reads_without_extra_auth_or_claiming_http2() -> None:
     assert ChinaAiohttpTransport.capabilities == ChinaTransportCapabilities()
     assert ChinaAiohttpTransport.capabilities.protocol_service_aliases == (
         "g_app",
         "bean_tech",
         "auto_ai",
+        "gtsp",
     )
     assert ChinaAiohttpTransport.capabilities.enabled_read_service_aliases == (
         "g_app",
         "bean_tech",
         "auto_ai",
+        "gtsp",
     )
     assert ChinaAiohttpTransport.capabilities.enabled_auth_service_aliases == (
         "g_app",
