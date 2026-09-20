@@ -1255,6 +1255,8 @@ class ChinaClient:
                     device_id=mapped.device_id,
                     acquisition_time_ms=mapped.acquisition_time_ms,
                     update_time_ms=mapped.update_time_ms,
+                    latitude=mapped.latitude,
+                    longitude=mapped.longitude,
                     items=mapped.items,
                 )
             except GwmClientError:

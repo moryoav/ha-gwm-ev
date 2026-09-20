@@ -205,7 +205,19 @@
       "aux_battery": { "name": "Auxiliary battery" },
       "remaining_usable_charge": { "name": "Remaining usable charge" },
       "battery_pack_current": { "name": "Battery pack current" },
-      "battery_pack_voltage": { "name": "Battery pack voltage" }
+      "battery_pack_voltage": { "name": "Battery pack voltage" },
+      "gtsp_oil_quantity_raw": { "name": "Fuel quantity (raw)" },
+      "gtsp_secondary_oil_quantity_raw": { "name": "Secondary fuel quantity (raw)" },
+      "gtsp_tbox_status_code": { "name": "T-Box status code" },
+      "gtsp_charge_status_code": { "name": "Charging status code" },
+      "gtsp_charge_mode_code": { "name": "Charging mode code" },
+      "gtsp_charge_connected_code": { "name": "Charge connected code" },
+      "gtsp_connect_status_code": { "name": "Connection status code" },
+      "gtsp_dc_charge_connection_code": { "name": "DC charge connection code" },
+      "gtsp_charge_limit_raw": { "name": "Charge limit (raw)" },
+      "gtsp_charging_time_raw": { "name": "Charging time (raw)" },
+      "gtsp_charge_duration_raw": { "name": "Charge duration (raw)" },
+      "gtsp_reported_range_raw": { "name": "Reported range (raw)" }
     },
     "binary_sensor": {
       "charging_active": { "name": "Charging active" },

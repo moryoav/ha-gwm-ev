@@ -205,7 +205,19 @@
       "aux_battery": { "name": "蓄电池电量" },
       "remaining_usable_charge": { "name": "剩余可用电量" },
       "battery_pack_current": { "name": "电池包电流" },
-      "battery_pack_voltage": { "name": "电池包电压" }
+      "battery_pack_voltage": { "name": "电池包电压" },
+      "gtsp_oil_quantity_raw": { "name": "燃油量（原始值）" },
+      "gtsp_secondary_oil_quantity_raw": { "name": "第二燃油量（原始值）" },
+      "gtsp_tbox_status_code": { "name": "T-Box 状态代码" },
+      "gtsp_charge_status_code": { "name": "充电状态代码" },
+      "gtsp_charge_mode_code": { "name": "充电模式代码" },
+      "gtsp_charge_connected_code": { "name": "充电连接代码" },
+      "gtsp_connect_status_code": { "name": "连接状态代码" },
+      "gtsp_dc_charge_connection_code": { "name": "直流充电连接代码" },
+      "gtsp_charge_limit_raw": { "name": "充电限制（原始值）" },
+      "gtsp_charging_time_raw": { "name": "充电时间（原始值）" },
+      "gtsp_charge_duration_raw": { "name": "充电时长（原始值）" },
+      "gtsp_reported_range_raw": { "name": "报告续航（原始值）" }
     },
     "binary_sensor": {
       "charging_active": { "name": "充电中" },

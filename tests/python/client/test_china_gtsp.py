@@ -157,7 +157,8 @@ async def test_read_only_status_maps_soc_range_and_discards_private_fields(caplo
         ("2013021", "65", "%"), ("2011501", "125", "km"),
     ]
     assert result.acquisition_time_ms == 1760000000000
-    assert result.latitude is None and result.longitude is None
+    assert result.latitude == 12.345 and result.longitude == 23.456
+    assert "12.345" not in caplog.text and "23.456" not in caplog.text
     assert "tls=established http_status=200" in caplog.text
     assert "data_present=True" in caplog.text and "soc_mapped=True" in caplog.text
     assert SECRET not in caplog.text and VIN not in caplog.text
@@ -169,7 +170,7 @@ async def test_read_only_status_maps_soc_range_and_discards_private_fields(caplo
     ({"charge": {"powerBatteryPercent": "72", "evContnsDistance": "123.5,KM"}}, {"2013021": "72", "2011501": "123.5"}),
     ({"powerBatteryPercent": "-1", "remainElectricPercent": "67"}, {"2013021": "67"}),
     ({"powerBatteryPercent": "21", "charge": {"powerBatteryPercent": "22"}, "remainElectricPercent": "23"}, {"2013021": "21"}),
-    ({"preMileage": "800"}, {}),
+    ({"preMileage": "800"}, {"gtsp_reported_range_raw": "800"}),
 ])
 def test_field_precedence_and_no_guessed_combined_range(status, expected):
     result = mapped(status)
@@ -297,3 +298,92 @@ async def test_gtsp_transport_preserves_tls_gzip_and_no_redirect_policy():
     with pytest.raises(GwmTlsError) as exc:
         await transport.execute(request(), deadline=_deadline(), connect_timeout=10, read_timeout=20)
     assert SECRET not in str(exc.value)
+
+
+@pytest.mark.parametrize("value,expected", [("12345.6,km", "12345.6"), (0, "0"), ("12345", "12345"),
+    ("12,miles", None), (-1, None), (True, None), ("NaN", None), (10000001, None)])
+def test_odometer_accepts_provisional_km_only(value, expected):
+    result = mapped({"mileage": value})
+    assert next((x.value for x in result.items if x.code == "2103010"), None) == expected
+
+
+@pytest.mark.parametrize("coords,expected", [
+    ({"latitude": 32.1, "longitude": 34.8}, (32.1, 34.8)),
+    ({"latitude": 32.1, "longitude": 34.8, "gpsSwitchOn": True}, (32.1, 34.8)),
+    ({"latitude": 32.1, "longitude": 34.8, "gpsSwitchOn": False}, (None, None)),
+    ({"latitude": 32.1, "longitude": 34.8, "gpsSwitchOn": "true"}, (None, None)),
+    ({"latitude": 0, "longitude": 0}, (None, None)),
+    ({"latitude": 0, "longitude": 34.8}, (0, 34.8)),
+    ({"latitude": True, "longitude": 34.8}, (None, None)),
+    ({"latitude": "32.1", "longitude": 34.8}, (None, None)),
+    ({"latitude": 91, "longitude": 34.8}, (None, None)),
+    ({"latitude": 32.1, "longitude": 181}, (None, None)),
+    ({"latitude": float("nan"), "longitude": 34.8}, (None, None)),
+    ({"latitude": 10**400, "longitude": 34.8}, (None, None)),
+    ({"latitude": 32.1}, (None, None)),
+])
+def test_coordinates_validate_pairs_without_guessing_fix_or_conversion(coords, expected):
+    result = mapped({}, **coords)
+    assert (result.latitude, result.longitude) == expected
+
+
+def test_location_only_response_does_not_require_battery_fields():
+    result = china_gtsp.map_gtsp_status(
+        {"latitude": 32.1, "longitude": 34.8}, identifier=IDENTIFIER, vehicle_id=None,
+    )
+    assert result.latitude == 32.1 and result.items == ()
+
+
+@pytest.mark.parametrize("code,group,field", [(code, *source) for code, source in china_gtsp.GTSP_DIAGNOSTIC_FIELDS.items()])
+def test_each_raw_diagnostic_is_isolated_from_normalized_sensor_semantics(code, group, field):
+    root = {"vehicleStatusInfo": {}}
+    node = root if group == "root" else root["vehicleStatusInfo"]
+    if group == "charge":
+        node["charge"] = {}
+        node = node["charge"]
+    node[field] = 7
+    result = china_gtsp.map_gtsp_status(root, identifier=IDENTIFIER, vehicle_id=None)
+    assert [(x.code, x.value, x.unit) for x in result.items] == [(code, "7", None)]
+
+
+@pytest.mark.parametrize("value,expected,unit", [
+    ("180,km", "180", "km"), ("65535", "65535", None), (-1, "-1", None),
+    ("12.5,min", "12.5", "min"), (True, None, None), ([], None, None),
+    ("1" * 129, None, None), ("12," + SECRET, None, None),
+    ("invalid", None, None), ("nan", None, None), (2**32, None, None),
+])
+def test_raw_diagnostics_keep_sentinels_but_never_arbitrary_text(value, expected, unit):
+    result = mapped({"charge": {"chargingTime": value}})
+    assert [(x.value, x.unit) for x in result.items] == ([] if expected is None else [(expected, unit)])
+
+
+def test_nested_raw_range_has_no_electric_or_fuel_interpretation():
+    assert [(x.code, x.value) for x in mapped({"charge": {"preMileage": "800"}}).items] == [
+        ("gtsp_reported_range_raw", "800"),
+    ]
+
+
+def test_schema_logs_only_fixed_paths_types_and_recognized_units(caplog):
+    status = {"mileage": "12345,km", "speed": "private-value", SECRET: SECRET,
+        "charge": {"chargeStatus": "1", "chargingTime": "21,min", "connectSts": "1," + SECRET},
+        "door": {"maindrvedoorsts": 1, VIN: SECRET}, "windows": [],
+        "tirepress": {"lftirepressval": "260,kPa"},
+    }
+    with caplog.at_level(logging.DEBUG, logger=LOGGER):
+        mapped(status, latitude=32.123456, longitude=34.654321, deviceId=SECRET)
+    assert "data.vehiclestatusinfo.mileage:string:unit=km" in caplog.text
+    assert "data.vehiclestatusinfo.speed:string" in caplog.text
+    assert "data.vehiclestatusinfo.charge.chargingtime:string:unit=min" in caplog.text
+    assert "unit=unrecognized" in caplog.text
+    assert "data.vehiclestatusinfo.windows:array" in caplog.text
+    assert "unlisted_fields=3" in caplog.text
+    for secret in (SECRET, VIN, "12345", "260", "32.123456", "34.654321", "private-value"):
+        assert secret not in caplog.text
+
+
+def test_schema_diagnostics_disabled_or_malformed_are_nonfatal(monkeypatch, caplog):
+    with caplog.at_level(logging.DEBUG, logger=LOGGER):
+        china_gtsp.log_status_shape({"vehiclestatusinfo": {"mileage": 1, "MILEAGE": 2}})
+        china_gtsp.log_status_shape({"vehiclestatusinfo": None})
+    monkeypatch.setattr(china_gtsp._LOGGER, "isEnabledFor", lambda _: False)
+    china_gtsp.log_status_shape({"vehiclestatusinfo": {"mileage": 1}})
