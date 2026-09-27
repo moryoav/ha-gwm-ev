@@ -8,6 +8,19 @@ This project follows semantic versioning. HACS uses the latest GitHub release ta
 
 ## [Unreleased]
 
+## [0.17.9] - 2026-09-27
+
+### Added
+
+- Added GTSP readings for four tire pressures, four tire temperatures, fuel volume, and provisional fuel range, with explicit wire-unit and numeric validation.
+- Added provisional GTSP states for four doors, lock status, and four side windows. Retained raw codes and left unsupported codes unknown pending live confirmation.
+- Added 32 optional GTSP raw diagnostics for engine, powertrain, gear, cabin temperature, battery voltage/current, charging power, A/C, doors, windows, and tire indicators.
+- Expanded the testing guide with state comparisons and a detailed request for GTSP action routes, request builders, permissions, and command results.
+
+### Validation
+
+- Added synthetic sensor, entity, invalid-value, privacy, and platform-isolation coverage. Kept all GTSP controls unavailable and existing regional adapters unchanged. New field meanings still require tester confirmation.
+
 ## [0.17.8] - 2026-09-20
 
 ### Added

@@ -9,7 +9,7 @@ options are enabled.
 
 ## First test
 
-1. Install v0.17.8 or newer through HACS and restart Home Assistant. Use the
+1. Install v0.17.9 or newer through HACS and restart Home Assistant. Use the
    published files without local patches. The integration manifest installs the
    matching client version automatically.
 2. Keep **Enable remote commands** and charging control disabled. Use the
@@ -50,8 +50,7 @@ options are enabled.
   recognized property paths, their types, and allowlisted unit suffixes. Unknown
   property names are counted, not logged, because names can contain identifiers.
   Neither diagnostic logs field values, coordinates, VINs, or tokens. Candidate
-  speed, ignition, door, window, tire, and other paths are inspected only for
-  presence; their appearance does not mean those sensors are supported.
+  paths can appear even when no interpreted sensor is supported for them.
 - SOC prefers `vehicleStatusInfo.powerBatteryPercent`, then
   `charge.powerBatteryPercent`, then `vehicleStatusInfo.remainElectricPercent`.
   Accepted values are finite numbers from 0 through 100, optionally with `,%`.
@@ -73,9 +72,38 @@ options are enabled.
   or ambiguous timestamps stay unknown. The existing update-time sensor mirrors
   acquisition time for GTSP; it is not an independent server timestamp.
 
+## New measurements and provisional states in v0.17.9
+
+The following mappings run only in the GTSP adapter. Availability depends on
+the vehicle supplying each field. Missing or invalid values become unknown.
+
+| Reading | GTSP field and accepted interpretation |
+| --- | --- |
+| Four tire pressures | `tirePress.{lf,rf,lb,rb}TirePressVal`, explicit `kPa`, 0–600 |
+| Four tire temperatures | `tireTemp.{lf,rf,lb,rb}TireTempVal`, explicit `℃`, `°C`, or `C`, −40–125 |
+| Fuel volume | `remainOil`, explicit `L`, 0–300; never derived from `oilQty` gauge bars |
+| Fuel range (provisional) | `preMileage`, explicit `km`, 0–10,000; `charge.preMileage` only when the top field is absent |
+| Four doors (provisional) | `door.{mainDrveDoorSts,viceDoorSts,lbDoorSts,rbDoorSts}`: 0 closed, 1 open |
+| Lock status (provisional) | `door.mainDrveDoorLockSts`: 0 locked, 1 unlocked |
+| Four side windows (provisional) | `windows.{lf,rf,lb,rb}WinPosnSts`: 5 closed, 0–4 open |
+
+All paths above are beneath `vehicleStatusInfo`. The door/window interpretations
+are based on the similar BeanTech fields, not confirmed GTSP enums. Other codes
+remain unknown. The lock reading appears in the **Lock open** binary sensor;
+the lock control remains unavailable. Do not rely on provisional states for
+security or automations before comparing both states with the actual vehicle.
+
+Compare all tire readings and fuel volume/range with the app, including units.
+While parked, note each door closed/open, lock locked/unlocked, and each window
+fully closed/partly open/fully open during normal use. Record the raw code,
+Home Assistant reading, actual state, and acquisition time for each observation.
+Check physical rear-left/right positions too. Note whether acquisition time
+advances; a cached sample cannot establish a state transition. Include the
+vehicle model, year, powertrain, and whether this is a shared or owner account.
+
 ## Optional raw diagnostics
 
-These 12 GTSP-only entities are disabled by default. Enable them from the device
+These 44 GTSP-only entities are disabled by default. Enable them from the device
 page as needed. They show bounded numeric values, without assigning another
 platform's units, enum labels, or unavailable-value conventions. Missing,
 nonnumeric, or malformed fields remain unknown. Values such as `-1` or `65535`
@@ -96,14 +124,34 @@ fuel measurements, charging states, or control entities.
 | Charging time (raw) | `vehicleStatusInfo.charge.chargingTime` |
 | Charge duration (raw) | `vehicleStatusInfo.charge.chargeDurationTime` |
 | Reported range (raw) | `vehicleStatusInfo.preMileage`, falling back to `charge.preMileage` when absent |
+| Engine / powertrain / gear codes | `vehicleStatusInfo.engineSts`, `powertrainSts`, `hcuGearSts` |
+| Cabin temperature (raw) | `vehicleStatusInfo.cbnTemp` |
+| Battery voltage / current (raw) | `vehicleStatusInfo.bmsPackVolt`, `bmsPackCurr` |
+| Charging power / reported power (raw) | `vehicleStatusInfo.vcuChrgPowerDisp`, `power` |
+| A/C status code | `vehicleStatusInfo.airConditionSts` |
+| Lock and four door codes | The five `door` fields listed above |
+| Back door code | `vehicleStatusInfo.door.backDoorSts` |
+| Sunroof code | `vehicleStatusInfo.windows.skyLightSts` |
+| Four side-window codes | `vehicleStatusInfo.windows.{lf,rf,lb,rb}WinPosnSts` |
+| Four window learning codes | `vehicleStatusInfo.windows.{lf,rf,lb,rb}WinLearnSts` |
+| Four tire pressure indicator codes | `vehicleStatusInfo.tirePress.{lf,rf,lb,rb}TirePressIndcrSts` |
+| Four tire temperature status codes | `vehicleStatusInfo.tireTemp.{lf,rf,lb,rb}TireTempSts` |
 
 Where convenient during normal use, note the charging codes when unplugged,
 plugged in but idle, actively charging, and finished. Compare fuel, charge limit,
 time, and reported range with the app, including its displayed units. Only share
 the non-sensitive readings you choose to share. These values do not appear in
-the schema log. `preMileage` is not used as electric or fuel range until its
-meaning is confirmed. Raw sensors have no unit or statistics class; a recognized
+the schema log. `preMileage` is provisionally used as fuel range, based on the
+reported app comparison, and is never used as electric range. Raw sensors have
+no unit or statistics class; a recognized
 wire unit is retained in the redacted diagnostic download and schema log.
+
+Some new fields are known only from model declarations and may remain unknown
+on this vehicle. For cabin temperature, voltage/current, and charging power,
+send the schema unit label and the corresponding app value/unit. For current,
+compare charging and discharging to establish sign and scaling. For the other
+raw codes, pair observations with the app state. Also identify invalid or
+unavailable values; do not assume every numeric value is meaningful.
 
 ## History and next steps
 
@@ -119,12 +167,43 @@ code showing exact field paths, types, units, enum meanings, invalid values, and
 timestamp/coordinate conventions would help. Speed and ignition/driving state
 need this evidence before becoming interpreted entities.
 
-Remote controls need GTSP-specific endpoint methods and paths, request builders
-and body fields, authentication/PIN handling, shared-vehicle permissions, and
-acknowledgement/result-polling formats. Sanitized declarations and synthetic
-examples are sufficient; do not send live credentials or issue test commands
-for this read-only test. Shared signing keys do not establish command parity
-with BeanTech or Navinfo.
+## Information needed for actions
+
+Start with lock/unlock, A/C start/stop and temperature, windows, and charging
+start/stop or limits. Include other actions offered by this vehicle's app, such
+as lights/horn, defrost, seats, sunroof, or battery heating. An action being
+present in another region does not establish GTSP support.
+
+For each supported action, provide sanitized declarations/request-builder code
+or synthetic examples showing:
+
+1. App action name, availability on owner versus shared accounts, and any
+   required vehicle state or permission. Note actions missing from this model.
+2. Exact HTTP method, host/path, command identifier, and request body fields.
+   Include start/stop values, allowed ranges, units, duration, optional fields,
+   and separate builders for related actions.
+3. Authentication and PIN flow, any temporary authorization token, body
+   encryption, and how POST bodies enter signing/canonicalization. Use dummy
+   values, never real PINs, tokens, keys, VINs, or personal identifiers.
+4. Initial acknowledgement format and command ID, followed by result polling
+   route/body or push-message models. Include pending, success, failure,
+   timeout, permission denied, and vehicle-offline codes. Distinguish accepted
+   from executed, and document polling intervals and any retry/idempotency rules.
+5. Status fields that confirm completion, including before/after examples
+   already available from normal official-app use, with timestamps redacted
+   consistently. A successful acknowledgement alone does not confirm an action.
+
+The GTSP Retrofit/service interface, callers/request builders, response models,
+and enum/adapter code are more useful than field names alone. Include relevant
+helper definitions so parameter construction can be traced. Existing BeanTech
+and Navinfo command implementations can guide comparison, but their endpoints,
+PIN handling, and result formats must not be assumed for GTSP. Shared signing
+keys do not establish command parity.
+
+Static declarations and synthetic examples are enough to begin. Do not issue
+commands through this release, send unredacted captures, or share certificates
+or private keys. Controls remain disabled until a GTSP-specific contract is
+implemented and its acknowledgement/result handling can be tested.
 
 The initial client uses verified server TLS and the existing HTTP/1.1 China
 transport. No digital-key certificates are installed. Repeated read-only polling

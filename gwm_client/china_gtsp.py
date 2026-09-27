@@ -55,6 +55,32 @@ GTSP_DIAGNOSTIC_FIELDS = {
     "gtsp_charging_time_raw": ("charge", "chargingtime"),
     "gtsp_charge_duration_raw": ("charge", "chargedurationtime"),
     "gtsp_reported_range_raw": ("status", "premileage"),
+    "gtsp_engine_status_code": ("status", "enginests"),
+    "gtsp_powertrain_status_code": ("status", "powertrainsts"),
+    "gtsp_gear_status_code": ("status", "hcugearsts"),
+    "gtsp_cabin_temperature_raw": ("status", "cbntemp"),
+    "gtsp_battery_voltage_raw": ("status", "bmspackvolt"),
+    "gtsp_battery_current_raw": ("status", "bmspackcurr"),
+    "gtsp_charging_power_raw": ("status", "vcuchrgpowerdisp"),
+    "gtsp_power_raw": ("status", "power"),
+    "gtsp_ac_status_code": ("status", "airconditionsts"),
+    "gtsp_lock_status_code": ("door", "maindrvedoorlocksts"),
+    "gtsp_driver_door_code": ("door", "maindrvedoorsts"),
+    "gtsp_passenger_door_code": ("door", "vicedoorsts"),
+    "gtsp_rear_left_door_code": ("door", "lbdoorsts"),
+    "gtsp_rear_right_door_code": ("door", "rbdoorsts"),
+    "gtsp_back_door_code": ("door", "backdoorsts"),
+    "gtsp_sunroof_code": ("windows", "skylightsts"),
+    **{
+        f"gtsp_{position}_{label}_code": (group, prefix + field)
+        for position, prefix in (("front_left", "lf"), ("front_right", "rf"), ("rear_left", "lb"), ("rear_right", "rb"))
+        for label, group, field in (
+            ("window", "windows", "winposnsts"),
+            ("window_learning", "windows", "winlearnsts"),
+            ("tire_pressure_indicator", "tirepress", "tirepressindcrsts"),
+            ("tire_temperature_status", "tiretemp", "tiretempsts"),
+        )
+    },
 }
 _RAW_UNITS = frozenset({"%", "km", "min", "s", "h", "l", "km/h", "kpa", "bar", "c", "℃", "°c", "a", "v", "w", "kw"})
 _ROOT_FIELDS = frozenset({"latitude", "longitude", "gpsswitchon", "hutswitchon", "acquisitiontime", "updatetime", "oilqty", "secoilqty", "tboxstatus"})
@@ -62,7 +88,7 @@ _STATUS_FIELDS = frozenset(_FIELDS) | {
     "mileage", "speed", "vehiclespeed", "vehspeed", "enginests", "ignitionstatus", "drivingstatus",
     "hcupowertrainsts", "remainoil", "oilqty", "powerbatterydisplayval", "batterypremileage",
     "incartemperature", "airconditionsts", "battpackcurr", "battpackvolt", "efficiency", "power",
-}
+} | {field for group, field in GTSP_DIAGNOSTIC_FIELDS.values() if group == "status"}
 _CHARGE_FIELDS = frozenset(_FIELDS) | {field for group, field in GTSP_DIAGNOSTIC_FIELDS.values() if group == "charge"} | {
     "charginggunstatus", "charginggunmodel", "chargesoc",
 }
@@ -71,6 +97,24 @@ _GROUP_FIELDS = {
     "tirepress": frozenset({"lftirepressval", "rftirepressval", "lbtirepressval", "rbtirepressval"}),
     "tiretemp": frozenset({"lftiretempval", "rftiretempval", "lbtiretempval", "rbtiretempval"}),
     "windows": frozenset({"lfwinposnsts", "rfwinposnsts", "lbwinposnsts", "rbwinposnsts", "skylightsts"}),
+}
+_GROUP_FIELDS = {
+    group: names | {field for source, field in GTSP_DIAGNOSTIC_FIELDS.values() if source == group}
+    for group, names in _GROUP_FIELDS.items()
+}
+
+# GTSP-only provisional BeanTech-like enums. Never pass unrecognized codes to
+# generic Boolean helpers, which can interpret extra values as open/unlocked.
+_BINARY_FIELDS = {
+    "maindrvedoorlocksts": "2208001",  # 0 locked, 1 unlocked
+    "maindrvedoorsts": "2206002",  # 0 closed, 1 open
+    "vicedoorsts": "2206004",
+    "lbdoorsts": "2206003",
+    "rbdoorsts": "2206005",
+}
+_WINDOW_FIELDS = {
+    "lfwinposnsts": "2210001", "rfwinposnsts": "2210002",
+    "lbwinposnsts": "2210004", "rbwinposnsts": "2210003",
 }
 
 
@@ -161,8 +205,8 @@ def map_gtsp_status(
 ) -> CloudVehicleStatus:
     """Map supported telemetry and isolated raw codes, never retaining responses.
 
-    preMileage stays a raw diagnostic: its electric/combined range meaning is
-    not confirmed. Plain electric-range and mileage numbers provisionally use km.
+    preMileage provisionally means fuel range, based on the app comparison and
+    BeanTech schema. New measurements require an explicit recognized unit.
     """
     root = _copy_object(data)
     log_status_shape(root)
@@ -171,8 +215,8 @@ def map_gtsp_status(
     charge_value = status.get("charge")
     charge = {} if charge_value is None else _copy_object(charge_value)
     if not (
-        any(name in node for node in (status, charge) for name in _FIELDS)
-        or "mileage" in status or any(name in root for name in _ROOT_FIELDS)
+        any(name in status for name in _STATUS_FIELDS | _GROUP_FIELDS.keys())
+        or any(name in charge for name in _FIELDS) or any(name in root for name in _ROOT_FIELDS)
         or any(field in charge for group, field in GTSP_DIAGNOSTIC_FIELDS.values() if group == "charge")
     ):
         raise ValueError("status_schema_invalid")
@@ -194,7 +238,34 @@ def map_gtsp_status(
     odometer = _number(status.get("mileage"), unit="km", maximum=10_000_000)
     if odometer is not None:
         items.append(CloudStatusItem("2103010", odometer, "km"))
-    nodes = {"root": root, "status": status, "charge": charge}
+    nodes = {"root": root, "status": status, "charge": charge,
+             **{group: _optional_object(status.get(group)) for group in _GROUP_FIELDS}}
+    for code, field, unit, maximum in (
+        ("2017002", "remainoil", "L", 300),
+        ("2011007", "premileage", "km", 10000),
+    ):
+        measurement_value = status.get(field)
+        if field == "premileage" and measurement_value is None:
+            measurement_value = charge.get(field)
+        item = _measurement(code, measurement_value, unit=unit, minimum=0, maximum=maximum)
+        if item is not None:
+            items.append(item)
+    for index, prefix in enumerate(("lf", "rf", "lb", "rb"), start=1):
+        for group, suffix, code, unit, minimum, maximum in (
+            ("tirepress", "tirepressval", f"210100{index}", "kPa", 0, 600),
+            ("tiretemp", "tiretempval", f"210100{index + 4}", "°C", -40, 125),
+        ):
+            item = _measurement(code, nodes[group].get(prefix + suffix), unit=unit, minimum=minimum, maximum=maximum)
+            if item is not None:
+                items.append(item)
+    for group, fields, mapping in (
+        ("door", _BINARY_FIELDS, {"0": "0", "1": "1"}),
+        ("windows", _WINDOW_FIELDS, {"0": "0", "1": "0", "2": "0", "3": "0", "4": "0", "5": "1"}),
+    ):
+        for field, code in fields.items():
+            raw = _raw_number(code, nodes[group].get(field))
+            if raw is not None and raw.unit is None and raw.value in mapping:
+                items.append(CloudStatusItem(code, mapping[str(raw.value)]))
     for code, (group, name) in GTSP_DIAGNOSTIC_FIELDS.items():
         raw_value = nodes[group].get(name)
         if code == "gtsp_reported_range_raw" and raw_value is None:
@@ -245,6 +316,25 @@ def _raw_number(code: str, value: object) -> CloudStatusItem | None:
     if not math.isfinite(number) or not -(2**31) <= number <= 2**32 - 1:
         return None
     return CloudStatusItem(code, format(number, ".15g"), unit)
+
+
+def _measurement(code: str, value: object, *, unit: str, minimum: float, maximum: float) -> CloudStatusItem | None:
+    """Require wire units and bounded values for newly supported measurements."""
+    item = _raw_number(code, value)
+    allowed = {"°c", "℃", "c"} if unit == "°C" else {unit.casefold()}
+    if item is None or item.unit not in allowed:
+        return None
+    if not minimum <= float(str(item.value)) <= maximum:
+        return None
+    return CloudStatusItem(code, item.value, unit)
+
+
+def _optional_object(value: object) -> dict[str, object]:
+    """Malformed optional telemetry must not discard otherwise usable status."""
+    try:
+        return _copy_object(value)
+    except ValueError:
+        return {}
 
 
 def _coordinates(root: Mapping[str, object]) -> tuple[float | None, float | None]:
