@@ -9,8 +9,10 @@ pytest.importorskip("homeassistant")
 from homeassistant.helpers.entity import EntityCategory
 from test_beantech_entities import VIN, _context
 
+from custom_components.gwm_ora.binary_sensor import async_setup_entry as setup_binary_sensors
 from custom_components.gwm_ora.device_tracker import GwmDeviceTracker
 from custom_components.gwm_ora.diagnostics import async_get_config_entry_diagnostics
+from custom_components.gwm_ora.lock import GwmDoorLock
 from custom_components.gwm_ora.sensor import GTSP_SENSORS, _gtsp_raw_value
 from custom_components.gwm_ora.sensor import async_setup_entry as setup_sensors
 from gwm_client import CloudVehicle, CloudVehicleBasics, VehicleIdentifier, map_vehicle_snapshot
@@ -28,7 +30,7 @@ async def test_gtsp_diagnostics_are_optional_and_isolated(region, platform):
     await setup_sensors(hass, entry, added.extend)
     diagnostics = [entity for entity in added if entity.entity_description.key.startswith("gtsp_")]
     expected = region == "cn" and platform.strip().lower() == "gtsp"
-    assert len(diagnostics) == (12 if expected else 0)
+    assert len(diagnostics) == (44 if expected else 0)
     assert len({entity.unique_id for entity in added}) == len(added)
     for entity in diagnostics:
         assert entity.native_value is None
@@ -98,3 +100,53 @@ async def test_gtsp_telemetry_snapshot_entities_and_redacted_download():
     vehicle["location"] = None
     assert all(sensors[description.key].native_value is None for description in GTSP_SENSORS)
     assert tracker.latitude is None and tracker.longitude is None
+
+
+@pytest.mark.asyncio
+async def test_expanded_readings_reach_entities_without_enabling_controls_and_clear_on_refresh():
+    hass, api, coordinator, _, entry = _context(platform="gtsp", enabled=False)
+    identifier = VehicleIdentifier(VIN)
+
+    def vehicle(status):
+        return map_vehicle_snapshot(
+            CloudVehicle(identifier=identifier, platform="gtsp"),
+            map_gtsp_status({"vehicleStatusInfo": status}, identifier=identifier, vehicle_id=None),
+            CloudVehicleBasics(), refreshed_at=datetime(2026, 9, 27, tzinfo=UTC),
+            remote_commands_available=False,
+        ).as_dict()
+
+    coordinator.async_set_updated_data({"region": "cn", "vehicles": [vehicle({
+        "remainOil": "7,L", "preMileage": "50,km",
+        "tirePress": {f"{prefix}TirePressVal": f"{240+i},kPa" for i, prefix in enumerate(("lf", "rf", "lb", "rb"))},
+        "tireTemp": {f"{prefix}TireTempVal": f"{-5+i},℃" for i, prefix in enumerate(("lf", "rf", "lb", "rb"))},
+        "door": {"mainDrveDoorLockSts": 0, "mainDrveDoorSts": 1, "viceDoorSts": 0, "lbDoorSts": 1, "rbDoorSts": 0},
+        "windows": {"lfWinPosnSts": 0, "rfWinPosnSts": 5, "lbWinPosnSts": 2, "rbWinPosnSts": 5},
+    })]})
+    added = []
+    await setup_sensors(hass, entry, added.extend)
+    sensors = {entity.entity_description.key: entity for entity in added}
+    expected = {"fuel_level_l": 7, "fuel_range_km": 50}
+    for i, position in enumerate(("front_left", "front_right", "rear_left", "rear_right")):
+        expected[f"tire_pressure_{position}_kpa"] = 240+i
+        expected[f"tire_temperature_{position}_c"] = -5+i
+    for key, value in expected.items():
+        assert sensors[key].native_value == value
+        assert sensors[key].available
+
+    added = []
+    await setup_binary_sensors(hass, entry, added.extend)
+    binary = {entity.entity_description.key: entity for entity in added}
+    states = {"lock_open": False, "door_front_driver_open": True, "door_front_passenger_open": False,
+        "door_rear_driver_side_open": True, "door_rear_passenger_side_open": False,
+        "window_front_left_open": True, "window_front_right_open": False,
+        "window_rear_left_open": False, "window_rear_right_open": True}
+    for key, value in states.items():
+        assert binary[key].is_on is value
+        assert binary[key].available
+    assert not GwmDoorLock(api, coordinator, VIN).available
+    api.async_vehicle_control.assert_not_awaited()
+
+    coordinator.async_set_updated_data({"region": "cn", "vehicles": [vehicle({"powerBatteryPercent": 60})]})
+    assert all(sensors[key].native_value is None for key in expected)
+    assert all(binary[key].is_on is None for key in states)
+    assert sensors["soc"].native_value == 60

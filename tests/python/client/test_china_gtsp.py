@@ -338,9 +338,9 @@ def test_location_only_response_does_not_require_battery_fields():
 def test_each_raw_diagnostic_is_isolated_from_normalized_sensor_semantics(code, group, field):
     root = {"vehicleStatusInfo": {}}
     node = root if group == "root" else root["vehicleStatusInfo"]
-    if group == "charge":
-        node["charge"] = {}
-        node = node["charge"]
+    if group not in {"root", "status"}:
+        node[group] = {}
+        node = node[group]
     node[field] = 7
     result = china_gtsp.map_gtsp_status(root, identifier=IDENTIFIER, vehicle_id=None)
     assert [(x.code, x.value, x.unit) for x in result.items] == [(code, "7", None)]
