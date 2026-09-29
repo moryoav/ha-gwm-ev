@@ -1,6 +1,6 @@
 # GWM for Home Assistant
 
-[![GitHub Release][release-badge]][release-url]
+[![Release][release-badge]][release-url]
 [![HACS][hacs-badge]][hacs-url]
 [![License][license-badge]][license-url]
 
@@ -8,15 +8,17 @@
 
 ## ❤️ Help support this project
 
+If this project is useful to you, you can support my work:
+
 <p>
-  <a href="https://ko-fi.com/Y5B124NZ2L"><img src="https://storage.ko-fi.com/cdn/kofi3.png?v=6" alt="Support me on Ko-fi" height="36"></a>
+  <a href="https://ko-fi.com/Y5B124NZ2L"><img src="https://img.shields.io/badge/Support_on_Ko--fi-FF5E5B?style=for-the-badge&amp;logo=kofi&amp;logoColor=white" alt="Support on Ko-fi" height="36"></a>
   &nbsp;
   <a href="https://github.com/sponsors/moryoav"><img src="https://img.shields.io/badge/Sponsor_on_GitHub-EA4AAA?style=for-the-badge&amp;logo=githubsponsors&amp;logoColor=white" alt="Sponsor on GitHub" height="36"></a>
   &nbsp;
-  <a href="https://garage.yoavmor.com"><img src="https://img.shields.io/badge/Shop_the_Garage-F97316?style=for-the-badge" alt="Shop The GWM Garage" height="36"></a>
+  <a href="https://garage.yoavmor.com"><img src="https://img.shields.io/badge/Shop_the_GWM_Garage-F97316?style=for-the-badge" alt="Shop the GWM Garage" height="36"></a>
 </p>
 
-If you'd like to support my work, you can donate on Ko-fi, sponsor the project on GitHub, or shop through The GWM Garage. I receive a tiny commission on purchases made through its AliExpress links, at no extra cost to you.
+I receive a tiny commission on purchases made through The GWM Garage's AliExpress links, at no extra cost to you.
 
 ---
 
@@ -309,9 +311,9 @@ Thanks to [AlexandrErohin](https://github.com/AlexandrErohin) for the initial mo
 
 Deep thanks to [wilberforce](https://github.com/wilberforce) for the Australia and New Zealand authentication and signing work, vehicle status mappings, and live validation.
 
-[hacs-badge]: https://img.shields.io/badge/HACS-Custom-41BDF5.svg?style=flat-square
-[hacs-url]: https://github.com/moryoav/ha-gwm-ev
+[hacs-badge]: https://img.shields.io/badge/HACS-41BDF5.svg?style=flat-square
+[hacs-url]: #installation
 [release-badge]: https://img.shields.io/github/v/release/moryoav/ha-gwm-ev?style=flat-square
-[release-url]: https://github.com/moryoav/ha-gwm-ev/releases
+[release-url]: https://github.com/moryoav/ha-gwm-ev/releases/latest
 [license-badge]: https://img.shields.io/github/license/moryoav/ha-gwm-ev?style=flat-square
-[license-url]: https://github.com/moryoav/ha-gwm-ev/blob/main/LICENSE
+[license-url]: LICENSE
