@@ -6,8 +6,6 @@ import json
 import re
 from pathlib import Path
 
-from gwm_client.eu_auth import _CALLING_CODES
-
 ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -101,9 +99,7 @@ def test_hacs_default_repository_readiness_files_exist() -> None:
 
     assert hacs["name"] == "GWM"
     assert hacs["homeassistant"] == "2026.1.0"
-    # Include the accepted overseas account countries and mainland China.
-    # HACS uses ISO codes, so the client's UK alias is represented by GB.
-    assert hacs["country"] == sorted((set(_CALLING_CODES) - {"UK"}) | {"CN"})
+    assert "country" not in hacs
     assert hacs["hide_default_branch"] is True
     assert hacs["zip_release"] is True
     assert hacs["filename"] == "gwm.zip"
