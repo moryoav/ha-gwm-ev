@@ -209,11 +209,11 @@ Use plain, direct language and include Home Assistant examples where they make t
 HACS uses GitHub releases for update detection. Release pull requests should:
 
 - Move `CHANGELOG.md` entries from `Unreleased` into the target version.
-- Set the version in `custom_components/gwm_ora/manifest.json` to `X.Y.Z` and pin its `gwm-client` archive URL to the same `vX.Y.Z` tag.
+- Update `custom_components/gwm_ora/manifest.json`.
 - Publish and pin the matching `gwm-client` package version.
 - Push a `vX.Y.Z` tag after the release commit lands.
 
-The release workflow checks the tag against the manifest and pinned archive URL, runs HACS and Hassfest validation, and packages `custom_components/gwm_ora/` as `gwm_ora.zip` with its files at the ZIP root. It publishes the ZIP with release notes from the matching changelog section. Production releases must use an immutable `gwm-client` version published through the approved package workflow.
+The release workflow creates the GitHub release from the matching changelog section. Production releases must use an immutable `gwm-client` version published through the approved package workflow.
 
 ## Code of Conduct
 

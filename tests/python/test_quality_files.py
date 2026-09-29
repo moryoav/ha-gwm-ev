@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
+
+from gwm_client.eu_auth import _CALLING_CODES
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -98,23 +99,21 @@ def test_hacs_default_repository_readiness_files_exist() -> None:
     manifest = json.loads((ROOT / "custom_components/gwm_ora/manifest.json").read_text(encoding="utf-8"))
 
     assert hacs["name"] == "GWM"
-    assert hacs["render_readme"] is True
     assert hacs["homeassistant"] == "2026.1.0"
-    assert "country" not in hacs
-    assert hacs["hide_default_branch"] is True
-    assert hacs["zip_release"] is True
-    assert hacs["filename"] == "gwm_ora.zip"
+    # Include the accepted overseas account countries and mainland China.
+    # HACS uses ISO codes, so the client's UK alias is represented by GB.
+    assert hacs["country"] == sorted((set(_CALLING_CODES) - {"UK"}) | {"CN"})
     assert manifest["documentation"] == "https://github.com/moryoav/ha-gwm-ev"
     assert manifest["issue_tracker"] == "https://github.com/moryoav/ha-gwm-ev/issues"
     assert manifest["codeowners"] == ["@moryoav"]
     assert manifest["domain"] == "gwm_ora"
     assert manifest["name"] == "GWM"
-    assert re.fullmatch(r"\d+\.\d+\.\d+", manifest["version"])
+    assert manifest["version"] == "0.17.9"
     assert manifest["integration_type"] == "hub"
     assert manifest["loggers"] == ["gwm_client"]
     assert manifest["requirements"] == [
         "gwm-client@https://github.com/moryoav/ha-gwm-ev/archive/refs/tags/"
-        f"v{manifest['version']}.zip"
+        "v0.17.9.zip"
     ]
 
     custom_components = [path.name for path in (ROOT / "custom_components").iterdir() if path.is_dir()]

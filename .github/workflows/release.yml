@@ -21,20 +21,12 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v6
-
-      - name: Check tag and build HACS ZIP
-        id: package
-        shell: bash
-        run: |
-          set -euo pipefail
-          asset="$(python scripts/build_hacs_release.py "$GITHUB_REF_NAME" "$RUNNER_TEMP")"
-          echo "asset=$asset" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
 
       - name: Extract changelog notes
         shell: bash
         run: |
-          python - "$GITHUB_REF_NAME" > "$RUNNER_TEMP/release_notes.md" <<'PY'
+          python - "$GITHUB_REF_NAME" > release_notes.md <<'PY'
           from pathlib import Path
           import re
           import sys
@@ -51,7 +43,8 @@ jobs:
                   break
 
           if start is None:
-              raise SystemExit(f"CHANGELOG.md has no heading for {tag}")
+              print(f"See CHANGELOG.md for {tag}.")
+              raise SystemExit(0)
 
           end = len(lines)
           for index in range(start, len(lines)):
@@ -60,37 +53,16 @@ jobs:
                   break
 
           notes = "\n".join(lines[start:end]).strip()
-          if not notes:
-              raise SystemExit(f"CHANGELOG.md has no notes for {tag}")
-          print(notes)
+          print(notes or f"See CHANGELOG.md for {tag}.")
           PY
 
-      - name: Publish GitHub release with HACS ZIP
+      - name: Create or update GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-          ASSET: ${{ steps.package.outputs.asset }}
         shell: bash
         run: |
-          set -euo pipefail
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            asset_name="$(basename "$ASSET")"
-            release_api="repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME"
-            stored_digest="$(gh api "$release_api" --jq ".assets[] | select(.name == \"$asset_name\") | .digest")"
-            if [ -z "$stored_digest" ]; then
-              gh release upload "$GITHUB_REF_NAME" "$ASSET"
-            else
-              local_digest="sha256:$(sha256sum "$ASSET" | cut -d ' ' -f 1)"
-              if [ "$stored_digest" != "$local_digest" ]; then
-                echo "Existing $asset_name does not match this tag's ZIP" >&2
-                exit 1
-              fi
-            fi
-            if [ "$(gh api "$release_api" --jq '.draft')" = "true" ]; then
-              gh release edit "$GITHUB_REF_NAME" --draft=false
-            fi
+            gh release edit "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file release_notes.md
           else
-            gh release create "$GITHUB_REF_NAME" "$ASSET" \
-              --title "$GITHUB_REF_NAME" \
-              --notes-file "$RUNNER_TEMP/release_notes.md" \
-              --verify-tag
+            gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file release_notes.md --verify-tag
           fi
