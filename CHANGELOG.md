@@ -8,6 +8,14 @@ This project follows semantic versioning. HACS uses the latest GitHub release ta
 
 ## [Unreleased]
 
+## [0.17.10] - 2026-09-29
+
+### Changed
+
+- Removed the fixed HACS country list so the repository is available without a country filter.
+- Enabled HACS ZIP installs from tagged releases and hid the default branch download option.
+- Added automatic creation and validation of the `gwm_ora.zip` release asset.
+
 ## [0.17.9] - 2026-09-27
 
 ### Added
