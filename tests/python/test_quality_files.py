@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 from gwm_client.eu_auth import _CALLING_CODES
@@ -103,17 +104,20 @@ def test_hacs_default_repository_readiness_files_exist() -> None:
     # Include the accepted overseas account countries and mainland China.
     # HACS uses ISO codes, so the client's UK alias is represented by GB.
     assert hacs["country"] == sorted((set(_CALLING_CODES) - {"UK"}) | {"CN"})
+    assert hacs["hide_default_branch"] is True
+    assert hacs["zip_release"] is True
+    assert hacs["filename"] == "gwm.zip"
     assert manifest["documentation"] == "https://github.com/moryoav/ha-gwm-ev"
     assert manifest["issue_tracker"] == "https://github.com/moryoav/ha-gwm-ev/issues"
     assert manifest["codeowners"] == ["@moryoav"]
     assert manifest["domain"] == "gwm_ora"
     assert manifest["name"] == "GWM"
-    assert manifest["version"] == "0.17.9"
+    assert re.fullmatch(r"\d+\.\d+\.\d+", manifest["version"])
     assert manifest["integration_type"] == "hub"
     assert manifest["loggers"] == ["gwm_client"]
     assert manifest["requirements"] == [
         "gwm-client@https://github.com/moryoav/ha-gwm-ev/archive/refs/tags/"
-        "v0.17.9.zip"
+        f"v{manifest['version']}.zip"
     ]
 
     custom_components = [path.name for path in (ROOT / "custom_components").iterdir() if path.is_dir()]
