@@ -89,6 +89,8 @@ This is currently installed as a custom HACS repository.
 
 Enter the dedicated account details prepared under [Prerequisites](#prerequisites). Make sure this account is signed out of the official GWM app on all phones. The integration authenticates directly with the selected GWM cloud.
 
+**European account passwords:** I recommend using a strong, unique password with **fewer than 20 characters** and avoiding special characters. Use English letters and numbers. Long passwords may cause sign-in error `308001` before a verification email is requested, even if they work in the official app. See [issue #41](https://github.com/moryoav/ha-gwm-ev/issues/41).
+
 GWM may send a one-time verification code during first setup or reauthentication. Enter the code in the Home Assistant flow. Verification codes are not stored.
 
 For European accounts, the message may come from `noreply@gwm-eu.com` with the subject `GWM Verification Code`.
