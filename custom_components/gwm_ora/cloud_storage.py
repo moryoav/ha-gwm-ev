@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import logging
 import re
 import secrets
+from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, cast
@@ -41,6 +43,7 @@ from .const import (
 )
 
 _STORAGE_VERSION = 1
+_LOGGER = logging.getLogger(__name__)
 _STORAGE_CACHE_KEY = f"{DOMAIN}_direct_cloud_stores"
 _STORAGE_KEY_PREFIX = f"{DOMAIN}.direct_cloud"
 _PLACEHOLDER_DEVICE_ID = "0" * 32
@@ -59,6 +62,23 @@ _MAX_COMMAND_IDENTIFIER_LENGTH = 512
 _MAX_COMMAND_NAME_LENGTH = 80
 # This persisted hash-domain value is a compatibility contract, not a vehicle-scope name.
 _LEGACY_DIRECT_CONTEXT_DOMAIN = b"gwm-ora-direct-auth-context-v1\0"
+
+
+def _log_auth_state(stage: str, outcome: str, state: CloudAuthState | None = None) -> None:
+    """Log storage progress without IDs, paths, hashes, or stored values."""
+    with suppress(Exception):
+        known = state if type(state) in {EuAuthState, AnzAuthState, RussiaAuthState} else None
+        _LOGGER.log(
+            logging.WARNING if outcome == "failed" else logging.DEBUG,
+            "GWM authentication storage diagnostic: stage=%s outcome=%s "
+            "state_present=%s access_present=%s refresh_present=%s identity_present=%s",
+            stage if stage in {"load", "save", "clear"} else "unknown",
+            outcome if outcome in {"started", "restored", "missing", "context_changed", "completed", "failed", "cleared"} else "unknown",
+            state is not None,
+            known.access_token is not None if known is not None else None,
+            known.refresh_token is not None if known is not None else None,
+            state.issued_identity is not None if type(state) is EuAuthState else None,
+        )
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -191,13 +211,22 @@ class GwmCloudStateStore:
         """Load auth state only when every account-context field still matches."""
 
         credentials = _credentials_from_entry(entry_data)
-        async with self._lock:
-            await self._async_ensure_loaded()
-            if not self._record_matches(credentials):
-                if self._record is not None or self._invalid_loaded_data:
-                    await self._async_replace_for_context(credentials, auth_state=None)
-                return None
-            return self._record.auth_state if self._record is not None else None
+        _log_auth_state("load", "started")
+        try:
+            async with self._lock:
+                await self._async_ensure_loaded()
+                if not self._record_matches(credentials):
+                    changed = self._record is not None or self._invalid_loaded_data
+                    if changed:
+                        await self._async_replace_for_context(credentials, auth_state=None)
+                    _log_auth_state("load", "context_changed" if changed else "missing")
+                    return None
+                state = self._record.auth_state if self._record is not None else None
+                _log_auth_state("load", "restored" if state is not None else "missing", state)
+                return state
+        except Exception:
+            _log_auth_state("load", "failed")
+            raise
 
     async def async_save_auth_state(
         self,
@@ -213,19 +242,25 @@ class GwmCloudStateStore:
             auth_state,
             credentials=credentials,
         )
-        async with self._lock:
-            await self._async_ensure_loaded()
-            commands = self._record.commands if self._record_matches(credentials) and self._record is not None else ()
-            charging_plans = (
-                self._record.charging_plans if self._record_matches(credentials) and self._record is not None else ()
-            )
-            record = _record_for_credentials(
-                credentials,
-                auth_state=auth_state,
-                commands=commands,
-                charging_plans=charging_plans,
-            )
-            await self._async_save(record)
+        _log_auth_state("save", "started", auth_state)
+        try:
+            async with self._lock:
+                await self._async_ensure_loaded()
+                commands = self._record.commands if self._record_matches(credentials) and self._record is not None else ()
+                charging_plans = (
+                    self._record.charging_plans if self._record_matches(credentials) and self._record is not None else ()
+                )
+                record = _record_for_credentials(
+                    credentials,
+                    auth_state=auth_state,
+                    commands=commands,
+                    charging_plans=charging_plans,
+                )
+                await self._async_save(record)
+            _log_auth_state("save", "completed", auth_state)
+        except Exception:
+            _log_auth_state("save", "failed", auth_state)
+            raise
 
     async def async_clear_auth_state(
         self,
@@ -248,6 +283,7 @@ class GwmCloudStateStore:
                     charging_plans=charging_plans,
                 )
             )
+        _log_auth_state("clear", "cleared")
 
     async def async_get_command_journal(
         self,

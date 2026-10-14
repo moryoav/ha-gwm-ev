@@ -15,6 +15,7 @@ from datetime import UTC, datetime, timedelta
 from types import MappingProxyType
 from urllib.parse import urlsplit
 
+from ._auth_diagnostics import authentication_scope, identity_check
 from ._dotnet_json import encode_dotnet_json
 from ._protocol import _AsyncTransport, _Deadline, _TransportRequest, _TransportResponse
 from .config import GwmClientConfig
@@ -343,6 +344,52 @@ async def authenticate_eu(
     progress: _EuAuthProgress,
     allow_password_login: bool = True,
 ) -> EuAuthenticationResult:
+    """Trace one EU attempt without exposing credentials or stored identities."""
+
+    saved = state if type(state) is EuAuthState else None
+    with authentication_scope(
+        flow="interactive" if allow_password_login is True else "startup_resume",
+        saved_state=saved is not None,
+        access_present=saved is not None and saved.access_token is not None,
+        refresh_present=saved is not None and saved.refresh_token is not None,
+        identity_present=saved is not None and saved.issued_identity is not None,
+        password_login_allowed=allow_password_login,
+        verification_supplied=verification_code is not None,
+    ) as attempt:
+        attempt.fields["state_matches"] = saved is not None and type(credentials) is EuCredentials and saved.matches(credentials)
+        try:
+            result = await _authenticate_eu(
+                config=config, transport=transport, credentials=credentials, state=state,
+                verification_code=verification_code, ca_bundle=ca_bundle, bootstrap_material=bootstrap_material,
+                deadline=deadline, progress=progress, allow_password_login=allow_password_login,
+            )
+        finally:
+            if type(progress) is _EuAuthProgress:
+                attempt.fields.update(
+                    access_rejected=progress.existing_access_rejected,
+                    identity_rejected=progress.existing_identity_rejected,
+                )
+        attempt.complete(
+            "authenticated" if type(result) is EuAuthenticated else "verification_required",
+            access_rejected=progress.existing_access_rejected,
+            identity_rejected=progress.existing_identity_rejected,
+        )
+        return result
+
+
+async def _authenticate_eu(
+    *,
+    config: GwmClientConfig,
+    transport: _AsyncTransport,
+    credentials: EuCredentials,
+    state: EuAuthState | None,
+    verification_code: str | None,
+    ca_bundle: bytes,
+    bootstrap_material: EuBootstrapMaterial | None,
+    deadline: _Deadline,
+    progress: _EuAuthProgress,
+    allow_password_login: bool = True,
+) -> EuAuthenticationResult:
     """Run one serialized finite EU authentication continuation."""
 
     if (
@@ -365,17 +412,23 @@ async def authenticate_eu(
     if candidate.issued_identity is None:
         if bootstrap_material is None:
             raise GwmConfigurationError(operation="enroll_certificate")
+        identity_check("bootstrap_context", "started")
         try:
             bootstrap_context = await _blocking_call(
                 lambda: create_eu_bootstrap_ssl_context(bootstrap_material, now=_utc_now())
             )
-        except (TypeError, ValueError):
+        except (TypeError, ValueError) as error:
+            identity_check("bootstrap_context", "rejected", reason=getattr(error, "category", None))
             raise GwmConfigurationError(operation="enroll_certificate") from None
+        identity_check("bootstrap_context", "completed")
         _ensure_deadline(deadline, operation="enroll_certificate")
+    identity_check("server_context", "started")
     try:
         default_context = await _blocking_call(_create_default_ssl_context)
     except (OSError, ssl.SSLError, ValueError):
+        identity_check("server_context", "rejected")
         raise GwmConfigurationError(operation="login") from None
+    identity_check("server_context", "completed")
     _ensure_deadline(deadline, operation="login")
 
     access_rejected = False
@@ -589,6 +642,33 @@ async def refresh_eu_session(
     ssl_context: ssl.SSLContext,
     deadline: _Deadline,
 ) -> EuAuthenticated:
+    """Trace automatic renewal using only state-presence flags."""
+
+    saved = state if type(state) is EuAuthState else None
+    with authentication_scope(
+        flow="session_renewal", saved_state=saved is not None,
+        access_present=saved is not None and saved.access_token is not None,
+        refresh_present=saved is not None and saved.refresh_token is not None,
+        identity_present=saved is not None and saved.issued_identity is not None,
+        password_login_allowed=False, verification_supplied=False,
+    ) as attempt:
+        result = await _refresh_eu_session(
+            config=config, transport=transport, credentials=credentials,
+            state=state, ssl_context=ssl_context, deadline=deadline,
+        )
+        attempt.complete("authenticated")
+        return result
+
+
+async def _refresh_eu_session(
+    *,
+    config: GwmClientConfig,
+    transport: _AsyncTransport,
+    credentials: EuCredentials,
+    state: EuAuthState,
+    ssl_context: ssl.SSLContext,
+    deadline: _Deadline,
+) -> EuAuthenticated:
     """Rotate one EU session while retaining its issued app identity."""
 
     if (
@@ -604,10 +684,13 @@ async def refresh_eu_session(
     ):
         raise GwmAuthenticationError(operation="refresh_token")
     _ensure_deadline(deadline, operation="refresh_token")
+    identity_check("server_context", "started")
     try:
         default_context = await _blocking_call(_create_default_ssl_context)
     except (OSError, ssl.SSLError, ValueError):
+        identity_check("server_context", "rejected")
         raise GwmConfigurationError(operation="refresh_token") from None
+    identity_check("server_context", "completed")
     try:
         refreshed = await _request_data(
             config=config,
@@ -680,18 +763,22 @@ async def _finish_authentication(
 
     identity = state.issued_identity
     if identity is not None:
+        identity_check("issued_context", "started")
         try:
             context = await _blocking_call(
                 lambda: create_eu_issued_ssl_context(identity, ca_bundle=ca_bundle, now=_utc_now())
             )
         except EuIdentityError as error:
+            identity_check("issued_context", "renewal_needed" if error.category == "identity_renewal_required" else "rejected", reason=error.category)
             if error.category not in _RENEWABLE_ISSUED_IDENTITY_ERRORS:
                 raise GwmConfigurationError(operation="enroll_certificate") from None
             if error.category != "identity_renewal_required":
                 progress.existing_identity_rejected = True
         except (TypeError, ValueError):
+            identity_check("issued_context", "rejected")
             raise GwmConfigurationError(operation="enroll_certificate") from None
         else:
+            identity_check("issued_context", "completed")
             _ensure_deadline(deadline, operation="enroll_certificate")
             return _authenticated_result(state, context)
         _ensure_deadline(deadline, operation="enroll_certificate")
@@ -701,6 +788,7 @@ async def _finish_authentication(
     if bootstrap_material.ca_bundle != ca_bundle:
         raise GwmConfigurationError(operation="enroll_certificate")
     now = _utc_now()
+    identity_check("certificate_request", "started")
     try:
         generated = await _blocking_call(
             lambda: generate_client_certificate_request(
@@ -713,8 +801,10 @@ async def _finish_authentication(
             bootstrap_context = await _blocking_call(
                 lambda: create_eu_bootstrap_ssl_context(bootstrap_material, now=now)
             )
-    except (TypeError, ValueError):
+    except (TypeError, ValueError) as error:
+        identity_check("certificate_request", "rejected", reason=getattr(error, "category", None))
         raise GwmConfigurationError(operation="enroll_certificate") from None
+    identity_check("certificate_request", "completed")
     _ensure_deadline(deadline, operation="enroll_certificate")
     enrolled = await _request_data(
         config=config,
@@ -728,6 +818,7 @@ async def _finish_authentication(
         enrollment_device_id=_enrollment_device_id(credentials.device_id, now),
     )
     encoded = _required_text(enrolled, "encoded", operation="enroll_certificate", maximum=256 * 1024)
+    identity_check("enrolled_identity", "started")
     try:
         issued_identity = EuIssuedIdentity(
             certificate=encoded,
@@ -740,8 +831,10 @@ async def _finish_authentication(
                 now=_utc_now(),
             )
         )
-    except (TypeError, ValueError):
+    except (TypeError, ValueError) as error:
+        identity_check("enrolled_identity", "rejected", reason=getattr(error, "category", None))
         raise GwmSchemaError(operation="enroll_certificate") from None
+    identity_check("enrolled_identity", "completed")
     _ensure_deadline(deadline, operation="enroll_certificate")
     completed = replace(state, issued_identity=issued_identity)
     return _authenticated_result(completed, context)

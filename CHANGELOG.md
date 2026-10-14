@@ -8,6 +8,27 @@ This project follows semantic versioning. HACS uses the latest GitHub release ta
 
 ## [Unreleased]
 
+## [0.17.11] - 2026-10-14
+
+### Added
+
+- Added detailed authentication diagnostics for login, verification, session refresh, account-profile validation, and certificate enrollment, including HTTP status, timing, safe header classifications, response types, numeric API codes, and fixed security-challenge hints.
+- Added EU authentication attempt context, fixed certificate-validation reasons, and private-state load/save diagnostics using presence flags and local correlation counters. Failed authentication summaries and the last response's safe metadata are available at the normal warning level even when setup cannot finish; debug logging adds the successful steps.
+- Added official-app account verification instructions and a required result field to bug reports, plus Home Assistant log-viewer instructions for authentication problems.
+
+### Changed
+
+- Included HTTP status in setup retry messages and updated integration CI to use Python 3.14 with Home Assistant 2026.10.1.
+
+### Privacy and validation
+
+- Kept credentials, verification codes, tokens, signatures, cookies, identifiers, certificates, keys, private URLs, raw request/response text, and unknown response field names out of authentication logs. Added hostile-response, privacy, failure-path, and unchanged-transport regression coverage.
+- Retained the existing authentication, session-renewal, TLS, and request-routing behavior. This release gathers evidence for authentication failures and does not claim to fix their cause.
+
+### Known validation limitation
+
+- Retained the existing EU bootstrap certificate and renewal guard. The 90-day renewal deadline passed on October 6, 2026, so that existing test fails; the certificate itself remains valid until January 4, 2027. This diagnostics release includes an explicit exception for that known failure and does not extend certificate validity or relax TLS validation.
+
 ## [0.17.10] - 2026-09-29
 
 ### Changed

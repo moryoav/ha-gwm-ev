@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import logging
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -24,6 +25,7 @@ from custom_components.gwm_ora.cloud_auth import (
 from custom_components.gwm_ora.cloud_storage import (
     GwmOwnedChargingPlan,
     _decode_auth_state,
+    _log_auth_state,
     async_remove_cloud_state,
     cloud_authentication_context_binding,
     cloud_state_store,
@@ -42,6 +44,55 @@ from gwm_client import (
 
 _DEVICE_ID = "0123456789abcdef0123456789abcdef"
 _NOW = datetime(2026, 8, 28, 18, 0, tzinfo=UTC)
+
+
+@pytest.mark.asyncio
+async def test_auth_storage_logs_only_progress_and_presence_flags(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.DEBUG, logger="custom_components.gwm_ora.cloud_storage")
+    hass = HomeAssistant(str(tmp_path))
+    credentials = _credentials()
+    state = _state(credentials)
+    store = cloud_state_store(hass, cloud_unique_id(credentials))
+    assert await store.async_load_auth_state(cloud_entry_data(credentials)) is None
+    await store.async_save_auth_state(credentials, state)
+    assert await store.async_load_auth_state(cloud_entry_data(credentials)) == state
+    assert "stage=load outcome=missing" in caplog.text
+    assert "stage=save outcome=completed state_present=True access_present=True refresh_present=True identity_present=True" in caplog.text
+    assert "stage=load outcome=restored" in caplog.text
+    for secret in ("private-account", "private-password", "private-eu-access", "private-eu-refresh",
+                   "private-eu-gw", "private-eu-bean", _DEVICE_ID, credentials.account_binding,
+                   base64.b64encode(b"synthetic-private-key").decode()):
+        assert secret not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_auth_storage_failure_is_visible_without_logging_the_exception(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.WARNING, logger="custom_components.gwm_ora.cloud_storage")
+    hass = HomeAssistant(str(tmp_path))
+    credentials = _credentials()
+    store = cloud_state_store(hass, cloud_unique_id(credentials))
+
+    async def fail(_record: object) -> None:
+        raise OSError("private-storage-path-and-token")
+
+    monkeypatch.setattr(store, "_async_save", fail)
+    with pytest.raises(OSError, match="private-storage-path-and-token"):
+        await store.async_save_auth_state(credentials, _state(credentials))
+    assert "stage=save outcome=failed state_present=True" in caplog.text
+    assert "private-storage-path-and-token" not in caplog.text
+    assert "private-eu-access" not in caplog.text
+
+
+def test_auth_storage_logging_failure_is_nonfatal(monkeypatch: pytest.MonkeyPatch) -> None:
+    from custom_components.gwm_ora import cloud_storage
+
+    def fail(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("private-handler-value")
+
+    monkeypatch.setattr(cloud_storage._LOGGER, "log", fail)
+    _log_auth_state("save", "completed", _state(_credentials()))
 
 
 def _credentials(

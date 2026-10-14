@@ -24,6 +24,7 @@ from gwm_client import (
     GwmAuthenticationError,
     GwmClientError,
     GwmConfigurationError,
+    GwmHttpError,
     RussiaAuthenticated,
 )
 
@@ -352,8 +353,9 @@ async def _async_load_cloud_bootstrap(
             "GWM cloud authentication was rejected"
         ) from err
     except GwmClientError as err:
+        status = f" (HTTP {err.status})" if isinstance(err, GwmHttpError) and err.status is not None else ""
         raise ConfigEntryNotReady(
-            f"GWM cloud {err.category} during {err.operation}"
+            f"GWM cloud {err.category} during {err.operation}{status}"
         ) from err
     except (TypeError, ValueError) as err:
         await state_store.async_clear_auth_state(dict(entry.data))

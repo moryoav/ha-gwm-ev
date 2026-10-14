@@ -11,6 +11,7 @@ from typing import Any, Self
 import aiohttp
 from yarl import URL
 
+from . import _auth_diagnostics as auth_diagnostics
 from ._diagnostics import log_failure, log_request, log_response
 from ._protocol import _Deadline, _TransportRequest, _TransportResponse
 from .errors import (
@@ -139,7 +140,11 @@ class AiohttpTransport:
         )
 
         log_request(request)
+        auth_exchange = auth_diagnostics.begin_request(
+            request, connect_timeout=connect_timeout, read_timeout=read_timeout, remaining=remaining,
+        )
         failure: GwmClientError | None = None
+        diagnostic_cause: BaseException | None = None
         try:
             async with self._session.request(
                 request.method,
@@ -159,15 +164,23 @@ class AiohttpTransport:
                 ssl=request.ssl_context,
                 timeout=timeout,
             ) as response:
+                auth_diagnostics.response_headers(
+                    auth_exchange, status=response.status, headers=response.headers,
+                    version=getattr(response, "version", None),
+                )
                 result = await self._read_response(response, operation=operation)
                 log_response(request, result)
+                auth_diagnostics.response_body(auth_exchange, result.body)
                 return result
-        except asyncio.CancelledError:
+        except asyncio.CancelledError as error:
+            auth_diagnostics.transport_failure(auth_exchange, error)
             raise
         except GwmClientError as error:
             log_failure(request, error)
+            auth_diagnostics.transport_failure(auth_exchange, error)
             raise
-        except TimeoutError:
+        except TimeoutError as error:
+            diagnostic_cause = error
             failure = GwmDeadlineExceededError(operation=operation)
         except (
             aiohttp.ClientConnectorCertificateError,
@@ -176,15 +189,22 @@ class AiohttpTransport:
             aiohttp.ServerFingerprintMismatch,
             ssl.CertificateError,
             ssl.SSLError,
-        ):
+        ) as error:
+            diagnostic_cause = error
             failure = GwmTlsError(operation=operation)
-        except (aiohttp.ClientConnectionError, aiohttp.ClientPayloadError, OSError):
+        except (aiohttp.ClientConnectionError, aiohttp.ClientPayloadError, OSError) as error:
+            diagnostic_cause = error
             failure = GwmNetworkError(operation=operation)
-        except aiohttp.ClientError:
+        except aiohttp.ClientError as error:
+            diagnostic_cause = error
             failure = GwmNetworkError(operation=operation)
+        except Exception as error:
+            auth_diagnostics.transport_failure(auth_exchange, error)
+            raise
 
         if failure is not None:
             log_failure(request, failure)
+            auth_diagnostics.transport_failure(auth_exchange, failure, cause=diagnostic_cause)
             raise failure
         raise GwmNetworkError(operation=operation)
 

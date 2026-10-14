@@ -54,6 +54,7 @@ from gwm_client import (
     EuAuthState,
     EuCredentials,
     GwmAuthenticationError,
+    GwmHttpError,
     GwmNetworkError,
     GwmSession,
 )
@@ -533,6 +534,7 @@ async def test_china_restart_preserves_rotated_partial_initialization_state(
     [
         (GwmAuthenticationError(operation="login"), ConfigEntryAuthFailed),
         (GwmNetworkError(operation="refresh_token"), ConfigEntryNotReady),
+        (GwmHttpError(operation="refresh_token", status=405), ConfigEntryNotReady),
     ],
 )
 async def test_restart_retires_rejected_state_but_preserves_transient_state(
@@ -564,8 +566,10 @@ async def test_restart_retires_rejected_state_but_preserves_transient_state(
     restarted_hass = HomeAssistant(str(tmp_path))
     monkeypatch.setattr(gwm_ora, "GwmCloudAuthenticator", Authenticator)
 
-    with pytest.raises(expected):
+    with pytest.raises(expected) as raised:
         await async_setup_entry(restarted_hass, entry)
+    if isinstance(error, GwmHttpError):
+        assert "HTTP 405" in str(raised.value)
 
     third_hass = HomeAssistant(str(tmp_path))
     restored = await cloud_state_store(

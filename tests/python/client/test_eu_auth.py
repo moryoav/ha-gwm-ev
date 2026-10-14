@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import logging
 import ssl
 import threading
 import time
@@ -56,6 +57,41 @@ NEW_REFRESH = "SYNTHETIC-NEW-REFRESH"
 GW_ID = "SYNTHETIC-GW-ID"
 BEAN_ID = "SYNTHETIC-BEAN-ID"
 SENSITIVE = "SENSITIVE-eu-auth-material-019fea1b"
+
+
+@pytest.mark.asyncio
+async def test_startup_http_failure_logs_state_and_status_without_private_values(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.WARNING, logger="gwm_client._auth_diagnostics")
+    state = _state(identity=_identity())
+    transport = _QueueTransport([_response(code="550004"), _response(status=405)])
+    with pytest.raises(GwmHttpError) as raised:
+        await _client(transport).authenticate_eu(
+            _credentials(), state=state, ca_bundle=CA_BUNDLE,
+            allow_password_login=False,
+        )
+    assert raised.value.status == 405
+    assert [request.operation for request in transport.requests] == ["get_user_info", "refresh_token"]
+    assert "event=attempt_failure" in caplog.text
+    assert "flow=startup_resume saved_state=True access_present=True refresh_present=True identity_present=True" in caplog.text
+    assert "password_login_allowed=False" in caplog.text
+    assert "state_matches=True access_rejected=True identity_rejected=False" in caplog.text
+    assert "http_status=405" in caplog.text
+    for value in (ACCESS, REFRESH, GW_ID, BEAN_ID, _credentials().account, _credentials().password,
+                  state.account_binding, state.device_id, _identity().private_key, _identity().certificate):
+        assert value not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_fresh_login_http_failure_is_distinct_from_session_resumption(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.WARNING, logger="gwm_client._auth_diagnostics")
+    transport = _QueueTransport([_response(status=405)])
+    with pytest.raises(GwmHttpError):
+        await _client(transport).authenticate_eu(_credentials(), ca_bundle=CA_BUNDLE, bootstrap_material=_bootstrap())
+    assert [request.operation for request in transport.requests] == ["login"]
+    assert "flow=interactive saved_state=False access_present=False refresh_present=False identity_present=False" in caplog.text
+    assert "operation=login http_status=405" in caplog.text
+    assert _credentials().account not in caplog.text
+    assert _credentials().password not in caplog.text
 
 
 class _QueueTransport:

@@ -242,6 +242,21 @@ A likely cause is using the same GWM account for the integration and the app on 
 - For Australia and New Zealand, confirm the single-session warning if you want the integration to take the active session.
 - For mainland China, use the registered phone number and complete the SMS flow. If GWM requests a risk-control challenge, complete it in the official app first.
 
+### Collect authentication logs
+
+For a sign-in or token-refresh failure, please collect the log before deleting or re-adding the integration so I can investigate the original session.
+
+1. Keep the integration account signed out of the official mobile app.
+2. If the GWM entry is already present, open **Settings > Devices & services > GWM** and select **Enable debug logging** from the top-right menu. Debug adds the successful steps around a failure. Failed authentication requests also produce summaries at the normal warning level, including when initial setup fails.
+3. Reproduce the problem once by signing in or reloading the affected GWM entry, and note the time.
+4. Open **Settings > System > Logs**, select **Home Assistant Core** if a selector appears, and select **Show raw logs**. Download the log or copy the GWM authentication diagnostic lines, surrounding errors, and any traceback.
+5. If debug logging was enabled, turn it off from the GWM integration page afterwards.
+6. Review the log, remove private details from any other log entries, and attach the relevant section to the issue.
+
+The authentication diagnostics include the stage, gateway role, HTTP method and status, timing, safe header classifications, JSON types, numeric API codes, and fixed hints for security challenges or rejected requests. EU attempts also report whether saved session material exists and whether it was rejected, plus fixed certificate-validation reasons; storage diagnostics report load/save progress. If later validation fails, the last response's safe metadata is repeated at warning level even when debug logging was off. Local attempt/request counters help connect related lines. These hints describe the response and do not establish its cause.
+
+Authentication diagnostics never log credentials, verification codes, token values, cookies, signatures, account or device identifiers, VINs, locations, certificates, keys, request payloads, raw response text, private URLs, or unknown response field names. Oversized, malformed, compressed, and otherwise rejected responses have bounded diagnostics; the existing transport and authentication rules still apply.
+
 ### Entities are unavailable
 
 - Wait for the first complete account poll.

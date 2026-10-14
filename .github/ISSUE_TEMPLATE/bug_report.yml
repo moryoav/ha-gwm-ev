@@ -75,6 +75,30 @@ body:
       description: Share only broad details. Do not include VIN.
       placeholder: "Example: Vehicle model, country"
 
+  - type: markdown
+    attributes:
+      value: |
+        For sign-in or token-refresh problems, please complete this check so I can see whether the account works in the official app:
+
+        1. Temporarily disable the GWM integration in Home Assistant to stop automatic retries.
+        2. Sign in to the official GWM mobile app for your region with **the exact same account used by the integration**.
+        3. Check whether you can sign in and see your vehicle.
+        4. Sign out of the app before enabling the integration again.
+
+  - type: dropdown
+    id: official_app_test
+    attributes:
+      label: Official app test result
+      description: For other bugs, select the unrelated option. If you were unable to test, explain why in Additional context.
+      options:
+        - Sign-in works and my vehicle is visible.
+        - Sign-in works, but my vehicle is missing.
+        - Sign-in fails.
+        - Unable to test; explanation provided below.
+        - My issue is unrelated to sign-in or token refresh.
+    validations:
+      required: true
+
   - type: textarea
     id: steps
     attributes:
