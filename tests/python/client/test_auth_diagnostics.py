@@ -15,9 +15,9 @@ from unittest.mock import Mock
 import aiohttp
 import pytest
 
-from gwm_client import _auth_diagnostics as diagnostics
-from gwm_client._protocol import _Deadline, _TransportRequest
-from gwm_client.errors import (
+from custom_components.gwm_ora.gwm_client import _auth_diagnostics as diagnostics
+from custom_components.gwm_ora.gwm_client._protocol import _Deadline, _TransportRequest
+from custom_components.gwm_ora.gwm_client.errors import (
     GwmDeadlineExceededError,
     GwmHttpError,
     GwmNetworkError,
@@ -27,9 +27,9 @@ from gwm_client.errors import (
     GwmSchemaError,
     GwmTlsError,
 )
-from gwm_client.transport import AiohttpTransport
+from custom_components.gwm_ora.gwm_client.transport import AiohttpTransport
 
-LOGGER = "gwm_client._auth_diagnostics"
+LOGGER = "custom_components.gwm_ora.gwm_client._auth_diagnostics"
 SECRET = "PRIVATE-auth-user-token-pin-vin-email-location-946d88"
 
 

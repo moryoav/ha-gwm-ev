@@ -19,10 +19,10 @@ from test_china_client import (
     _FakeTransport,
 )
 
-from gwm_client._dotnet_json import encode_dotnet_json
-from gwm_client.china_crypto import bean_tech_sign
-from gwm_client.commands import ChinaVehicleControlCommand
-from gwm_client.models import VehicleIdentifier
+from custom_components.gwm_ora.gwm_client._dotnet_json import encode_dotnet_json
+from custom_components.gwm_ora.gwm_client.china_crypto import bean_tech_sign
+from custom_components.gwm_ora.gwm_client.commands import ChinaVehicleControlCommand
+from custom_components.gwm_ora.gwm_client.models import VehicleIdentifier
 
 
 @pytest_asyncio.fixture(params=[

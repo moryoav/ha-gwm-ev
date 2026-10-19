@@ -18,13 +18,13 @@ from urllib.parse import urlsplit
 
 import pytest
 
-import gwm_client.eu_auth as eu_auth
-from gwm_client._dotnet_json import encode_dotnet_json
-from gwm_client._protocol import _Deadline, _TransportRequest, _TransportResponse
-from gwm_client.client import GwmClient
-from gwm_client.config import GwmClientConfig, RequestTimeouts
-from gwm_client.crypto import GeneratedClientCertificateRequest
-from gwm_client.errors import (
+import custom_components.gwm_ora.gwm_client.eu_auth as eu_auth
+from custom_components.gwm_ora.gwm_client._dotnet_json import encode_dotnet_json
+from custom_components.gwm_ora.gwm_client._protocol import _Deadline, _TransportRequest, _TransportResponse
+from custom_components.gwm_ora.gwm_client.client import GwmClient
+from custom_components.gwm_ora.gwm_client.config import GwmClientConfig, RequestTimeouts
+from custom_components.gwm_ora.gwm_client.crypto import GeneratedClientCertificateRequest
+from custom_components.gwm_ora.gwm_client.errors import (
     GwmApiError,
     GwmAuthenticationError,
     GwmConfigurationError,
@@ -35,16 +35,16 @@ from gwm_client.errors import (
     GwmRoutePolicyError,
     GwmSchemaError,
 )
-from gwm_client.eu_auth import (
+from custom_components.gwm_ora.gwm_client.eu_auth import (
     EuAuthenticated,
     EuAuthState,
     EuCredentials,
     EuVerificationRequired,
 )
-from gwm_client.eu_identity import EuBootstrapMaterial, EuIdentityError, EuIssuedIdentity
-from gwm_client.models import GwmSession
-from gwm_client.signing import SignedRequest, SigningProfile
-from gwm_client.tls import create_gwm_ssl_context
+from custom_components.gwm_ora.gwm_client.eu_identity import EuBootstrapMaterial, EuIdentityError, EuIssuedIdentity
+from custom_components.gwm_ora.gwm_client.models import GwmSession
+from custom_components.gwm_ora.gwm_client.signing import SignedRequest, SigningProfile
+from custom_components.gwm_ora.gwm_client.tls import create_gwm_ssl_context
 
 FIXTURE_PATH = Path(__file__).with_name("fixtures") / "eu_auth_contracts_v1.json"
 READ_FIXTURE_PATH = Path(__file__).with_name("fixtures") / "eu_read_responses_v1.json"
@@ -61,7 +61,7 @@ SENSITIVE = "SENSITIVE-eu-auth-material-019fea1b"
 
 @pytest.mark.asyncio
 async def test_startup_http_failure_logs_state_and_status_without_private_values(caplog: pytest.LogCaptureFixture) -> None:
-    caplog.set_level(logging.WARNING, logger="gwm_client._auth_diagnostics")
+    caplog.set_level(logging.WARNING, logger="custom_components.gwm_ora.gwm_client._auth_diagnostics")
     state = _state(identity=_identity())
     transport = _QueueTransport([_response(code="550004"), _response(status=405)])
     with pytest.raises(GwmHttpError) as raised:
@@ -83,7 +83,7 @@ async def test_startup_http_failure_logs_state_and_status_without_private_values
 
 @pytest.mark.asyncio
 async def test_fresh_login_http_failure_is_distinct_from_session_resumption(caplog: pytest.LogCaptureFixture) -> None:
-    caplog.set_level(logging.WARNING, logger="gwm_client._auth_diagnostics")
+    caplog.set_level(logging.WARNING, logger="custom_components.gwm_ora.gwm_client._auth_diagnostics")
     transport = _QueueTransport([_response(status=405)])
     with pytest.raises(GwmHttpError):
         await _client(transport).authenticate_eu(_credentials(), ca_bundle=CA_BUNDLE, bootstrap_material=_bootstrap())

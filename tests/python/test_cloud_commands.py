@@ -25,7 +25,7 @@ from custom_components.gwm_ora.cloud_commands import GwmCommandApi
 from custom_components.gwm_ora.cloud_runtime import GwmClimateContext
 from custom_components.gwm_ora.cloud_storage import cloud_state_store
 from custom_components.gwm_ora.errors import GwmCommandError, GwmCommandForbidden
-from gwm_client import (
+from custom_components.gwm_ora.gwm_client import (
     AnzAuthState,
     ChargingPlanCommand,
     ChargingPlanInfo,
@@ -46,7 +46,7 @@ from gwm_client import (
     RussiaAuthState,
     VehicleIdentifier,
 )
-from gwm_client.commands import BEANTECH_BATTERY_HEAT_ACTIONS, BEANTECH_COMFORT_ACTIONS
+from custom_components.gwm_ora.gwm_client.commands import BEANTECH_BATTERY_HEAT_ACTIONS, BEANTECH_COMFORT_ACTIONS
 
 _NOW = datetime(2026, 8, 28, 18, 0, tzinfo=UTC)
 _VIN = "LGWEEUA50PK000001"

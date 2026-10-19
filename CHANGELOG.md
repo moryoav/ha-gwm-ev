@@ -8,6 +8,18 @@ This project follows semantic versioning. HACS uses the latest GitHub release ta
 
 ## [Unreleased]
 
+## [0.17.12] - 2026-10-19
+
+### Changed
+
+- Bundled the GWM client inside the integration and switched to relative imports, removing the GitHub archive requirement and separate client installation during Home Assistant startup.
+- Kept the `gwm.zip` GitHub release asset for HACS installation and download counts, with the integration and matching client included together.
+- Replaced standalone client distribution checks with bundled ZIP, isolated import, and license-notice checks. Updated developer instructions, client type checking, and debug logger paths.
+
+### Known validation limitation
+
+- Retained the existing EU bootstrap certificate and renewal guard. The renewal deadline passed on October 6, 2026; the certificate remains valid until January 4, 2027. The existing renewal test still fails, as recorded in v0.17.11.
+
 ## [0.17.11] - 2026-10-14
 
 ### Added

@@ -6,8 +6,8 @@ import math
 
 import pytest
 
-from gwm_client.config import GwmClientConfig, RequestTimeouts
-from gwm_client.regions import Region
+from custom_components.gwm_ora.gwm_client.config import GwmClientConfig, RequestTimeouts
+from custom_components.gwm_ora.gwm_client.regions import Region
 
 
 def test_client_config_normalizes_region_and_uses_bounded_defaults() -> None:

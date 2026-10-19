@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 
-from gwm_client.china_crypto import (
+from custom_components.gwm_ora.gwm_client.china_crypto import (
     AUTO_AI_CKEY,
     BEAN_TECH_APP_KEY,
     DEFAULT_NOTE_ID,

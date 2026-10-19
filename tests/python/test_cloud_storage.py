@@ -34,7 +34,7 @@ from custom_components.gwm_ora.const import (
     ANZ_AUTHENTICATION_METHOD_CURRENT,
     ANZ_AUTHENTICATION_METHOD_LEGACY,
 )
-from gwm_client import (
+from custom_components.gwm_ora.gwm_client import (
     AnzAuthState,
     ChinaAuthState,
     EuAuthState,

@@ -798,12 +798,7 @@ def _decode_secret_base64(value: str) -> bytes:
 
 
 def _default_resource_dir() -> Path:
-    return (
-        Path(__file__).resolve().parents[1]
-        / "custom_components"
-        / "gwm_ora"
-        / "resources"
-    )
+    return Path(__file__).resolve().parents[1] / "resources"
 
 
 def main() -> int:
@@ -823,7 +818,7 @@ def main() -> int:
     try:
         state = load_reused_poc_state(
             state_path,
-            repository_root=Path(__file__).resolve().parents[1],
+            repository_root=Path(__file__).resolve().parents[3],
         )
         evidence = run_reused_state_poc(
             region=region,

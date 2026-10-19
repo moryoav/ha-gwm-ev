@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 jobs:
-  client-foundation:
+  bundled-install:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -18,14 +18,9 @@ jobs:
         with:
           python-version: "3.13"
       - run: python -m pip install --upgrade pip
-      - run: python -m pip install "aiohttp==3.13.3" build "cryptography==46.0.2" mypy pytest pytest-asyncio ruff "setuptools>=77.0.3" twine wheel "yarl==1.22.0"
-      - run: ruff check gwm_client tests/python/client scripts/verify_client_distribution.py
-      - run: python -m mypy gwm_client
-      - run: python -m compileall -q gwm_client tests/python/client scripts/verify_client_distribution.py
-      - run: pytest tests/python/client
-      - run: python -m build --no-isolation
-      - run: python -m twine check dist/*
-      - run: python scripts/verify_client_distribution.py dist
+      - run: python -m pip install "homeassistant==2026.1.0" pytest pytest-asyncio
+      - name: Verify the HACS ZIP on the minimum supported Home Assistant version
+        run: pytest tests/python/test_hacs_release.py
 
   lint-test:
     runs-on: ubuntu-latest
@@ -35,13 +30,13 @@ jobs:
         with:
           python-version: "3.14"
       - run: python -m pip install --upgrade pip
-      - run: python -m pip install "homeassistant==2026.10.1" pytest pytest-asyncio pytest-cov ruff
-      - run: ruff check gwm_client custom_components tests/python
-      - run: python -m compileall -q gwm_client custom_components tests/python
+      - run: python -m pip install "homeassistant==2026.10.1" pytest pytest-asyncio pytest-cov mypy ruff
+      - run: ruff check custom_components tests/python scripts
+      - run: python -m mypy --follow-imports=silent custom_components/gwm_ora/gwm_client
+      - run: python -m compileall -q custom_components tests/python scripts
       - name: Run tests with coverage
         run: >
           pytest tests/python
-          --cov=gwm_client
           --cov=custom_components/gwm_ora
           --cov-report=xml:coverage.xml
           --cov-report=term-missing

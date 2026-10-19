@@ -15,14 +15,6 @@ from typing import Any, cast
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
 
-from gwm_client import (
-    AnzAuthState,
-    ChinaAuthState,
-    EuAuthState,
-    EuIssuedIdentity,
-    RussiaAuthState,
-)
-
 from .cloud_auth import (
     CloudAuthState,
     GwmCloudCredentials,
@@ -40,6 +32,13 @@ from .const import (
     REGION_CHINA,
     REGION_EU,
     REGION_RUSSIA,
+)
+from .gwm_client import (
+    AnzAuthState,
+    ChinaAuthState,
+    EuAuthState,
+    EuIssuedIdentity,
+    RussiaAuthState,
 )
 
 _STORAGE_VERSION = 1

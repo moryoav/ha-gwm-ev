@@ -6,7 +6,7 @@ The goal is Gold-level behavior for users while this remains a custom integratio
 
 ## Current Position
 
-- Bronze: implemented or exempted except production dependency transparency. The live-testing branch uses an immutable source archive until the client is approved and published through public CI.
+- Bronze: implemented or exempted. I bundle the client source in the integration and HACS ZIP, with no separate GWM client requirement.
 - Silver: implemented except measured >95% Python module coverage.
 - Gold: implemented or documented, with one safety exemption for automatic stale-device deletion.
 - Platinum: partly implemented; strict typing enforcement is still future work.
@@ -43,7 +43,6 @@ Instead:
 
 ## Remaining Work
 
-- Publish the approved `gwm-client` package through public CI and replace the branch archive requirement with an exact PyPI version pin.
 - Add Home Assistant fixture-based tests for config flow, reauth, reconfigure, repairs, diagnostics, and every platform.
 - Enforce measured Python coverage above 95%.
 - Enable strict Python type checking.

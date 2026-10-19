@@ -15,12 +15,11 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from gwm_client import GwmAuthenticationError, GwmClientError
-
 from .cloud_commands import GwmCommandApi
 from .cloud_runtime import GwmCloudClient
 from .const import DOMAIN
 from .errors import GwmCommandError
+from .gwm_client import GwmAuthenticationError, GwmClientError
 
 _LOGGER = logging.getLogger(__name__)
 

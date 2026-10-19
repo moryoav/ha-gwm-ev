@@ -14,7 +14,7 @@ Describe what this pull request changes and why.
 
 ## Affected Area
 
-- [ ] `gwm-client`
+- [ ] Bundled `gwm_client`
 - [ ] Custom integration
 - [ ] Config flow, reauth, or reconfigure
 - [ ] Entities or device model
@@ -30,7 +30,7 @@ Describe the testing you performed.
 - [ ] Home Assistant loads or restarts without relevant errors.
 - [ ] The `gwm_ora` integration can be set up, reloaded, or reconfigured when affected.
 - [ ] Relevant entities, diagnostics, repairs, or remote commands were tested.
-- [ ] `python -m ruff check gwm_client custom_components tests/python` passes.
+- [ ] `python -m ruff check custom_components tests/python scripts` passes.
 - [ ] `python -m pytest tests/python` passes.
 - [ ] Documentation-only change; no runtime testing needed.
 

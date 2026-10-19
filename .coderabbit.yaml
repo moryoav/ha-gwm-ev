@@ -4,7 +4,7 @@ reviews:
   request_changes_workflow: true
 
   path_instructions:
-    - path: "gwm_client/china_*.py"
+    - path: "custom_components/gwm_ora/gwm_client/china_*.py"
       instructions: |
         For endpoint, response-field, signal-code, unit-conversion,
         schema-validation, or fallback changes:
@@ -39,7 +39,7 @@ reviews:
         mode: "error"
         instructions: >-
           Fail when a pull request changes an API response field, signal-code
-          mapping, or unit conversion under gwm_client/** without a test that
+          mapping, or unit conversion under custom_components/gwm_ora/gwm_client/** without a test that
           directly asserts the resulting CloudStatusItem or VehicleSnapshot
           value. URL/signature-only assertions and a general statement that
           the test suite passes are not sufficient.

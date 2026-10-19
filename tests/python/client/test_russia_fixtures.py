@@ -13,14 +13,14 @@ import pytest
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.x509.oid import NameOID
 
-from gwm_client.crypto import load_certificate, recover_transformed_private_key
-from gwm_client.models import (
+from custom_components.gwm_ora.gwm_client.crypto import load_certificate, recover_transformed_private_key
+from custom_components.gwm_ora.gwm_client.models import (
     parse_cloud_vehicle_basics,
     parse_cloud_vehicle_status,
     parse_cloud_vehicles,
 )
-from gwm_client.regions import Region, get_region_protocol
-from gwm_client.signing import RUSSIA_GWM_AUTH, sign_request
+from custom_components.gwm_ora.gwm_client.regions import Region, get_region_protocol
+from custom_components.gwm_ora.gwm_client.signing import RUSSIA_GWM_AUTH, sign_request
 
 FIXTURE_DIR = Path(__file__).with_name("fixtures")
 AUTH_FIXTURE_PATH = FIXTURE_DIR / "russia_auth_contracts_v1.json"

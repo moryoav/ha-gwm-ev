@@ -16,8 +16,8 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
 
-from gwm_client import live_poc
-from gwm_client.crypto import load_certificate
+from custom_components.gwm_ora.gwm_client import live_poc
+from custom_components.gwm_ora.gwm_client.crypto import load_certificate
 
 RESOURCE_DIR = (
     Path(__file__).resolve().parents[3]

@@ -16,6 +16,7 @@ from test_beantech_entities import ACCEPTED, VIN, _context
 
 from custom_components.gwm_ora.beantech_charging import BeanTechChargingEntity
 from custom_components.gwm_ora.entity import GwmEntity
+from custom_components.gwm_ora.gwm_client import GwmApiError
 from custom_components.gwm_ora.number import GwmChargeSocNumber
 from custom_components.gwm_ora.number import async_setup_entry as setup_numbers
 from custom_components.gwm_ora.select import GwmBatteryAppointmentTimeSelect, GwmChargeWindowSelect
@@ -26,7 +27,6 @@ from custom_components.gwm_ora.switch import (
     GwmSmartChargeSwitch,
 )
 from custom_components.gwm_ora.switch import async_setup_entry as setup_switches
-from gwm_client import GwmApiError
 
 
 def _charging_context(region="cn", platform="beantech", remote=True, charging=True):

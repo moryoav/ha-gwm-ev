@@ -12,11 +12,16 @@ from test_beantech_entities import VIN, _context
 from custom_components.gwm_ora.binary_sensor import async_setup_entry as setup_binary_sensors
 from custom_components.gwm_ora.device_tracker import GwmDeviceTracker
 from custom_components.gwm_ora.diagnostics import async_get_config_entry_diagnostics
+from custom_components.gwm_ora.gwm_client import (
+    CloudVehicle,
+    CloudVehicleBasics,
+    VehicleIdentifier,
+    map_vehicle_snapshot,
+)
+from custom_components.gwm_ora.gwm_client.china_gtsp import map_gtsp_status
 from custom_components.gwm_ora.lock import GwmDoorLock
 from custom_components.gwm_ora.sensor import GTSP_SENSORS, _gtsp_raw_value
 from custom_components.gwm_ora.sensor import async_setup_entry as setup_sensors
-from gwm_client import CloudVehicle, CloudVehicleBasics, VehicleIdentifier, map_vehicle_snapshot
-from gwm_client.china_gtsp import map_gtsp_status
 
 
 @pytest.mark.asyncio

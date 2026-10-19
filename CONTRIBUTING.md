@@ -4,7 +4,7 @@ Thanks for your interest in improving GWM for Home Assistant.
 
 This project has two main parts:
 
-- `gwm_client`: the Home Assistant-independent async client for regional GWM cloud protocols.
+- `custom_components/gwm_ora/gwm_client`: the bundled async client for regional GWM cloud protocols. Its implementation remains independent of Home Assistant.
 - `custom_components/gwm_ora`: the Home Assistant integration that owns configuration, private state, polling, entities, and service lifecycle.
 
 Contributions are welcome, including bug reports, documentation improvements, compatibility fixes, security hardening, mapping corrections, and feature ideas.
@@ -129,13 +129,13 @@ cd ha-gwm-ev
 The repository layout is:
 
 ```text
-custom_components/gwm_ora/      Home Assistant custom integration
-gwm_client/                     Home Assistant-independent async GWM cloud client
-tests/python/                   Client and Home Assistant integration tests
-.github/workflows/              CI and release workflows
+custom_components/gwm_ora/             Home Assistant custom integration
+custom_components/gwm_ora/gwm_client/  Bundled async GWM cloud client
+tests/python/                          Client and Home Assistant integration tests
+.github/workflows/                     CI and release workflows
 ```
 
-I use neutral **GWM** names for new user-facing text, Python packages, and internal symbols. The `gwm-client` distribution imports as `gwm_client`. I preserve the existing `gwm_ora` Home Assistant domain and action namespace for compatibility, so do not copy that legacy prefix into new identifiers unless a compatibility contract requires it.
+I use neutral **GWM** names for new user-facing text, Python packages, and internal symbols. I bundle the client under `custom_components/gwm_ora/gwm_client/` and use relative imports within the integration. I preserve the existing `gwm_ora` Home Assistant domain and action namespace for compatibility, so do not copy that legacy prefix into new identifiers unless a compatibility contract requires it.
 
 For local Home Assistant testing, install or copy the integration into:
 
@@ -163,9 +163,9 @@ Before opening a pull request, test the parts you changed as much as practical.
 Run:
 
 ```powershell
-python -m ruff check gwm_client custom_components tests/python
-python -m mypy gwm_client
-python -m compileall gwm_client custom_components tests/python
+python -m ruff check custom_components tests/python scripts
+python -m mypy --follow-imports=silent custom_components/gwm_ora/gwm_client
+python -m compileall custom_components tests/python scripts
 python -m pytest tests/python
 ```
 
@@ -209,11 +209,11 @@ Use plain, direct language and include Home Assistant examples where they make t
 HACS uses GitHub releases for update detection. Release pull requests should:
 
 - Move `CHANGELOG.md` entries from `Unreleased` into the target version.
-- Set the version in `custom_components/gwm_ora/manifest.json` to `X.Y.Z` and pin its `gwm-client` archive URL to the same `vX.Y.Z` tag.
-- Publish and pin the matching `gwm-client` package version.
+- Set the version in `custom_components/gwm_ora/manifest.json` to `X.Y.Z`.
+- Keep the client source inside the integration so it ships in the same `gwm.zip` asset.
 - Push a `vX.Y.Z` tag after the release commit lands.
 
-The release workflow checks the tag against the manifest and pinned archive URL, runs HACS and Hassfest validation, and packages `custom_components/gwm_ora/` as `gwm.zip` with its files at the ZIP root. It publishes the ZIP with release notes from the matching changelog section. Production releases must use an immutable `gwm-client` version published through the approved package workflow.
+The release workflow checks the tag against the manifest, runs HACS and Hassfest validation, and packages `custom_components/gwm_ora/` as `gwm.zip` with its files at the ZIP root. It verifies that the bundled client and license notices are included, then publishes the ZIP with release notes from the matching changelog section. I use this GitHub release asset for HACS downloads and download counts; a separate client package is not needed.
 
 ## Code of Conduct
 

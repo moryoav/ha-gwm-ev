@@ -13,9 +13,9 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
 
-import gwm_client.russia_identity as russia_identity
-from gwm_client.eu_identity import EuIdentityError
-from gwm_client.russia_identity import (
+import custom_components.gwm_ora.gwm_client.russia_identity as russia_identity
+from custom_components.gwm_ora.gwm_client.eu_identity import EuIdentityError
+from custom_components.gwm_ora.gwm_client.russia_identity import (
     RussiaBootstrapMaterial,
     RussiaIdentityError,
     create_russia_bootstrap_ssl_context,

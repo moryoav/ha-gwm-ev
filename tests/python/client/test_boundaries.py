@@ -1,4 +1,4 @@
-"""Architectural boundary tests for the standalone protocol package."""
+"""Architectural boundary tests for the bundled protocol package."""
 
 from __future__ import annotations
 
@@ -9,9 +9,9 @@ from urllib.parse import unquote, urlsplit
 
 import pytest
 
-from gwm_client.china_crypto import decrypt_g_app
+from custom_components.gwm_ora.gwm_client.china_crypto import decrypt_g_app
 
-PACKAGE_DIR = Path(__file__).resolve().parents[3] / "gwm_client"
+PACKAGE_DIR = Path(__file__).resolve().parents[3] / "custom_components/gwm_ora/gwm_client"
 FIXTURE_DIR = Path(__file__).with_name("fixtures")
 _SYNTHETIC_STABLE_DEVICE_IDS = frozenset(
     {
@@ -67,8 +67,8 @@ def test_production_client_does_not_import_disposable_live_poc() -> None:
         assert not {
             target
             for target in imported
-            if target == "gwm_client.live_poc"
-            or target.startswith("gwm_client.live_poc.")
+            if target == "custom_components.gwm_ora.gwm_client.live_poc"
+            or target.startswith("custom_components.gwm_ora.gwm_client.live_poc.")
         }
 
 
@@ -80,14 +80,14 @@ def test_production_china_client_does_not_import_reuse_only_poc() -> None:
     assert not {
         target
         for target in imported
-        if target == "gwm_client.china_poc"
-        or target.startswith("gwm_client.china_poc.")
+        if target == "custom_components.gwm_ora.gwm_client.china_poc"
+        or target.startswith("custom_components.gwm_ora.gwm_client.china_poc.")
     }
 
 
 def _absolute_import_targets(tree: ast.AST, source_path: Path) -> set[str]:
     relative_parts = source_path.relative_to(PACKAGE_DIR).with_suffix("").parts
-    package_parts = ["gwm_client", *relative_parts[:-1]]
+    package_parts = ["custom_components", "gwm_ora", "gwm_client", *relative_parts[:-1]]
     targets: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):

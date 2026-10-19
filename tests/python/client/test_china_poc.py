@@ -14,10 +14,10 @@ from urllib.parse import unquote, urlsplit
 import aiohttp
 import pytest
 
-import gwm_client
-from gwm_client._protocol import _Deadline
-from gwm_client.china_crypto import encrypt_g_app
-from gwm_client.china_poc import (
+from custom_components.gwm_ora import gwm_client
+from custom_components.gwm_ora.gwm_client._protocol import _Deadline
+from custom_components.gwm_ora.gwm_client.china_crypto import encrypt_g_app
+from custom_components.gwm_ora.gwm_client.china_poc import (
     ChinaPocClient,
     ChinaPocConfig,
     ChinaPocStatus,
@@ -25,13 +25,13 @@ from gwm_client.china_poc import (
     ChinaReusedSession,
     normalize_china_device_id,
 )
-from gwm_client.china_transport import (
+from custom_components.gwm_ora.gwm_client.china_transport import (
     ChinaAiohttpTransport,
     _ChinaTransportRequest,
     _ChinaTransportResponse,
 )
-from gwm_client.config import RequestTimeouts
-from gwm_client.errors import (
+from custom_components.gwm_ora.gwm_client.config import RequestTimeouts
+from custom_components.gwm_ora.gwm_client.errors import (
     GwmApiError,
     GwmAuthenticationError,
     GwmClosedError,
@@ -46,7 +46,7 @@ from gwm_client.errors import (
     GwmSchemaError,
     GwmTlsError,
 )
-from gwm_client.models import VehicleIdentifier
+from custom_components.gwm_ora.gwm_client.models import VehicleIdentifier
 
 _FIXTURE_PATH = Path(__file__).with_name("fixtures") / "china_poc_contracts_v1.json"
 _CONTRACT = json.loads(_FIXTURE_PATH.read_text(encoding="utf-8"))

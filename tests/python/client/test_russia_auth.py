@@ -14,11 +14,11 @@ from urllib.parse import urlsplit
 
 import pytest
 
-import gwm_client.russia_auth as auth_module
-from gwm_client._protocol import _Deadline, _TransportRequest, _TransportResponse
-from gwm_client.client import GwmClient
-from gwm_client.config import GwmClientConfig, RequestTimeouts
-from gwm_client.errors import (
+import custom_components.gwm_ora.gwm_client.russia_auth as auth_module
+from custom_components.gwm_ora.gwm_client._protocol import _Deadline, _TransportRequest, _TransportResponse
+from custom_components.gwm_ora.gwm_client.client import GwmClient
+from custom_components.gwm_ora.gwm_client.config import GwmClientConfig, RequestTimeouts
+from custom_components.gwm_ora.gwm_client.errors import (
     GwmApiError,
     GwmAuthenticationError,
     GwmClosedError,
@@ -29,9 +29,9 @@ from gwm_client.errors import (
     GwmRoutePolicyError,
     GwmSchemaError,
 )
-from gwm_client.models import GwmSession
-from gwm_client.regions import Region
-from gwm_client.russia_auth import (
+from custom_components.gwm_ora.gwm_client.models import GwmSession
+from custom_components.gwm_ora.gwm_client.regions import Region
+from custom_components.gwm_ora.gwm_client.russia_auth import (
     RussiaAuthenticated,
     RussiaAuthState,
     RussiaCredentials,
@@ -39,8 +39,8 @@ from gwm_client.russia_auth import (
     _RussiaAuthProgress,
     authenticate_russia,
 )
-from gwm_client.russia_identity import RussiaBootstrapMaterial
-from gwm_client.tls import LEGACY_CIPHER_STRING
+from custom_components.gwm_ora.gwm_client.russia_identity import RussiaBootstrapMaterial
+from custom_components.gwm_ora.gwm_client.tls import LEGACY_CIPHER_STRING
 
 FIXTURE = json.loads(
     (

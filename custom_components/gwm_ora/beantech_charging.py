@@ -8,10 +8,9 @@ import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from gwm_client import GwmClientError
-
 from .entity import GwmEntity, async_call_gwm_api
 from .errors import GwmCommandError
+from .gwm_client import GwmClientError
 
 _LOGGER = logging.getLogger(__name__)
 _READ_INTERVAL = 60.0

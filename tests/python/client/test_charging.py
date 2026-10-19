@@ -10,7 +10,7 @@ from urllib.parse import urlsplit
 
 import pytest
 
-from gwm_client import (
+from custom_components.gwm_ora.gwm_client import (
     ChargingPlanCommand,
     GwmApiError,
     GwmClient,
@@ -21,7 +21,7 @@ from gwm_client import (
     VehicleIdentifier,
     create_gwm_ssl_context,
 )
-from gwm_client._protocol import _Deadline, _TransportRequest, _TransportResponse
+from custom_components.gwm_ora.gwm_client._protocol import _Deadline, _TransportRequest, _TransportResponse
 
 FIXTURE_PATH = Path(__file__).with_name("fixtures") / "command_contracts_v1.json"
 

@@ -12,13 +12,12 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.util import dt as dt_util
 
-from gwm_client import GwmClientError
-
 from . import GwmConfigEntry
 from .beantech_charging import BeanTechChargingEntity
 from .const import DEFAULT_CHARGE_WINDOW_HOURS
 from .entity import GwmEntity, async_call_gwm_api, setup_vehicle_entities, vehicle_value
 from .errors import GwmCommandError
+from .gwm_client import GwmClientError
 
 PARALLEL_UPDATES = 0
 

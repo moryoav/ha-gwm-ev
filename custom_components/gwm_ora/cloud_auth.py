@@ -13,7 +13,22 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from gwm_client import (
+from .const import (
+    ANZ_AUTHENTICATION_METHOD_LEGACY,
+    CONF_ACCOUNT,
+    CONF_AUTHENTICATION_METHOD,
+    CONF_CONNECTION_TYPE,
+    CONF_COUNTRY,
+    CONF_PASSWORD,
+    CONF_REGION,
+    CONNECTION_TYPE_CLOUD,
+    REGION_ANZ,
+    REGION_CHINA,
+    REGION_EU,
+    REGION_RUSSIA,
+    SUPPORTED_CLOUD_REGIONS,
+)
+from .gwm_client import (
     AnzAuthenticationMethod,
     AnzAuthState,
     AnzCredentials,
@@ -32,26 +47,10 @@ from gwm_client import (
     RussiaBootstrapMaterial,
     RussiaCredentials,
 )
-from gwm_client.anz_auth import AnzAuthenticationResult
-from gwm_client.china_client import ChinaAuthenticationResult
-from gwm_client.eu_auth import EuAuthenticationResult
-from gwm_client.russia_auth import RussiaAuthenticationResult
-
-from .const import (
-    ANZ_AUTHENTICATION_METHOD_LEGACY,
-    CONF_ACCOUNT,
-    CONF_AUTHENTICATION_METHOD,
-    CONF_CONNECTION_TYPE,
-    CONF_COUNTRY,
-    CONF_PASSWORD,
-    CONF_REGION,
-    CONNECTION_TYPE_CLOUD,
-    REGION_ANZ,
-    REGION_CHINA,
-    REGION_EU,
-    REGION_RUSSIA,
-    SUPPORTED_CLOUD_REGIONS,
-)
+from .gwm_client.anz_auth import AnzAuthenticationResult
+from .gwm_client.china_client import ChinaAuthenticationResult
+from .gwm_client.eu_auth import EuAuthenticationResult
+from .gwm_client.russia_auth import RussiaAuthenticationResult
 
 type ClientCredentials = EuCredentials | AnzCredentials | RussiaCredentials | ChinaCredentials
 type CloudAuthState = EuAuthState | AnzAuthState | RussiaAuthState | ChinaAuthState

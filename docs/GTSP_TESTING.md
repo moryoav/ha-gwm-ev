@@ -30,7 +30,7 @@ options are enabled.
    ```yaml
    logger:
      logs:
-       gwm_client.china_gtsp: debug
+       custom_components.gwm_ora.gwm_client.china_gtsp: debug
        custom_components.gwm_ora: debug
    ```
 

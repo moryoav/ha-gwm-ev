@@ -17,7 +17,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
 
-from gwm_client.eu_identity import (
+from custom_components.gwm_ora.gwm_client.eu_identity import (
     EuBootstrapMaterial,
     EuIdentityError,
     EuIssuedIdentity,
@@ -25,7 +25,7 @@ from gwm_client.eu_identity import (
     create_eu_issued_ssl_context,
     is_eu_issued_identity_usable,
 )
-from gwm_client.tls import create_gwm_ssl_context as _base_gwm_ssl_context
+from custom_components.gwm_ora.gwm_client.tls import create_gwm_ssl_context as _base_gwm_ssl_context
 
 NOW = datetime(2030, 6, 1, 12, 0, tzinfo=UTC)
 RESOURCE_DIR = Path(__file__).resolve().parents[3] / "custom_components" / "gwm_ora" / "resources"
@@ -319,7 +319,7 @@ def test_issued_context_contains_only_leaf_and_direct_intermediate_and_cleans_fi
     identity = _issued_identity(certificate, private_key)
     temporary_root = tmp_path / "temporary-identities"
     temporary_root.mkdir()
-    monkeypatch.setattr("gwm_client.eu_identity.tempfile.tempdir", str(temporary_root))
+    monkeypatch.setattr("custom_components.gwm_ora.gwm_client.eu_identity.tempfile.tempdir", str(temporary_root))
     original_open = os.open
     creation_modes: list[int] = []
     captured_chain = b""
@@ -349,8 +349,8 @@ def test_issued_context_contains_only_leaf_and_direct_intermediate_and_cleans_fi
             assert stat.S_IMODE(keyfile.stat().st_mode) == 0o600
         return _base_gwm_ssl_context(**kwargs)
 
-    monkeypatch.setattr("gwm_client.eu_identity.os.open", capturing_open)
-    monkeypatch.setattr("gwm_client.eu_identity.create_gwm_ssl_context", capturing_context_factory)
+    monkeypatch.setattr("custom_components.gwm_ora.gwm_client.eu_identity.os.open", capturing_open)
+    monkeypatch.setattr("custom_components.gwm_ora.gwm_client.eu_identity.create_gwm_ssl_context", capturing_context_factory)
     default_before = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
 
     context = create_eu_issued_ssl_context(
@@ -390,7 +390,7 @@ def test_bootstrap_context_recovers_transformed_key_and_uses_general_intermediat
         captured_chain = Path(kwargs["certfile"]).read_bytes()
         return _base_gwm_ssl_context(**kwargs)
 
-    monkeypatch.setattr("gwm_client.eu_identity.create_gwm_ssl_context", capturing_context_factory)
+    monkeypatch.setattr("custom_components.gwm_ora.gwm_client.eu_identity.create_gwm_ssl_context", capturing_context_factory)
 
     context = create_eu_bootstrap_ssl_context(material, now=NOW)
 
@@ -447,12 +447,12 @@ def test_temporary_identity_files_are_cleaned_when_tls_loading_fails(
     certificate, private_key = _new_leaf(certificate_chain.issued_intermediate)
     temporary_root = tmp_path / "failed-identities"
     temporary_root.mkdir()
-    monkeypatch.setattr("gwm_client.eu_identity.tempfile.tempdir", str(temporary_root))
+    monkeypatch.setattr("custom_components.gwm_ora.gwm_client.eu_identity.tempfile.tempdir", str(temporary_root))
 
     def fail_context_factory(**_kwargs: Any) -> ssl.SSLContext:
         raise ssl.SSLError("SENSITIVE KEY MATERIAL MUST NOT ESCAPE")
 
-    monkeypatch.setattr("gwm_client.eu_identity.create_gwm_ssl_context", fail_context_factory)
+    monkeypatch.setattr("custom_components.gwm_ora.gwm_client.eu_identity.create_gwm_ssl_context", fail_context_factory)
 
     with pytest.raises(EuIdentityError, match="^tls_context_invalid$") as raised:
         create_eu_issued_ssl_context(

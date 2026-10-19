@@ -19,11 +19,11 @@ from homeassistant.util import dt as dt_util
 from custom_components.gwm_ora.button import GwmBeanTechComfortButton, GwmClimatePresetButton
 from custom_components.gwm_ora.button import async_setup_entry as setup_buttons
 from custom_components.gwm_ora.coordinator import GwmDataUpdateCoordinator
+from custom_components.gwm_ora.gwm_client import GwmApiError
 from custom_components.gwm_ora.select import GwmCabinCleanAppointmentSelect, _clock_to_today_ms, _ms_to_clock
 from custom_components.gwm_ora.select import async_setup_entry as setup_selects
 from custom_components.gwm_ora.switch import GwmChargingScheduleSwitch, GwmFrontDefrosterSwitch, GwmRemoteControlSwitch
 from custom_components.gwm_ora.switch import async_setup_entry as setup_switches
-from gwm_client import GwmApiError
 
 VIN = "LGWTEST0000000003"
 ACCEPTED = {"id": "accepted", "state": "in_progress"}

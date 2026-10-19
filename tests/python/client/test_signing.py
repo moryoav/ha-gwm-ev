@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from gwm_client.signing import (
+from custom_components.gwm_ora.gwm_client.signing import (
     ANZ_BT_AUTH,
     EU_BT_AUTH,
     EU_GWM_AUTH,

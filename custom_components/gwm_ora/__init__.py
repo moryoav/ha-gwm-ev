@@ -16,18 +16,6 @@ from homeassistant.exceptions import (
 from homeassistant.helpers import config_validation as cv
 from homeassistant.util import dt as dt_util
 
-from gwm_client import (
-    AnzAuthenticated,
-    ChinaAuthenticated,
-    ChinaInitializationRequired,
-    EuAuthenticated,
-    GwmAuthenticationError,
-    GwmClientError,
-    GwmConfigurationError,
-    GwmHttpError,
-    RussiaAuthenticated,
-)
-
 from .cloud_auth import GwmCloudAuthenticator
 from .cloud_commands import GwmCommandApi
 from .cloud_runtime import (
@@ -63,6 +51,17 @@ from .const import (
 )
 from .coordinator import GwmDataUpdateCoordinator
 from .entity import async_call_gwm_api
+from .gwm_client import (
+    AnzAuthenticated,
+    ChinaAuthenticated,
+    ChinaInitializationRequired,
+    EuAuthenticated,
+    GwmAuthenticationError,
+    GwmClientError,
+    GwmConfigurationError,
+    GwmHttpError,
+    RussiaAuthenticated,
+)
 
 
 @dataclass(slots=True)

@@ -10,7 +10,7 @@ from typing import cast
 
 import pytest
 
-from gwm_client import (
+from custom_components.gwm_ora.gwm_client import (
     ChinaVehicle,
     CloudClimateConfiguration,
     CloudStatusItem,
@@ -26,8 +26,8 @@ from gwm_client import (
     normalize_temperature,
     valid_temperature,
 )
-from gwm_client.china_status import map_bean_tech_status, map_china_status
-from gwm_client.models import (
+from custom_components.gwm_ora.gwm_client.china_status import map_bean_tech_status, map_china_status
+from custom_components.gwm_ora.gwm_client.models import (
     FrozenJsonValue,
     parse_cloud_vehicle_basics,
     parse_cloud_vehicle_status,

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import tomllib
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -12,11 +11,11 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.x509.oid import NameOID
 
 from custom_components.gwm_ora.cloud_auth import _RESOURCE_DIRECTORY
-from gwm_client.crypto import load_certificate, recover_transformed_private_key
+from custom_components.gwm_ora.gwm_client.crypto import load_certificate, recover_transformed_private_key
 
 ROOT = Path(__file__).resolve().parents[2]
 RESOURCE_DIRECTORY = ROOT / "custom_components" / "gwm_ora" / "resources"
-CLIENT_SOURCE_TAG = "v0.17.11"
+CLIENT_DIRECTORY = ROOT / "custom_components/gwm_ora/gwm_client"
 
 EXPECTED_FILES = {
     "gwm_general.cer": (1529, "24886bad04d8b26aa2aafd3fb22c74bd1f2859d81499a39c561df4930429a03d"),
@@ -107,37 +106,23 @@ def test_bootstrap_certificate_metadata_keys_and_renewal_controls_are_exact() ->
         assert bundle.count(b"-----BEGIN CERTIFICATE-----") == records[bundle_name]["certificate_count"]
 
 
-def test_packaging_decision_keeps_the_client_separate_and_activates_test_pin() -> None:
-    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+def test_client_is_bundled_without_an_external_package_requirement() -> None:
     manifest = json.loads(
         (ROOT / "custom_components" / "gwm_ora" / "manifest.json").read_text(encoding="utf-8")
     )
 
-    assert project["name"] == "gwm-client"
-    assert project["version"] == "0.1.0"
-    assert project["requires-python"] == ">=3.13"
-    assert project["license"] == "MIT AND LicenseRef-GWM-Protocol-Materials"
-    assert project["license-files"] == ["LICENSE", "THIRD_PARTY_NOTICES.md"]
-    assert set(project["dependencies"]) == {
-        "aiohttp>=3.13.3,<4",
-        "cryptography>=46.0.2",
-        "yarl>=1.22.0,<2",
-    }
-    assert manifest["requirements"] == [
-        "gwm-client@https://github.com/moryoav/ha-gwm-ev/archive/refs/tags/"
-        f"{CLIENT_SOURCE_TAG}.zip"
-    ]
-    assert manifest["version"] == "0.17.11"
+    assert "requirements" not in manifest
     assert manifest["integration_type"] == "hub"
-    assert manifest["loggers"] == ["gwm_client"]
+    assert "loggers" not in manifest
     assert manifest["domain"] == "gwm_ora"
     assert _RESOURCE_DIRECTORY == RESOURCE_DIRECTORY
-    assert (ROOT / "gwm_client" / "__init__.py").is_file()
+    assert (CLIENT_DIRECTORY / "__init__.py").is_file()
+    assert not (ROOT / "gwm_client").exists()
     assert not (ROOT / "gwm_ora_client").exists()
     assert not (ROOT / "addons").exists()
     assert not any(
         path.suffix.casefold() in {".cer", ".key", ".pem"}
-        for path in (ROOT / "gwm_client").rglob("*")
+        for path in CLIENT_DIRECTORY.rglob("*")
     )
 
 
@@ -149,8 +134,9 @@ def test_protocol_material_notice_is_shipped_with_the_hacs_integration() -> None
 
     assert integration_notice == root_notice
     assert "LicenseRef-GWM-Protocol-Materials" in root_notice
-    assert "immutable source dependency" in root_notice
-    assert "I will not publish the client package or make a production release" in root_notice
+    assert "bundled client" in root_notice
+    assert "Bundling does not resolve" in root_notice
+    assert (ROOT / "custom_components/gwm_ora/LICENSE").read_bytes() == (ROOT / "LICENSE").read_bytes()
 
 
 def test_new_client_name_has_only_explicit_legacy_compatibility_values() -> None:
@@ -158,7 +144,6 @@ def test_new_client_name_has_only_explicit_legacy_compatibility_values() -> None
         "anz_auth.py": {'_LEGACY_ACCOUNT_BINDING_DOMAIN = b"gwm-ora-anz-account-v1\\0"'},
         "china_client.py": {'_LEGACY_ACCOUNT_BINDING_DOMAIN = b"gwm-ora-china-account-v1\\0"'},
         "eu_auth.py": {'_LEGACY_ACCOUNT_BINDING_DOMAIN = b"gwm-ora-eu-account-v1\\0"'},
-        "live_poc.py": {'/ "gwm_ora"'},
         "russia_auth.py": {
             '_LEGACY_ACCOUNT_BINDING_DOMAIN = b"gwm-ora-russia-account-v1\\0"',
             '_LEGACY_APP_MODEL = "ha-gwm-ora"',
@@ -166,7 +151,7 @@ def test_new_client_name_has_only_explicit_legacy_compatibility_values() -> None
     }
     actual_lines: dict[str, set[str]] = {}
 
-    for path in sorted((ROOT / "gwm_client").glob("*.py")):
+    for path in sorted(CLIENT_DIRECTORY.glob("*.py")):
         matching_lines = {
             line.strip()
             for line in path.read_text(encoding="utf-8").splitlines()

@@ -7,7 +7,7 @@ from collections.abc import Callable
 
 import pytest
 
-from gwm_client.errors import (
+from custom_components.gwm_ora.gwm_client.errors import (
     GwmApiError,
     GwmAuthenticationError,
     GwmClientError,

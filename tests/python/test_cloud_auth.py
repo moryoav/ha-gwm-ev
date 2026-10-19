@@ -27,7 +27,7 @@ from custom_components.gwm_ora.const import (
     CONF_REGION,
     CONNECTION_TYPE_CLOUD,
 )
-from gwm_client import (
+from custom_components.gwm_ora.gwm_client import (
     AnzAuthenticationMethod,
     AnzCredentials,
     ChinaAuthState,

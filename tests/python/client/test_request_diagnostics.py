@@ -13,12 +13,12 @@ from unittest.mock import Mock
 import aiohttp
 import pytest
 
-from gwm_client import _diagnostics as diagnostics
-from gwm_client._protocol import _Deadline, _TransportRequest, _TransportResponse
-from gwm_client.errors import GwmApiError, GwmNetworkError, GwmSchemaError
-from gwm_client.transport import AiohttpTransport
+from custom_components.gwm_ora.gwm_client import _diagnostics as diagnostics
+from custom_components.gwm_ora.gwm_client._protocol import _Deadline, _TransportRequest, _TransportResponse
+from custom_components.gwm_ora.gwm_client.errors import GwmApiError, GwmNetworkError, GwmSchemaError
+from custom_components.gwm_ora.gwm_client.transport import AiohttpTransport
 
-LOGGER = "gwm_client._diagnostics"
+LOGGER = "custom_components.gwm_ora.gwm_client._diagnostics"
 SECRET = "SENSITIVE-never-log-this-value"
 NEW_OPERATIONS = (
     "get_charging_plan", "get_remote_command_result", "update_climate_defaults",
@@ -243,7 +243,7 @@ async def test_real_transport_preserves_bytes_request_count_and_failure(caplog, 
 def test_success_decoder_does_not_require_data(caplog, body, expected_error):
     """Accept code-only acknowledgements while rejecting invalid envelopes."""
 
-    from gwm_client.client import _decode_envelope
+    from custom_components.gwm_ora.gwm_client.client import _decode_envelope
 
     caplog.set_level(logging.DEBUG, logger=LOGGER)
     response = _TransportResponse(200, {}, body)
@@ -257,7 +257,7 @@ def test_success_decoder_does_not_require_data(caplog, body, expected_error):
 
 @pytest.mark.parametrize("operation", NEW_OPERATIONS)
 def test_client_error_sanitization_preserves_operation(operation):
-    from gwm_client.client import _sanitized_client_error
+    from custom_components.gwm_ora.gwm_client.client import _sanitized_client_error
 
     error = _sanitized_client_error(GwmSchemaError(operation=operation), operation=operation)
     assert type(error) is GwmSchemaError

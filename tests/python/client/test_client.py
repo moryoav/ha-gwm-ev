@@ -17,11 +17,11 @@ from urllib.parse import urlsplit
 
 import pytest
 
-import gwm_client.client as client_module
-from gwm_client._protocol import _Deadline, _TransportRequest, _TransportResponse
-from gwm_client.client import _READ_ENDPOINTS, GwmClient
-from gwm_client.config import GwmClientConfig, RequestTimeouts
-from gwm_client.errors import (
+import custom_components.gwm_ora.gwm_client.client as client_module
+from custom_components.gwm_ora.gwm_client._protocol import _Deadline, _TransportRequest, _TransportResponse
+from custom_components.gwm_ora.gwm_client.client import _READ_ENDPOINTS, GwmClient
+from custom_components.gwm_ora.gwm_client.config import GwmClientConfig, RequestTimeouts
+from custom_components.gwm_ora.gwm_client.errors import (
     GwmApiError,
     GwmAuthenticationError,
     GwmClosedError,
@@ -34,16 +34,16 @@ from gwm_client.errors import (
     GwmRoutePolicyError,
     GwmSchemaError,
 )
-from gwm_client.models import (
+from custom_components.gwm_ora.gwm_client.models import (
     CloudVehicleBasics,
     CloudVehicleStatus,
     GwmSession,
     VehicleIdentifier,
 )
-from gwm_client.regions import GatewayRole, Region, get_region_protocol
-from gwm_client.signing import SignedRequest
-from gwm_client.tls import LEGACY_CIPHER_STRING
-from gwm_client.transport import AiohttpTransport
+from custom_components.gwm_ora.gwm_client.regions import GatewayRole, Region, get_region_protocol
+from custom_components.gwm_ora.gwm_client.signing import SignedRequest
+from custom_components.gwm_ora.gwm_client.tls import LEGACY_CIPHER_STRING
+from custom_components.gwm_ora.gwm_client.transport import AiohttpTransport
 
 FIXTURE_PATH = Path(__file__).with_name("fixtures") / "read_contracts_v1.json"
 ACCESS_TOKEN = "SYNTHETIC-TASK4-TOKEN"
@@ -477,7 +477,7 @@ async def test_post_signing_route_validation_blocks_every_unsafe_shape(
 ) -> None:
     transport = _RecordingTransport([_operation_response("acquire_vehicles")])
     client = GwmClient(GwmClientConfig(region=Region.EU), _session(Region.EU), transport=transport)
-    monkeypatch.setattr("gwm_client.client.sign_request", lambda *_args, **_kwargs: signed)
+    monkeypatch.setattr("custom_components.gwm_ora.gwm_client.client.sign_request", lambda *_args, **_kwargs: signed)
 
     with pytest.raises(GwmRoutePolicyError):
         await client.acquire_vehicles()

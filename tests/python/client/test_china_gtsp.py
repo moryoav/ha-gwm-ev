@@ -12,11 +12,11 @@ import pytest
 from test_china_client import CLOCK, _complete_state, _FakeTransport, _partial_state, _response
 from test_china_transport import _deadline, _FakeResponse, _FakeSession
 
-from gwm_client import china_gtsp
-from gwm_client.charging import ChargingPlanCommand
-from gwm_client.china_client import ChinaClient, ChinaClientConfig, ChinaVehicle
-from gwm_client.china_transport import ChinaAiohttpTransport
-from gwm_client.commands import (
+from custom_components.gwm_ora.gwm_client import china_gtsp
+from custom_components.gwm_ora.gwm_client.charging import ChargingPlanCommand
+from custom_components.gwm_ora.gwm_client.china_client import ChinaClient, ChinaClientConfig, ChinaVehicle
+from custom_components.gwm_ora.gwm_client.china_transport import ChinaAiohttpTransport
+from custom_components.gwm_ora.gwm_client.commands import (
     BEANTECH_CHINA_VEHICLE_CONTROL_ACTIONS,
     NAVINFO_CHINA_VEHICLE_CONTROL_ACTIONS,
     ChinaVehicleControlCommand,
@@ -24,7 +24,7 @@ from gwm_client.commands import (
     CloseWindowsCommand,
     DoorLockCommand,
 )
-from gwm_client.errors import (
+from custom_components.gwm_ora.gwm_client.errors import (
     GwmApiError,
     GwmAuthenticationError,
     GwmConfigurationError,
@@ -34,12 +34,12 @@ from gwm_client.errors import (
     GwmSchemaError,
     GwmTlsError,
 )
-from gwm_client.models import VehicleIdentifier
+from custom_components.gwm_ora.gwm_client.models import VehicleIdentifier
 
 VIN = "LGWTEST0000000001"
 IDENTIFIER = VehicleIdentifier(VIN)
 SECRET = "PRIVATE-RESPONSE-OR-TOKEN-MUST-NOT-LEAK"
-LOGGER = "gwm_client.china_gtsp"
+LOGGER = "custom_components.gwm_ora.gwm_client.china_gtsp"
 
 
 def client_for(transport, *, platform="gtsp", **kwargs):

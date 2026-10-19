@@ -46,7 +46,7 @@ from custom_components.gwm_ora.const import (
     DOMAIN,
 )
 from custom_components.gwm_ora.diagnostics import async_get_config_entry_diagnostics
-from gwm_client import (
+from custom_components.gwm_ora.gwm_client import (
     ChinaAuthenticated,
     ChinaAuthState,
     ChinaInitializationRequired,

@@ -13,7 +13,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 from cryptography.x509.oid import NameOID
 
-from gwm_client.crypto import (
+from custom_components.gwm_ora.gwm_client.crypto import (
     generate_client_certificate_request,
     load_certificate,
     recover_transformed_private_key,

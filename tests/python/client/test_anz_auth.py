@@ -16,10 +16,10 @@ from urllib.parse import urlsplit
 
 import pytest
 
-import gwm_client.anz_auth as anz_auth
-from gwm_client._dotnet_json import encode_dotnet_json
-from gwm_client._protocol import _Deadline, _TransportRequest, _TransportResponse
-from gwm_client.anz_auth import (
+import custom_components.gwm_ora.gwm_client.anz_auth as anz_auth
+from custom_components.gwm_ora.gwm_client._dotnet_json import encode_dotnet_json
+from custom_components.gwm_ora.gwm_client._protocol import _Deadline, _TransportRequest, _TransportResponse
+from custom_components.gwm_ora.gwm_client.anz_auth import (
     AnzAuthenticated,
     AnzAuthenticationMethod,
     AnzAuthState,
@@ -27,9 +27,9 @@ from gwm_client.anz_auth import (
     AnzSessionReclaimRequired,
     AnzVerificationRequired,
 )
-from gwm_client.client import GwmClient
-from gwm_client.config import GwmClientConfig, RequestTimeouts
-from gwm_client.errors import (
+from custom_components.gwm_ora.gwm_client.client import GwmClient
+from custom_components.gwm_ora.gwm_client.config import GwmClientConfig, RequestTimeouts
+from custom_components.gwm_ora.gwm_client.errors import (
     GwmApiError,
     GwmAuthenticationError,
     GwmConfigurationError,
@@ -41,8 +41,8 @@ from gwm_client.errors import (
     GwmSchemaError,
     GwmSignatureError,
 )
-from gwm_client.models import GwmSession
-from gwm_client.signing import SignedRequest, SigningProfile
+from custom_components.gwm_ora.gwm_client.models import GwmSession
+from custom_components.gwm_ora.gwm_client.signing import SignedRequest, SigningProfile
 
 FIXTURE_PATH = Path(__file__).with_name("fixtures") / "anz_auth_contracts_v1.json"
 CURRENT_FIXTURE_PATH = Path(__file__).with_name("fixtures") / "anz_auth_contracts_v2.json"

@@ -37,7 +37,7 @@ from custom_components.gwm_ora.const import (
     CONNECTION_TYPE_CLOUD,
     DOMAIN,
 )
-from gwm_client import (
+from custom_components.gwm_ora.gwm_client import (
     AnzAuthenticated,
     AnzAuthenticationMethod,
     AnzAuthState,

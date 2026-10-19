@@ -25,10 +25,9 @@ from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.util import dt as dt_util
 
-from gwm_client.china_gtsp import GTSP_DIAGNOSTIC_FIELDS
-
 from . import GwmConfigEntry
 from .entity import GwmEntity, setup_vehicle_entities, vehicle_value
+from .gwm_client.china_gtsp import GTSP_DIAGNOSTIC_FIELDS
 
 PARALLEL_UPDATES = 0
 

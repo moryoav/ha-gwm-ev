@@ -1,41 +1,3 @@
-[build-system]
-requires = ["setuptools>=77.0.3"]
-build-backend = "setuptools.build_meta"
-
-[project]
-name = "gwm-client"
-version = "0.1.0"
-description = "Async, typed client for the regional GWM vehicle cloud protocols"
-readme = "gwm_client/README.md"
-requires-python = ">=3.13"
-license = "MIT AND LicenseRef-GWM-Protocol-Materials"
-license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
-authors = [{ name = "Yoav Mor" }]
-dependencies = [
-    "aiohttp>=3.13.3,<4",
-    "cryptography>=46.0.2",
-    "yarl>=1.22.0,<2",
-]
-classifiers = [
-    "Development Status :: 3 - Alpha",
-    "Operating System :: OS Independent",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.13",
-    "Typing :: Typed",
-]
-
-[project.urls]
-Documentation = "https://github.com/moryoav/ha-gwm-ev"
-Issues = "https://github.com/moryoav/ha-gwm-ev/issues"
-Repository = "https://github.com/moryoav/ha-gwm-ev"
-
-[tool.setuptools]
-packages = ["gwm_client"]
-include-package-data = false
-
-[tool.setuptools.package-data]
-gwm_client = ["py.typed"]
-
 [tool.ruff]
 target-version = "py313"
 line-length = 120
@@ -50,4 +12,4 @@ testpaths = ["tests/python"]
 [tool.mypy]
 python_version = "3.13"
 strict = true
-exclude = ["^gwm_client/live_poc\\.py$"]
+exclude = ["^custom_components/gwm_ora/gwm_client/live_poc\\.py$"]

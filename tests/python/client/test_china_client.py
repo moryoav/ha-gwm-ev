@@ -14,9 +14,9 @@ from urllib.parse import unquote, urlsplit
 
 import pytest
 
-from gwm_client._protocol import _Deadline
-from gwm_client.charging import ChargingPlanCommand
-from gwm_client.china_client import (
+from custom_components.gwm_ora.gwm_client._protocol import _Deadline
+from custom_components.gwm_ora.gwm_client.charging import ChargingPlanCommand
+from custom_components.gwm_ora.gwm_client.china_client import (
     ChinaAuthenticated,
     ChinaAuthState,
     ChinaClient,
@@ -28,12 +28,12 @@ from gwm_client.china_client import (
     ChinaVehicleStatus,
     ChinaVerificationRequired,
 )
-from gwm_client.china_crypto import bean_tech_sign
-from gwm_client.china_transport import (
+from custom_components.gwm_ora.gwm_client.china_crypto import bean_tech_sign
+from custom_components.gwm_ora.gwm_client.china_transport import (
     _ChinaTransportRequest,
     _ChinaTransportResponse,
 )
-from gwm_client.commands import (
+from custom_components.gwm_ora.gwm_client.commands import (
     ChinaVehicleControlCommand,
     ClimateCommand,
     CloseWindowsCommand,
@@ -41,8 +41,8 @@ from gwm_client.commands import (
     RemoteCommandResultItem,
     select_remote_command_result,
 )
-from gwm_client.config import RequestTimeouts
-from gwm_client.errors import (
+from custom_components.gwm_ora.gwm_client.config import RequestTimeouts
+from custom_components.gwm_ora.gwm_client.errors import (
     GwmApiError,
     GwmAuthenticationError,
     GwmClientError,
@@ -55,7 +55,7 @@ from gwm_client.errors import (
     GwmSchemaError,
     GwmTlsError,
 )
-from gwm_client.models import CloudVehicle, CloudVehicleStatus, VehicleIdentifier
+from custom_components.gwm_ora.gwm_client.models import CloudVehicle, CloudVehicleStatus, VehicleIdentifier
 
 FIXTURE = json.loads(
     (Path(__file__).with_name("fixtures") / "china_auth_contracts_v1.json").read_text(

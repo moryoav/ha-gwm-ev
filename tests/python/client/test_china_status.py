@@ -7,8 +7,8 @@ from typing import cast
 
 import pytest
 
-from gwm_client.china_status import map_bean_tech_status, map_china_status
-from gwm_client.models import CloudVehicleStatus, VehicleIdentifier
+from custom_components.gwm_ora.gwm_client.china_status import map_bean_tech_status, map_china_status
+from custom_components.gwm_ora.gwm_client.models import CloudVehicleStatus, VehicleIdentifier
 
 _VIN = "LGWTEST0000000001"
 _BEAN_FIXTURE = json.loads(

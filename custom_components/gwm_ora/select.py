@@ -14,12 +14,11 @@ from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.util import dt as dt_util
 
-from gwm_client import GwmClientError
-
 from . import GwmConfigEntry
 from .beantech_charging import BeanTechChargingEntity
 from .entity import GwmEntity, async_call_gwm_api, setup_vehicle_entities
 from .errors import GwmCommandError
+from .gwm_client import GwmClientError
 
 PARALLEL_UPDATES = 0
 POLLED_READ_INTERVAL = 60.0

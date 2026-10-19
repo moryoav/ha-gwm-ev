@@ -7,7 +7,7 @@ from collections.abc import Mapping
 
 import pytest
 
-from gwm_client.models import (
+from custom_components.gwm_ora.gwm_client.models import (
     CloudVehicle,
     GwmSession,
     VehicleIdentifier,

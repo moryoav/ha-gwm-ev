@@ -11,11 +11,10 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from gwm_client import GwmAuthenticationError, GwmClientError
-
 from .const import DOMAIN
 from .coordinator import GwmDataUpdateCoordinator
 from .errors import GwmCommandError, GwmCommandForbidden
+from .gwm_client import GwmAuthenticationError, GwmClientError
 
 _LOGGER = logging.getLogger(__name__)
 

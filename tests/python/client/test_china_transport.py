@@ -16,10 +16,10 @@ import pytest
 from multidict import CIMultiDict
 from yarl import URL
 
-import gwm_client.china_transport as china_transport_module
-from gwm_client._dotnet_json import encode_dotnet_json
-from gwm_client._protocol import _Deadline
-from gwm_client.china_crypto import (
+import custom_components.gwm_ora.gwm_client.china_transport as china_transport_module
+from custom_components.gwm_ora.gwm_client._dotnet_json import encode_dotnet_json
+from custom_components.gwm_ora.gwm_client._protocol import _Deadline
+from custom_components.gwm_ora.gwm_client.china_crypto import (
     AUTO_AI_CKEY,
     BEAN_TECH_APP_KEY,
     DEFAULT_NOTE_ID,
@@ -28,12 +28,12 @@ from gwm_client.china_crypto import (
     default_sign,
     encrypt_g_app,
 )
-from gwm_client.china_transport import (
+from custom_components.gwm_ora.gwm_client.china_transport import (
     ChinaAiohttpTransport,
     ChinaTransportCapabilities,
     _ChinaTransportRequest,
 )
-from gwm_client.errors import (
+from custom_components.gwm_ora.gwm_client.errors import (
     GwmClosedError,
     GwmConfigurationError,
     GwmNetworkError,

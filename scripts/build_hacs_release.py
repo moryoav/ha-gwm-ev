@@ -29,9 +29,8 @@ def build(tag: str, output_dir: Path) -> Path:
     if manifest.get("version") != version:
         raise ValueError(f"Manifest version {manifest.get('version')!r} does not match {tag}")
 
-    requirement = f"gwm-client@https://github.com/moryoav/ha-gwm-ev/archive/refs/tags/{tag}.zip"
-    if manifest.get("requirements") != [requirement]:
-        raise ValueError(f"Manifest must pin gwm-client to {tag}")
+    if manifest.get("requirements"):
+        raise ValueError("The bundled client must not require a separate package install")
 
     hacs = json.loads((ROOT / "hacs.json").read_text(encoding="utf-8"))
     archive_name = ASSET_NAME
@@ -56,8 +55,18 @@ def build(tag: str, output_dir: Path) -> Path:
 
     with zipfile.ZipFile(archive_path) as archive:
         names = set(archive.namelist())
-        if not {"__init__.py", "manifest.json"}.issubset(names):
-            raise ValueError("ZIP is missing integration files at its root")
+        required_files = {
+            "__init__.py",
+            "manifest.json",
+            "LICENSE",
+            "THIRD_PARTY_NOTICES.md",
+            "gwm_client/__init__.py",
+            "gwm_client/client.py",
+            "gwm_client/china_client.py",
+            "gwm_client/py.typed",
+        }
+        if missing := required_files - names:
+            raise ValueError(f"ZIP is missing integration or bundled client files: {sorted(missing)}")
         if archive.testzip() is not None:
             raise ValueError("ZIP integrity check failed")
         archived_manifest = json.loads(archive.read("manifest.json"))

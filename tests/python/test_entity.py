@@ -15,7 +15,7 @@ async def test_cloud_call_failure_logs_only_sanitized_client_metadata(
     from homeassistant.exceptions import HomeAssistantError
 
     from custom_components.gwm_ora import entity
-    from gwm_client import GwmApiError
+    from custom_components.gwm_ora.gwm_client import GwmApiError
 
     async def rejected_call() -> None:
         raise GwmApiError(

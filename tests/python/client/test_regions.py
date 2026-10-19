@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from gwm_client.regions import (
+from custom_components.gwm_ora.gwm_client.regions import (
     GatewayConfig,
     GatewayRole,
     Region,

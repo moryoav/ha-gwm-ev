@@ -10,8 +10,8 @@ from pathlib import Path
 import pytest
 from cryptography.hazmat.primitives import serialization
 
-from gwm_client.crypto import load_certificate, recover_transformed_private_key
-from gwm_client.tls import create_gwm_ssl_context
+from custom_components.gwm_ora.gwm_client.crypto import load_certificate, recover_transformed_private_key
+from custom_components.gwm_ora.gwm_client.tls import create_gwm_ssl_context
 
 RESOURCE_DIR = (
     Path(__file__).resolve().parents[3]
