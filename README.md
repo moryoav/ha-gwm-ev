@@ -74,16 +74,17 @@ Before setting up the integration:
 
 ## Installation
 
-This is currently installed as a custom HACS repository.
+### HACS
 
-1. Open HACS.
-2. Open **Custom repositories**.
-3. Add `https://github.com/moryoav/ha-gwm-ev` as an **Integration** repository.
-4. Find **GWM** in HACS and install the latest release.
-5. Restart Home Assistant.
-6. Open **Settings** > **Devices & services** > **Add integration**.
-7. Search for **GWM**.
-8. Select the account region and complete authentication with the dedicated account prepared under [Prerequisites](#prerequisites).
+[![Open the GWM HACS repository](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=moryoav&repository=ha-gwm-ev&category=integration)
+
+GWM is available in the default HACS catalog, so no custom repository setup is required.
+
+1. Select the button above, or open HACS and search for **GWM** under **Integrations**.
+2. Select **GWM** and choose **Download**.
+3. Restart Home Assistant.
+4. Add the integration from **Settings** -> **Devices & services** -> **Add integration** -> **GWM**.
+5. Select the account region and complete authentication with the dedicated account prepared under [Prerequisites](#prerequisites).
 
 ## Authentication
 
