@@ -34,6 +34,14 @@ Please explain the Home Assistant workflow you want to improve and whether you t
 
 Remote-command requests must include a safety and privacy rationale.
 
+## Inactive Issues
+
+I mark issues as stale after 23 days without comments or updates and close them 7 days later if there is still no activity. A comment or update before closure removes the stale label and restarts the timer when the daily workflow runs.
+
+I keep issues with the `in-progress` or `keep-open` label open, and I exclude pull requests from this policy. Existing open issues count from their last activity, so an issue that is already inactive receives a warning on the first run and has 7 more days before closure.
+
+If an issue is closed and still needs attention, please comment with an update and ask me to reopen it.
+
 ## Security Issues
 
 If you believe you found a security vulnerability, do not open a public issue with exploit details. Follow `SECURITY.md`.

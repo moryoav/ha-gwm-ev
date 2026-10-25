@@ -1,0 +1,47 @@
+name: Close inactive issues
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: Preview changes without updating issues
+        type: boolean
+        default: true
+
+permissions: {}
+
+concurrency:
+  group: close-inactive-issues
+  cancel-in-progress: false
+
+jobs:
+  stale:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: write # Manage the action's progress cache.
+      issues: write
+    steps:
+      - name: Mark and close inactive issues
+        uses: actions/stale@4391f3da665fdf50b6810c1a66712fb9ba21aa93 # v11.0.0
+        with:
+          days-before-issue-stale: 23
+          days-before-issue-close: 7
+          days-before-pr-stale: -1
+          days-before-pr-close: -1
+          remove-pr-stale-when-updated: false
+          stale-issue-label: stale
+          exempt-issue-labels: in-progress,keep-open
+          remove-issue-stale-when-updated: true
+          close-issue-reason: not_planned
+          operations-per-run: 100
+          debug-only: ${{ github.event_name == 'workflow_dispatch' && inputs.dry-run }}
+          stale-issue-message: >-
+            I haven't seen any activity on this issue for at least 23 days, so I've marked it as stale.
+            I'll close it in 7 days if there are no new comments or updates.
+            Please add an update if this still needs attention.
+          close-issue-message: >-
+            I've closed this issue after 7 more days without activity.
+            If this still needs attention, please comment with an update and ask me to reopen it.
