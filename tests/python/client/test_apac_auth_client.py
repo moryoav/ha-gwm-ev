@@ -1,5 +1,6 @@
 """Synthetic transport tests for APAC auth, without network requests."""
 
+import asyncio
 import json
 import ssl
 
@@ -10,15 +11,22 @@ from custom_components.gwm_ora.gwm_client.apac_auth import ApacCredentials
 from custom_components.gwm_ora.gwm_client.apac_auth_client import ApacAuthClient, ApacTokens
 from custom_components.gwm_ora.gwm_client.apac_material import ApacMaterial
 from custom_components.gwm_ora.gwm_client.crypto import GeneratedClientCertificateRequest
+from custom_components.gwm_ora.gwm_client.errors import GwmDeadlineExceededError, GwmSchemaError
 from custom_components.gwm_ora.gwm_client.eu_identity import EuBootstrapMaterial
 
 
 class FakeTransport:
-    def __init__(self):
+    def __init__(self, *, response=None, error=None):
         self.requests = []
+        self.response = response
+        self.error = error
 
     async def execute(self, request, **kwargs):
         self.requests.append(request)
+        if self.error is not None:
+            raise self.error
+        if self.response is not None:
+            return self.response
         data = {"accessToken": "synthetic-access", "refreshToken": "synthetic-refresh", "gwId": "synthetic-gw", "beanId": "synthetic-bean"}
         if request.operation == "enroll_certificate":
             data = {"encoded": "c3ludGhldGljLWNlcnQ="}
@@ -50,6 +58,54 @@ async def test_verification_is_only_requested_explicitly() -> None:
     await client.request_verification()
     await client.verify_code("123456")
     assert [r.operation for r in transport.requests] == ["request_verification", "verify_code"]
+
+
+def _auth_client(transport: FakeTransport) -> ApacAuthClient:
+    """Build an authentication client using only synthetic private inputs."""
+    material = ApacMaterial(EuBootstrapMaterial(b"fake-cert", b"c3ludGhldGljLWtleQ==", b"fake-ca"), "fake-key", "fake-secret")
+    return ApacAuthClient(material=material, credentials=ApacCredentials("fake@example.invalid", "fake-password", "a" * 32, country="PK"), h5_context=ssl.create_default_context(), transport=transport)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["login", "refresh"])
+async def test_auth_timeouts_use_the_client_error_without_fallback(operation: str) -> None:
+    """A timed-out refresh must not start a password login or retry."""
+    transport = FakeTransport(error=TimeoutError("private-value"))
+    client = _auth_client(transport)
+    with pytest.raises(GwmDeadlineExceededError) as error:
+        if operation == "login":
+            await client.login()
+        else:
+            await client.refresh(ApacTokens("fake-access", "fake-refresh", "fake-gw", "fake-bean"))
+    assert error.value.operation == ("login" if operation == "login" else "refresh_token")
+    assert "private" not in str(error.value)
+    assert len(transport.requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_auth_cancellation_propagates_without_retry() -> None:
+    """Preserve cancellation when authentication is interrupted."""
+    transport = FakeTransport(error=asyncio.CancelledError())
+    with pytest.raises(asyncio.CancelledError):
+        await _auth_client(transport).login()
+    assert len(transport.requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_enrollment_payload_uses_the_client_schema_error(monkeypatch) -> None:
+    """Reject malformed enrollment responses before issuing a read session."""
+    import custom_components.gwm_ora.gwm_client.apac_auth_client as auth
+
+    context = ssl.create_default_context()
+    context.set_ciphers("DEFAULT:@SECLEVEL=0")
+    monkeypatch.setattr(auth, "generate_client_certificate_request", lambda *args, **kwargs: GeneratedClientCertificateRequest("fake-csr", "c3ludGhldGljLWtleQ=="))
+    monkeypatch.setattr(auth, "create_apac_bootstrap_context", lambda *args, **kwargs: context)
+    response = _TransportResponse(200, {}, b'{"code":"000000","data":{"encoded":123}}')
+    transport = FakeTransport(response=response)
+    with pytest.raises(GwmSchemaError) as error:
+        await _auth_client(transport).enroll_identity(ApacTokens("fake-access", "fake-refresh", "fake-gw", "fake-bean"))
+    assert error.value.operation == "enroll_certificate"
+    assert len(transport.requests) == 1
 
 
 @pytest.mark.asyncio

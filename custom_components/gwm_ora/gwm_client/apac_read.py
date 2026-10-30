@@ -16,6 +16,7 @@ from .apac_material import ApacMaterial
 from .apac_policy import validate_apac_country
 from .apac_request import prepare_apac_request
 from .client import _decode_envelope
+from .errors import GwmDeadlineExceededError, GwmSchemaError
 from .models import (
     CloudVehicle,
     CloudVehicleBasics,
@@ -69,24 +70,33 @@ class ApacReadClient:
         )
         loop = asyncio.get_running_loop()
         deadline = _Deadline(loop.time() + 30.0)
-        async with asyncio.timeout_at(deadline.expires_at), self._lock:
-            response = await self._transport.execute(request, deadline=deadline, connect_timeout=10.0, read_timeout=20.0)
-            return _decode_envelope(response, operation=operation)
+        try:
+            async with asyncio.timeout_at(deadline.expires_at), self._lock:
+                response = await self._transport.execute(request, deadline=deadline, connect_timeout=10.0, read_timeout=20.0)
+                return _decode_envelope(response, operation=operation)
+        except TimeoutError:
+            raise GwmDeadlineExceededError(operation=operation) from None
 
     async def acquire_vehicles(self) -> tuple[CloudVehicle, ...]:
         """Discover account vehicles without sending a control request."""
-        return parse_cloud_vehicles(await self._read("acquire_vehicles"), allow_numbers_for_strings=True)
+        data = await self._read("acquire_vehicles")
+        try:
+            return parse_cloud_vehicles(data, allow_numbers_for_strings=True)
+        except ValueError:
+            raise GwmSchemaError(operation="acquire_vehicles") from None
 
     async def get_last_status(self, vehicle_id: str) -> CloudVehicleStatus:
         """Read the last reported status for one vehicle."""
-        return parse_cloud_vehicle_status(
-            await self._read("get_last_status", vehicle_id),
-            allow_stringified_numbers=True,
-            allow_numbers_for_strings=True,
-        )
+        data = await self._read("get_last_status", vehicle_id)
+        try:
+            return parse_cloud_vehicle_status(data, allow_stringified_numbers=True, allow_numbers_for_strings=True)
+        except ValueError:
+            raise GwmSchemaError(operation="get_last_status") from None
 
     async def get_vehicle_basics(self, vehicle_id: str) -> CloudVehicleBasics:
         """Read supported vehicle configuration values."""
-        return parse_cloud_vehicle_basics(
-            await self._read("get_vehicle_basics", vehicle_id), allow_numbers_for_strings=True
-        )
+        data = await self._read("get_vehicle_basics", vehicle_id)
+        try:
+            return parse_cloud_vehicle_basics(data, allow_numbers_for_strings=True)
+        except ValueError:
+            raise GwmSchemaError(operation="get_vehicle_basics") from None

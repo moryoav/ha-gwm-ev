@@ -18,6 +18,7 @@ from .apac_identity import create_apac_bootstrap_context, create_apac_issued_con
 from .apac_material import ApacMaterial
 from .apac_request import prepare_apac_request
 from .crypto import generate_client_certificate_request
+from .errors import GwmDeadlineExceededError, GwmSchemaError
 from .eu_auth import _decode_auth_envelope, _parse_login, _parse_token_pair
 from .eu_identity import EuIssuedIdentity
 
@@ -79,9 +80,12 @@ class ApacAuthClient:
             country=self._credentials.country,
         )
         deadline = _Deadline(asyncio.get_running_loop().time() + 30)
-        async with asyncio.timeout_at(deadline.expires_at), self._lock:
-            response = await self._transport.execute(request, deadline=deadline, connect_timeout=10, read_timeout=20)
-            return _decode_auth_envelope(response, operation=operation, require_data=require_data)
+        try:
+            async with asyncio.timeout_at(deadline.expires_at), self._lock:
+                response = await self._transport.execute(request, deadline=deadline, connect_timeout=10, read_timeout=20)
+                return _decode_auth_envelope(response, operation=operation, require_data=require_data)
+        except TimeoutError:
+            raise GwmDeadlineExceededError(operation=operation) from None
 
     async def login(self, verification_code: str | None = None) -> ApacTokens:
         """Perform an explicitly requested password login, optionally with a code."""
@@ -118,25 +122,32 @@ class ApacAuthClient:
             raise ValueError("apac_session_invalid")
         now = datetime.now(UTC)
         deadline = _Deadline(asyncio.get_running_loop().time() + 30)
-        async with asyncio.timeout_at(deadline.expires_at), self._lock:
-            generated = await asyncio.to_thread(
-                generate_client_certificate_request, self._credentials.country, self._credentials.device_id, now=now
-            )
-            bootstrap_context = await asyncio.to_thread(create_apac_bootstrap_context, self._material.bootstrap)
-            enrollment_device = self._credentials.device_id + str(int(now.timestamp() * 1000))
-            request = prepare_apac_request(
-                operation="enroll_certificate", material=self._material,
-                ssl_context=bootstrap_context, device_id=self._credentials.device_id,
-                enrollment_device_id=enrollment_device, access_token=state.access_token,
-                body={"csr": generated.csr, "phone": state.gw_id},
-                country=self._credentials.country,
-            )
-            response = await self._transport.execute(request, deadline=deadline, connect_timeout=10, read_timeout=20)
-            data = _decode_auth_envelope(response, operation="enroll_certificate", require_data=True)
-            if not isinstance(data, dict) or not isinstance(data.get("encoded"), str):
-                raise ValueError("apac_enrollment_invalid")
-            identity = EuIssuedIdentity(certificate=data["encoded"], private_key=generated.private_key)
-            context = await asyncio.to_thread(
-                create_apac_issued_context, identity, ca_bundle=self._material.bootstrap.ca_bundle
-            )
-            return ApacIssued(identity, context)
+        try:
+            async with asyncio.timeout_at(deadline.expires_at), self._lock:
+                return await self._enroll_identity(state, now=now, deadline=deadline)
+        except TimeoutError:
+            raise GwmDeadlineExceededError(operation="enroll_certificate") from None
+
+    async def _enroll_identity(self, state: ApacTokens, *, now: datetime, deadline: _Deadline) -> ApacIssued:
+        """Enroll under the caller's lock and operation deadline."""
+        generated = await asyncio.to_thread(
+            generate_client_certificate_request, self._credentials.country, self._credentials.device_id, now=now
+        )
+        bootstrap_context = await asyncio.to_thread(create_apac_bootstrap_context, self._material.bootstrap)
+        enrollment_device = self._credentials.device_id + str(int(now.timestamp() * 1000))
+        request = prepare_apac_request(
+            operation="enroll_certificate", material=self._material,
+            ssl_context=bootstrap_context, device_id=self._credentials.device_id,
+            enrollment_device_id=enrollment_device, access_token=state.access_token,
+            body={"csr": generated.csr, "phone": state.gw_id},
+            country=self._credentials.country,
+        )
+        response = await self._transport.execute(request, deadline=deadline, connect_timeout=10, read_timeout=20)
+        data = _decode_auth_envelope(response, operation="enroll_certificate", require_data=True)
+        if not isinstance(data, dict) or not isinstance(data.get("encoded"), str):
+            raise GwmSchemaError(operation="enroll_certificate")
+        identity = EuIssuedIdentity(certificate=data["encoded"], private_key=generated.private_key)
+        context = await asyncio.to_thread(
+            create_apac_issued_context, identity, ca_bundle=self._material.bootstrap.ca_bundle
+        )
+        return ApacIssued(identity, context)
