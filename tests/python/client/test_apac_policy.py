@@ -11,6 +11,7 @@ from custom_components.gwm_ora.gwm_client.regions import GatewayRole, TlsMode, g
 
 
 def _material() -> ApacMaterial:
+    """Create a synthetic externally supplied APAC signing profile."""
     return ApacMaterial(
         EuBootstrapMaterial(b"synthetic-certificate", b"c3ludGhldGljLWtleQ==", b"synthetic-ca"),
         "synthetic-key",
@@ -19,6 +20,7 @@ def _material() -> ApacMaterial:
 
 
 def test_gateway_policy_is_immutable_and_uses_injected_profile() -> None:
+    """Keep routing immutable and each gateway on its own TLS policy."""
     routes = apac_gateways(_material())
     assert routes[GatewayRole.AUTH_V2].base_url == "https://ap-h5-gateway.gwmcloud.com/app-api/api/v2.0/"
     assert routes[GatewayRole.H5_V1].base_url == "https://ap-h5-gateway.gwmcloud.com/app-api/api/v1.0/"
@@ -31,6 +33,7 @@ def test_gateway_policy_is_immutable_and_uses_injected_profile() -> None:
 
 @pytest.mark.parametrize("country", ["pk", "", "US", "AU", "NZ", "RU", None, []])
 def test_countries_outside_apac_are_rejected(country: str) -> None:
+    """Reject countries outside the app-listed APAC family."""
     with pytest.raises(ValueError, match="^apac_country_invalid$"):
         validate_apac_country(country)
 
@@ -44,6 +47,7 @@ def test_app_listed_countries_have_explicit_calling_codes(country: str, calling_
 
 @pytest.mark.parametrize("region", ["eu", "aus", "rus"])
 def test_existing_regional_policy_does_not_change(region: str) -> None:
+    """Keep existing gateway and header policies unchanged after APAC use."""
     before = get_region_protocol(region)
     before_gateways = dict(before.gateways)
     before_headers = dict(before.base_headers)

@@ -17,9 +17,16 @@ from .signing import sign_request
 
 _HEX_DEVICE = re.compile(r"[0-9A-Fa-f]{32}\Z")
 _BASE_HEADERS = {
-    "rs": "2", "terminal": "GW_APP_Haval", "brand": "1", "enterpriseId": "CC01",
-    "appId": "1", "channel": "APP", "cVer": "3.0.9", "systemType": "1",
-    "language": "en", "secVersion": "2.0",
+    "rs": "2",
+    "terminal": "GW_APP_Haval",
+    "brand": "1",
+    "enterpriseId": "CC01",
+    "appId": "1",
+    "channel": "APP",
+    "cVer": "3.0.9",
+    "systemType": "1",
+    "language": "en",
+    "secVersion": "2.0",
 }
 
 
@@ -37,9 +44,9 @@ def prepare_apac_request(
 ) -> _TransportRequest:
     """Build a signed request for the allowlist; no vehicle write is available.
 
-    The caller must provide the correct host-scoped TLS context and a safely
-    managed identity. This function cannot verify that a context contains an
-    appropriate client certificate; the authentication layer must enforce it.
+    Mutual TLS contexts must come from the matching APAC bootstrap or issued
+    identity validator. Default contexts use verified standard server TLS.
+    The caller owns these contexts and must not mutate them after validation.
     """
     try:
         validate_apac_country(country)
@@ -91,22 +98,35 @@ def prepare_apac_request(
         if operation in {"get_last_status", "get_vehicle_basics"}:
             if not isinstance(vehicle_id, str) or not vehicle_id or len(vehicle_id) > 512:
                 raise ValueError("invalid")
-            query = "?vin=" + quote(vehicle_id, safe="") + ("&seqNo=" if operation == "get_last_status" else "&flag=true")
+            query = (
+                "?vin=" + quote(vehicle_id, safe="") + ("&seqNo=" if operation == "get_last_status" else "&flag=true")
+            )
         elif vehicle_id is None:
             query = ""
         else:
             raise ValueError("invalid")
-        signed = sign_request(gateway.signing_profile, endpoint.method, gateway.base_url + endpoint.path + query, body_text)
+        signed = sign_request(
+            gateway.signing_profile, endpoint.method, gateway.base_url + endpoint.path + query, body_text
+        )
         headers = {
-            **_BASE_HEADERS, "country": country, "regionCode": country, "deviceId": header_device, "iccid": header_device,
-            "Accept": "application/json", **signed.headers,
+            **_BASE_HEADERS,
+            "country": country,
+            "regionCode": country,
+            "deviceId": header_device,
+            "iccid": header_device,
+            "Accept": "application/json",
+            **signed.headers,
         }
         if access_token is not None:
             headers["accessToken"] = access_token
         if body_text is not None:
             headers["Content-Type"] = "application/json; charset=utf-8"
         return _TransportRequest(
-            operation=operation, method=endpoint.method, url=signed.url, headers=headers, ssl_context=ssl_context,
+            operation=operation,
+            method=endpoint.method,
+            url=signed.url,
+            headers=headers,
+            ssl_context=ssl_context,
             body=None if body_text is None else body_text.encode("utf-8"),
         )
     except (ValueError, TypeError, UnicodeError):

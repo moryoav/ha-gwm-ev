@@ -6,6 +6,7 @@ from custom_components.gwm_ora.gwm_client.apac_auth import ApacCredentials, logi
 
 
 def test_synthetic_login_preserves_account_and_device() -> None:
+    """Preserve synthetic phone credentials and the selected Pakistan country."""
     credentials = ApacCredentials("0123456789", "synthetic-password", "a" * 32, country="PK")
     assert "synthetic-password" not in repr(credentials)
     body = login_body(credentials, "123456")
@@ -18,6 +19,7 @@ def test_synthetic_login_preserves_account_and_device() -> None:
 
 
 def test_email_verification_request_and_check() -> None:
+    """Keep code-request and code-check payload fields distinct."""
     credentials = ApacCredentials("person@example.invalid", "synthetic-password", "b" * 32, country="PK")
     request = verification_body(credentials)
     assert request["accountType"] == "2"
@@ -29,6 +31,7 @@ def test_email_verification_request_and_check() -> None:
 
 
 def test_invalid_device_is_rejected_without_disclosing_it() -> None:
+    """Reject an invalid device identifier without echoing its value."""
     with pytest.raises(ValueError, match="^apac_credentials_invalid$"):
         ApacCredentials("person@example.invalid", "synthetic-password", "invalid-device", country="PK")
 

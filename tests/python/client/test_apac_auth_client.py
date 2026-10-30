@@ -19,30 +19,46 @@ from custom_components.gwm_ora.gwm_client.regions import TlsMode
 
 class FakeTransport:
     def __init__(self, *, response=None, error=None):
+        """Record requests and optionally inject a synthetic response or failure."""
         self.requests = []
         self.response = response
         self.error = error
 
     async def execute(self, request, **kwargs):
+        """Return a synthetic protocol response without any socket activity."""
         self.requests.append(request)
         if self.error is not None:
             raise self.error
         if self.response is not None:
             return self.response
-        data = {"accessToken": "synthetic-access", "refreshToken": "synthetic-refresh", "gwId": "synthetic-gw", "beanId": "synthetic-bean"}
+        data = {
+            "accessToken": "synthetic-access",
+            "refreshToken": "synthetic-refresh",
+            "gwId": "synthetic-gw",
+            "beanId": "synthetic-bean",
+        }
         if request.operation == "enroll_certificate":
             data = {"encoded": "c3ludGhldGljLWNlcnQ="}
         return _TransportResponse(200, {}, json.dumps({"code": "000000", "data": data}).encode())
 
     async def aclose(self):
+        """Satisfy the transport interface without owning a network session."""
         pass
 
 
 @pytest.mark.asyncio
 async def test_explicit_login_and_refresh_without_secret_repr() -> None:
+    """Verify explicit login and refresh while keeping private state out of repr."""
     transport = FakeTransport()
-    material = ApacMaterial(EuBootstrapMaterial(b"fake-cert", b"c3ludGhldGljLWtleQ==", b"fake-ca"), "fake-key", "fake-secret")
-    client = ApacAuthClient(material=material, credentials=ApacCredentials("fake@example.invalid", "fake-password", "a" * 32, country="PK"), h5_context=ssl.create_default_context(), transport=transport)
+    material = ApacMaterial(
+        EuBootstrapMaterial(b"fake-cert", b"c3ludGhldGljLWtleQ==", b"fake-ca"), "fake-key", "fake-secret"
+    )
+    client = ApacAuthClient(
+        material=material,
+        credentials=ApacCredentials("fake@example.invalid", "fake-password", "a" * 32, country="PK"),
+        h5_context=ssl.create_default_context(),
+        transport=transport,
+    )
     tokens = await client.login()
     assert tokens.access_token == "synthetic-access"
     assert "synthetic" not in repr(tokens)
@@ -53,9 +69,17 @@ async def test_explicit_login_and_refresh_without_secret_repr() -> None:
 
 @pytest.mark.asyncio
 async def test_verification_is_only_requested_explicitly() -> None:
+    """Send verification traffic only after the caller invokes the methods."""
     transport = FakeTransport()
-    material = ApacMaterial(EuBootstrapMaterial(b"fake-cert", b"c3ludGhldGljLWtleQ==", b"fake-ca"), "fake-key", "fake-secret")
-    client = ApacAuthClient(material=material, credentials=ApacCredentials("fake@example.invalid", "fake-password", "a" * 32, country="PK"), h5_context=ssl.create_default_context(), transport=transport)
+    material = ApacMaterial(
+        EuBootstrapMaterial(b"fake-cert", b"c3ludGhldGljLWtleQ==", b"fake-ca"), "fake-key", "fake-secret"
+    )
+    client = ApacAuthClient(
+        material=material,
+        credentials=ApacCredentials("fake@example.invalid", "fake-password", "a" * 32, country="PK"),
+        h5_context=ssl.create_default_context(),
+        transport=transport,
+    )
     assert transport.requests == []
     await client.request_verification()
     await client.verify_code("123456")
@@ -64,8 +88,15 @@ async def test_verification_is_only_requested_explicitly() -> None:
 
 def _auth_client(transport: FakeTransport) -> ApacAuthClient:
     """Build an authentication client using only synthetic private inputs."""
-    material = ApacMaterial(EuBootstrapMaterial(b"fake-cert", b"c3ludGhldGljLWtleQ==", b"fake-ca"), "fake-key", "fake-secret")
-    return ApacAuthClient(material=material, credentials=ApacCredentials("fake@example.invalid", "fake-password", "a" * 32, country="PK"), h5_context=ssl.create_default_context(), transport=transport)
+    material = ApacMaterial(
+        EuBootstrapMaterial(b"fake-cert", b"c3ludGhldGljLWtleQ==", b"fake-ca"), "fake-key", "fake-secret"
+    )
+    return ApacAuthClient(
+        material=material,
+        credentials=ApacCredentials("fake@example.invalid", "fake-password", "a" * 32, country="PK"),
+        h5_context=ssl.create_default_context(),
+        transport=transport,
+    )
 
 
 @pytest.mark.asyncio
@@ -101,7 +132,11 @@ async def test_enrollment_payload_uses_the_client_schema_error(monkeypatch) -> N
     context = ssl.create_default_context()
     context.set_ciphers("DEFAULT:@SECLEVEL=0")
     _register_validated_context(context, TlsMode.APAC_BOOTSTRAP_MTLS)
-    monkeypatch.setattr(auth, "generate_client_certificate_request", lambda *args, **kwargs: GeneratedClientCertificateRequest("fake-csr", "c3ludGhldGljLWtleQ=="))
+    monkeypatch.setattr(
+        auth,
+        "generate_client_certificate_request",
+        lambda *args, **kwargs: GeneratedClientCertificateRequest("fake-csr", "c3ludGhldGljLWtleQ=="),
+    )
     monkeypatch.setattr(auth, "create_apac_bootstrap_context", lambda *args, **kwargs: context)
     response = _TransportResponse(200, {}, b'{"code":"000000","data":{"encoded":123}}')
     transport = FakeTransport(response=response)
@@ -114,12 +149,20 @@ async def test_enrollment_payload_uses_the_client_schema_error(monkeypatch) -> N
 @pytest.mark.asyncio
 @pytest.mark.parametrize("country", ["TH", "MY", "ID", "PK"])
 async def test_enrollment_checks_issued_identity_before_return(monkeypatch, country: str) -> None:
+    """Validate the issued identity before returning a vehicle TLS context."""
     import custom_components.gwm_ora.gwm_client.apac_auth_client as auth
 
     transport = FakeTransport()
-    material = ApacMaterial(EuBootstrapMaterial(b"fake-cert", b"c3ludGhldGljLWtleQ==", b"fake-ca"), "fake-key", "fake-secret")
+    material = ApacMaterial(
+        EuBootstrapMaterial(b"fake-cert", b"c3ludGhldGljLWtleQ==", b"fake-ca"), "fake-key", "fake-secret"
+    )
     context = ssl.create_default_context()
-    client = ApacAuthClient(material=material, credentials=ApacCredentials("fake@example.invalid", "fake-password", "a" * 32, country=country), h5_context=context, transport=transport)
+    client = ApacAuthClient(
+        material=material,
+        credentials=ApacCredentials("fake@example.invalid", "fake-password", "a" * 32, country=country),
+        h5_context=context,
+        transport=transport,
+    )
     identity_context = ssl.create_default_context()
     identity_context.set_ciphers("DEFAULT:@SECLEVEL=0")
     _register_validated_context(identity_context, TlsMode.APAC_BOOTSTRAP_MTLS)
@@ -127,16 +170,21 @@ async def test_enrollment_checks_issued_identity_before_return(monkeypatch, coun
     issued_context.set_ciphers("DEFAULT:@SECLEVEL=0")
     _register_validated_context(issued_context, TlsMode.APAC_ISSUED_MTLS)
     csr_countries = []
+
     def generate(country_code, *args, **kwargs):
         """Record the country passed into synthetic CSR generation."""
         csr_countries.append(country_code)
         return GeneratedClientCertificateRequest("fake-csr", "c3ludGhldGljLWtleQ==")
+
     monkeypatch.setattr(auth, "generate_client_certificate_request", generate)
     monkeypatch.setattr(auth, "create_apac_bootstrap_context", lambda material: identity_context)
     checks = []
+
     def validate(identity, **kwargs):
+        """Record the issued identity validation and return its synthetic context."""
         checks.append((identity, kwargs["ca_bundle"]))
         return issued_context
+
     monkeypatch.setattr(auth, "create_apac_issued_context", validate)
     issued = await client.enroll_identity(ApacTokens("fake-access", "fake-refresh", "fake-gw", "fake-bean"))
     assert issued.app_ssl_context is issued_context
@@ -151,7 +199,12 @@ async def test_enrollment_checks_issued_identity_before_return(monkeypatch, coun
 @pytest.mark.parametrize("invalid", ["", "private\nvalue", "é", "x" * (16 * 1024 + 1), None])
 def test_invalid_token_state_is_rejected_without_disclosing_values(field: str, invalid: object) -> None:
     """Reject incomplete or unsafe state before it can reach authentication."""
-    values = dict(access_token="synthetic-access", refresh_token="synthetic-refresh", gw_id="synthetic-gw", bean_id="synthetic-bean")
+    values = dict(
+        access_token="synthetic-access",
+        refresh_token="synthetic-refresh",
+        gw_id="synthetic-gw",
+        bean_id="synthetic-bean",
+    )
     values[field] = invalid
     with pytest.raises(ValueError, match="^apac_session_invalid$"):
         ApacTokens(**values)
@@ -161,8 +214,15 @@ def test_invalid_token_state_is_rejected_without_disclosing_values(field: str, i
 async def test_invalid_verification_never_reaches_transport() -> None:
     """Reject user input before a code check or password login is transmitted."""
     transport = FakeTransport()
-    material = ApacMaterial(EuBootstrapMaterial(b"fake-cert", b"c3ludGhldGljLWtleQ==", b"fake-ca"), "fake-key", "fake-secret")
-    client = ApacAuthClient(material=material, credentials=ApacCredentials("fake@example.invalid", "fake-password", "a" * 32, country="PK"), h5_context=ssl.create_default_context(), transport=transport)
+    material = ApacMaterial(
+        EuBootstrapMaterial(b"fake-cert", b"c3ludGhldGljLWtleQ==", b"fake-ca"), "fake-key", "fake-secret"
+    )
+    client = ApacAuthClient(
+        material=material,
+        credentials=ApacCredentials("fake@example.invalid", "fake-password", "a" * 32, country="PK"),
+        h5_context=ssl.create_default_context(),
+        transport=transport,
+    )
     for action in (client.login, client.verify_code):
         with pytest.raises(ValueError, match="^apac_verification_invalid$"):
             await action("private\ncode")
@@ -179,10 +239,12 @@ async def test_queued_authentication_is_signed_only_after_the_lock_is_acquired(m
     client = _auth_client(FakeTransport())
     original = auth.prepare_apac_request
     prepared = []
+
     def prepare(**kwargs):
         """Record when signing occurs relative to the operation lock."""
         prepared.append(kwargs["operation"])
         return original(**kwargs)
+
     monkeypatch.setattr(auth, "prepare_apac_request", prepare)
     await client._lock.acquire()
     task = asyncio.create_task(client.login())

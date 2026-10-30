@@ -29,6 +29,7 @@ class ApacMaterial:
     app_secret: str = field(repr=False)
 
     def __post_init__(self) -> None:
+        """Reject missing or malformed caller-supplied signing material."""
         if type(self.bootstrap) is not EuBootstrapMaterial:
             raise ValueError("apac_material_invalid")
         for value in (self.app_key, self.app_secret):
@@ -67,6 +68,7 @@ def load_apac_material(directory: Path) -> ApacMaterial:
             raise ValueError("apac_material_invalid")
 
         def read_file(name: str) -> bytes:
+            """Read one bounded regular file within the resolved private directory."""
             path = (directory / name).resolve(strict=True)
             if not path.is_relative_to(directory) or not path.is_file():
                 raise ValueError("apac_material_invalid")

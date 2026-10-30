@@ -31,6 +31,7 @@ class ApacCredentials:
     country: str
 
     def __post_init__(self) -> None:
+        """Validate private credentials and their explicit APAC country."""
         validate_apac_country(self.country)
         if not all(isinstance(value, str) and value for value in (self.account, self.password, self.device_id)):
             raise ValueError("apac_credentials_invalid")
@@ -49,6 +50,7 @@ class ApacCredentials:
 
     @property
     def account_type(self) -> str:
+        """Select the phone or email account representation without altering it."""
         return "2" if "@" in self.account else "1"
 
 

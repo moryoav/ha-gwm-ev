@@ -45,6 +45,7 @@ class ApacReadClient:
     """Only discovery and status reads, with a caller-owned transport."""
 
     def __init__(self, *, material: ApacMaterial, session: ApacReadSession, transport: _AsyncTransport) -> None:
+        """Retain a private session and caller-owned read transport."""
         if type(material) is not ApacMaterial or type(session) is not ApacReadSession:
             raise ValueError("apac_session_invalid")
         self._material = material
@@ -57,6 +58,7 @@ class ApacReadClient:
         operation: Literal["acquire_vehicles", "get_last_status", "get_vehicle_basics"],
         vehicle_id: str | None = None,
     ) -> object:
+        """Execute one allowlisted vehicle read with a bounded deadline."""
         if operation not in {"acquire_vehicles", "get_last_status", "get_vehicle_basics"}:
             raise ValueError("apac_operation_not_supported")
         loop = asyncio.get_running_loop()
@@ -72,7 +74,9 @@ class ApacReadClient:
                     country=self._session.country,
                     vehicle_id=vehicle_id,
                 )
-                response = await self._transport.execute(request, deadline=deadline, connect_timeout=10.0, read_timeout=20.0)
+                response = await self._transport.execute(
+                    request, deadline=deadline, connect_timeout=10.0, read_timeout=20.0
+                )
                 return _decode_envelope(response, operation=operation)
         except TimeoutError:
             raise GwmDeadlineExceededError(operation=operation) from None

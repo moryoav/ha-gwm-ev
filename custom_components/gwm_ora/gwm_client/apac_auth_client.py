@@ -25,7 +25,7 @@ from .eu_identity import EuIssuedIdentity
 
 @dataclass(frozen=True, slots=True)
 class ApacTokens:
-    """Account-bound state; never log or persist it outside private storage."""
+    """Private token snapshot; the caller must bind it to the issuing account."""
 
     access_token: str = field(repr=False)
     refresh_token: str = field(repr=False)
@@ -35,11 +35,14 @@ class ApacTokens:
     def __post_init__(self) -> None:
         """Reject invalid private state before refresh or certificate enrollment."""
         for value, maximum in (
-            (self.access_token, 16 * 1024), (self.refresh_token, 16 * 1024),
-            (self.gw_id, 4 * 1024), (self.bean_id, 4 * 1024),
+            (self.access_token, 16 * 1024),
+            (self.refresh_token, 16 * 1024),
+            (self.gw_id, 4 * 1024),
+            (self.bean_id, 4 * 1024),
         ):
             if (
-                not isinstance(value, str) or not 0 < len(value) <= maximum
+                not isinstance(value, str)
+                or not 0 < len(value) <= maximum
                 or any(not 0x21 <= ord(character) <= 0x7E for character in value)
             ):
                 raise ValueError("apac_session_invalid")
@@ -47,7 +50,7 @@ class ApacTokens:
 
 @dataclass(frozen=True, slots=True)
 class ApacIssued:
-    """Validated account-bound identity and its private TLS context."""
+    """Validated APAC identity and its matching private vehicle TLS context."""
 
     identity: EuIssuedIdentity = field(repr=False)
     app_ssl_context: ssl.SSLContext = field(repr=False)
@@ -57,9 +60,14 @@ class ApacAuthClient:
     """Authentication requests with injected transport and TLS contexts."""
 
     def __init__(
-        self, *, material: ApacMaterial, credentials: ApacCredentials,
-        h5_context: ssl.SSLContext, transport: _AsyncTransport,
+        self,
+        *,
+        material: ApacMaterial,
+        credentials: ApacCredentials,
+        h5_context: ssl.SSLContext,
+        transport: _AsyncTransport,
     ) -> None:
+        """Retain caller-owned dependencies without initiating authentication."""
         if type(material) is not ApacMaterial or type(credentials) is not ApacCredentials:
             raise ValueError("apac_credentials_invalid")
         self._material = material
@@ -69,20 +77,29 @@ class ApacAuthClient:
         self._lock = asyncio.Lock()
 
     async def _post(
-        self, operation: Literal["login", "request_verification", "verify_code", "refresh_token"],
-        body: dict[str, object], *, require_data: bool,
+        self,
+        operation: Literal["login", "request_verification", "verify_code", "refresh_token"],
+        body: dict[str, object],
+        *,
+        require_data: bool,
     ) -> object:
+        """Send one explicit authentication request under a bounded operation lock."""
         if operation not in {"login", "request_verification", "verify_code", "refresh_token"}:
             raise ValueError("apac_operation_not_supported")
         deadline = _Deadline(asyncio.get_running_loop().time() + 30)
         try:
             async with asyncio.timeout_at(deadline.expires_at), self._lock:
                 request = prepare_apac_request(
-                    operation=operation, material=self._material, ssl_context=self._h5_context,
-                    device_id=self._credentials.device_id, body=body,
+                    operation=operation,
+                    material=self._material,
+                    ssl_context=self._h5_context,
+                    device_id=self._credentials.device_id,
+                    body=body,
                     country=self._credentials.country,
                 )
-                response = await self._transport.execute(request, deadline=deadline, connect_timeout=10, read_timeout=20)
+                response = await self._transport.execute(
+                    request, deadline=deadline, connect_timeout=10, read_timeout=20
+                )
                 return _decode_auth_envelope(response, operation=operation, require_data=require_data)
         except TimeoutError:
             raise GwmDeadlineExceededError(operation=operation) from None
@@ -109,8 +126,11 @@ class ApacAuthClient:
             raise ValueError("apac_session_invalid")
         data = await self._post(
             "refresh_token",
-            {"accessToken": state.access_token, "refreshToken": state.refresh_token,
-             "deviceId": self._credentials.device_id},
+            {
+                "accessToken": state.access_token,
+                "refreshToken": state.refresh_token,
+                "deviceId": self._credentials.device_id,
+            },
             require_data=True,
         )
         access, refresh = _parse_token_pair(data, operation="refresh_token")
@@ -135,9 +155,12 @@ class ApacAuthClient:
         bootstrap_context = await asyncio.to_thread(create_apac_bootstrap_context, self._material.bootstrap)
         enrollment_device = self._credentials.device_id + str(int(now.timestamp() * 1000))
         request = prepare_apac_request(
-            operation="enroll_certificate", material=self._material,
-            ssl_context=bootstrap_context, device_id=self._credentials.device_id,
-            enrollment_device_id=enrollment_device, access_token=state.access_token,
+            operation="enroll_certificate",
+            material=self._material,
+            ssl_context=bootstrap_context,
+            device_id=self._credentials.device_id,
+            enrollment_device_id=enrollment_device,
+            access_token=state.access_token,
             body={"csr": generated.csr, "phone": state.gw_id},
             country=self._credentials.country,
         )

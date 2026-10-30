@@ -20,12 +20,14 @@ from custom_components.gwm_ora.gwm_client.snapshots import map_vehicle_snapshot
 
 class FakeTransport:
     def __init__(self, *, payloads: dict[str, object] | None = None, error: BaseException | None = None) -> None:
+        """Record read operations and optionally inject synthetic data or errors."""
         self.operations: list[str] = []
         self.requests = []
         self.payloads = payloads or {}
         self.error = error
 
     async def execute(self, request, **_kwargs):
+        """Return typed synthetic read payloads without opening a connection."""
         self.operations.append(request.operation)
         self.requests.append(request)
         if self.error is not None:
@@ -35,13 +37,16 @@ class FakeTransport:
         return _TransportResponse(200, {}, json.dumps({"code": "000000", "data": data}).encode())
 
     async def aclose(self) -> None:
+        """Satisfy the interface without closing any caller-owned resources."""
         pass
 
 
 def _client(transport: FakeTransport, *, country: str = "PK") -> ApacReadClient:
+    """Create an isolated read client with a synthetic validated context."""
     material = ApacMaterial(
         EuBootstrapMaterial(b"synthetic-certificate", b"c3ludGhldGljLWtleQ==", b"synthetic-ca"),
-        "synthetic-key", "synthetic-secret",
+        "synthetic-key",
+        "synthetic-secret",
     )
     context = ssl.create_default_context()
     context.set_ciphers("DEFAULT:@SECLEVEL=0")
@@ -52,6 +57,7 @@ def _client(transport: FakeTransport, *, country: str = "PK") -> ApacReadClient:
 
 @pytest.mark.asyncio
 async def test_discovery_and_status_use_only_injected_transport() -> None:
+    """Route discovery and status through the injected transport only."""
     transport = FakeTransport()
     client = _client(transport)
     vehicles = await client.acquire_vehicles()
@@ -63,6 +69,7 @@ async def test_discovery_and_status_use_only_injected_transport() -> None:
 
 @pytest.mark.asyncio
 async def test_write_operation_fails_before_transport() -> None:
+    """Reject a write operation before any transport dispatch."""
     transport = FakeTransport()
     client = _client(transport)
     with pytest.raises(ValueError, match="^apac_operation_not_supported$"):
@@ -71,7 +78,14 @@ async def test_write_operation_fails_before_transport() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("operation,payload", [("acquire_vehicles", {}), ("get_last_status", {"items": "private-value"}), ("get_vehicle_basics", {"config": "private-value"})])
+@pytest.mark.parametrize(
+    "operation,payload",
+    [
+        ("acquire_vehicles", {}),
+        ("get_last_status", {"items": "private-value"}),
+        ("get_vehicle_basics", {"config": "private-value"}),
+    ],
+)
 async def test_malformed_read_payloads_use_redacted_client_errors(operation: str, payload: object) -> None:
     """Expose the same typed schema contract as the existing regional client."""
     transport = FakeTransport(payloads={operation: payload})
@@ -112,10 +126,12 @@ async def test_queued_reads_are_signed_only_after_the_lock_is_acquired(monkeypat
     client = _client(FakeTransport())
     original = reads.prepare_apac_request
     prepared = []
+
     def prepare(**kwargs):
         """Observe preparation without changing the real request builder."""
         prepared.append(kwargs["operation"])
         return original(**kwargs)
+
     monkeypatch.setattr(reads, "prepare_apac_request", prepare)
     await client._lock.acquire()
     task = asyncio.create_task(client.acquire_vehicles())
@@ -132,10 +148,18 @@ async def test_queued_reads_are_signed_only_after_the_lock_is_acquired(monkeypat
 @pytest.mark.parametrize("country", ["TH", "MY", "ID", "PK"])
 async def test_basics_preserves_numeric_and_string_climate_values(country: str) -> None:
     """Assert APAC's numeric tolerance through the actual basics read method."""
-    transport = FakeTransport(payloads={"get_vehicle_basics": {"config": {
-        "airConditionerTemperature": 23, "airConditionerStatusTime": 0,
-        "engineStatusTime": "15", "unrelatedPrivateField": "synthetic-private",
-    }}})
+    transport = FakeTransport(
+        payloads={
+            "get_vehicle_basics": {
+                "config": {
+                    "airConditionerTemperature": 23,
+                    "airConditionerStatusTime": 0,
+                    "engineStatusTime": "15",
+                    "unrelatedPrivateField": "synthetic-private",
+                }
+            }
+        }
+    )
     basics = await _client(transport, country=country).get_vehicle_basics("SYNTHETIC-VEHICLE")
     assert basics.climate is not None
     assert basics.climate.temperature == "23"
@@ -171,13 +195,21 @@ async def test_malformed_basics_configuration_fails_closed(config: object) -> No
 @pytest.mark.parametrize("soc", [0, "50.5", 80])
 async def test_nonempty_status_preserves_values_and_reaches_the_shared_snapshot(country: str, soc: object) -> None:
     """Verify synthetic status semantics through the client and snapshot mapper."""
-    transport = FakeTransport(payloads={"get_last_status": {
-        "deviceId": 12345, "acquisitionTime": "1700000000123", "updateTime": 1700000000456,
-        "latitude": "0", "longitude": "34.75", "items": [
-            {"code": 2013021, "value": soc, "unit": "%"},
-            {"code": "2011501", "value": "125.5", "unit": "km"},
-        ],
-    }})
+    transport = FakeTransport(
+        payloads={
+            "get_last_status": {
+                "deviceId": 12345,
+                "acquisitionTime": "1700000000123",
+                "updateTime": 1700000000456,
+                "latitude": "0",
+                "longitude": "34.75",
+                "items": [
+                    {"code": 2013021, "value": soc, "unit": "%"},
+                    {"code": "2011501", "value": "125.5", "unit": "km"},
+                ],
+            }
+        }
+    )
     client = _client(transport, country=country)
     vehicle = (await client.acquire_vehicles())[0]
     status = await client.get_last_status(vehicle.identifier.value)
@@ -187,9 +219,17 @@ async def test_nonempty_status_preserves_values_and_reaches_the_shared_snapshot(
     assert status.latitude == 0.0
     assert status.longitude == 34.75
     assert [(item.code, item.value, item.unit) for item in status.items] == [
-        ("2013021", soc, "%"), ("2011501", "125.5", "km"),
+        ("2013021", soc, "%"),
+        ("2011501", "125.5", "km"),
     ]
-    snapshot = map_vehicle_snapshot(vehicle, status, CloudVehicleBasics(), refreshed_at=datetime(2026, 10, 30, tzinfo=UTC), remote_commands_available=False, charging_control_available=False)
+    snapshot = map_vehicle_snapshot(
+        vehicle,
+        status,
+        CloudVehicleBasics(),
+        refreshed_at=datetime(2026, 10, 30, tzinfo=UTC),
+        remote_commands_available=False,
+        charging_control_available=False,
+    )
     assert snapshot.values.soc == float(soc)
     assert snapshot.values.range_km == 125.5
     assert snapshot.raw_items["2013021"].unit == "%"
@@ -207,7 +247,13 @@ async def test_missing_status_items_remain_unknown(payload: object) -> None:
     client = _client(transport)
     vehicle = (await client.acquire_vehicles())[0]
     status = await client.get_last_status(vehicle.identifier.value)
-    snapshot = map_vehicle_snapshot(vehicle, status, CloudVehicleBasics(), refreshed_at=datetime(2026, 10, 30, tzinfo=UTC), remote_commands_available=False)
+    snapshot = map_vehicle_snapshot(
+        vehicle,
+        status,
+        CloudVehicleBasics(),
+        refreshed_at=datetime(2026, 10, 30, tzinfo=UTC),
+        remote_commands_available=False,
+    )
     assert status.items == ()
     assert snapshot.values.soc is None
     assert snapshot.values.range_km is None

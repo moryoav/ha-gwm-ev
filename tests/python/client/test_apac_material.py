@@ -12,6 +12,7 @@ from custom_components.gwm_ora.gwm_client.eu_identity import EuBootstrapMaterial
 
 
 def _synthetic_bootstrap() -> EuBootstrapMaterial:
+    """Return bounded placeholder material without real certificates or keys."""
     return EuBootstrapMaterial(
         certificate_data=b"synthetic-certificate",
         transformed_private_key_data=b"c3ludGhldGljLWtleQ==",
@@ -20,6 +21,7 @@ def _synthetic_bootstrap() -> EuBootstrapMaterial:
 
 
 def test_material_is_private_and_does_not_supply_default_credentials() -> None:
+    """Require explicit material and hide private values in representations."""
     material = ApacMaterial(_synthetic_bootstrap(), "synthetic-key", "synthetic-secret")
     assert "synthetic" not in repr(material)
     profile = material.signing_profile()
@@ -33,17 +35,20 @@ def test_material_is_private_and_does_not_supply_default_credentials() -> None:
 
 @pytest.mark.parametrize("key,secret", [("", "synthetic"), ("synthetic", ""), ("a\nb", "ok")])
 def test_invalid_material_fails_without_echoing_values(key: str, secret: str) -> None:
+    """Reject invalid signing inputs through a redacted error."""
     with pytest.raises(ValueError, match="^apac_material_invalid$") as error:
         ApacMaterial(_synthetic_bootstrap(), key, secret)
     assert "synthetic" not in str(error.value)
 
 
 def test_requires_bootstrap_material() -> None:
+    """Reject missing bootstrap material before constructing a signing profile."""
     with pytest.raises(ValueError, match="^apac_material_invalid$"):
         ApacMaterial(None, "synthetic", "synthetic")  # type: ignore[arg-type]
 
 
 def test_loads_only_explicit_local_files_with_synthetic_material(tmp_path: Path) -> None:
+    """Load the explicit private-file contract using only synthetic values."""
     (tmp_path / "bootstrap.cer").write_bytes(b"synthetic-certificate")
     (tmp_path / "bootstrap.key").write_bytes(b"c3ludGhldGljLWtleQ==")
     (tmp_path / "ca.pem").write_bytes(b"synthetic-ca")
@@ -56,6 +61,7 @@ def test_loads_only_explicit_local_files_with_synthetic_material(tmp_path: Path)
 
 
 def test_missing_or_relative_private_path_fails_without_disclosure(tmp_path: Path) -> None:
+    """Reject missing or relative directories without exposing their paths."""
     for path in (tmp_path / "private-name", Path("relative-private-name")):
         with pytest.raises(ValueError, match="^apac_material_invalid$") as error:
             load_apac_material(path)

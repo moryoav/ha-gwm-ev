@@ -13,6 +13,7 @@ from custom_components.gwm_ora.gwm_client.regions import TlsMode
 
 
 def _args(*, mtls: bool = False) -> dict:
+    """Provide synthetic signing material and the requested TLS role."""
     context = ssl.create_default_context()
     if mtls:
         context.set_ciphers("DEFAULT:@SECLEVEL=0")
@@ -20,7 +21,8 @@ def _args(*, mtls: bool = False) -> dict:
     return {
         "material": ApacMaterial(
             EuBootstrapMaterial(b"synthetic-certificate", b"c3ludGhldGljLWtleQ==", b"synthetic-ca"),
-            "synthetic-key", "synthetic-secret",
+            "synthetic-key",
+            "synthetic-secret",
         ),
         "ssl_context": context,
         "device_id": "a" * 32,
@@ -29,6 +31,7 @@ def _args(*, mtls: bool = False) -> dict:
 
 
 def test_signed_status_request_is_read_only_and_redacted() -> None:
+    """Encode the vehicle identifier and hide request secrets in repr."""
     request = prepare_apac_request(
         **_args(mtls=True), operation="get_last_status", access_token="synthetic-token", vehicle_id="synthetic/vehicle"
     )
@@ -41,6 +44,7 @@ def test_signed_status_request_is_read_only_and_redacted() -> None:
 
 
 def test_login_post_uses_exact_synthetic_payload() -> None:
+    """Preserve the exact serialized login bytes that are signed."""
     request = prepare_apac_request(**_args(), operation="login", body={"account": "synthetic"})
     assert request.method == "POST"
     assert request.body == b'{"account":"synthetic"}'
@@ -49,11 +53,13 @@ def test_login_post_uses_exact_synthetic_payload() -> None:
 
 @pytest.mark.parametrize("operation", ["send_lock_command", "set_charging_plan", "charge_now"])
 def test_vehicle_write_cannot_build_a_request(operation: str) -> None:
+    """Reject control requests before constructing a transport request."""
     with pytest.raises(ValueError, match="^apac_request_invalid$"):
         prepare_apac_request(**_args(), operation=operation, body={})
 
 
 def test_bad_tls_and_missing_authentication_fail_closed() -> None:
+    """Reject unverified TLS and missing tokens at request preparation."""
     args = _args()
     args["ssl_context"] = ssl._create_unverified_context()
     with pytest.raises(ValueError, match="^apac_request_invalid$"):
@@ -70,7 +76,9 @@ def test_selected_country_reaches_request_headers(country: str) -> None:
     assert request.headers["country"] == request.headers["regionCode"] == country
 
 
-@pytest.mark.parametrize("operation", ["login", "request_verification", "verify_code", "refresh_token", "get_user_info"])
+@pytest.mark.parametrize(
+    "operation", ["login", "request_verification", "verify_code", "refresh_token", "get_user_info"]
+)
 def test_legacy_mtls_policy_cannot_reach_h5_gateways(operation: str) -> None:
     """Reject weakened identity contexts on standard TLS authentication hosts."""
     args = _args(mtls=True)
@@ -82,7 +90,9 @@ def test_legacy_mtls_policy_cannot_reach_h5_gateways(operation: str) -> None:
         prepare_apac_request(**args, operation=operation)
 
 
-@pytest.mark.parametrize("operation", ["enroll_certificate", "acquire_vehicles", "get_last_status", "get_vehicle_basics"])
+@pytest.mark.parametrize(
+    "operation", ["enroll_certificate", "acquire_vehicles", "get_last_status", "get_vehicle_basics"]
+)
 def test_default_context_cannot_replace_an_mtls_identity(operation: str) -> None:
     """Require APAC identity policy for enrollment and vehicle gateway calls."""
     args = {**_args(), "access_token": "synthetic-token"}
@@ -109,14 +119,25 @@ def test_unvalidated_or_bootstrap_context_cannot_reach_the_vehicle_host(register
 def test_issued_context_cannot_replace_the_bootstrap_identity() -> None:
     """Do not send the account-issued identity to the enrollment gateway."""
     with pytest.raises(ValueError, match="^apac_request_invalid$"):
-        prepare_apac_request(**_args(mtls=True), operation="enroll_certificate", access_token="synthetic-token", enrollment_device_id="a" * 32 + "1234567890123", body={})
+        prepare_apac_request(
+            **_args(mtls=True),
+            operation="enroll_certificate",
+            access_token="synthetic-token",
+            enrollment_device_id="a" * 32 + "1234567890123",
+            body={},
+        )
 
 
-@pytest.mark.parametrize("operation,expected", [
-    ("get_last_status", "4bc0dad9591a5dda11b2d8c954ab21b378c240cc869c7c5adde77d450cc936ad"),
-    ("login", "0be3b58369fc6836601927018a580000fe6abbc2116952af5a485189dfb2ae6c"),
-])
-def test_synthetic_signing_vectors_cover_body_encoding_and_empty_query_values(monkeypatch, operation: str, expected: str) -> None:
+@pytest.mark.parametrize(
+    "operation,expected",
+    [
+        ("get_last_status", "4bc0dad9591a5dda11b2d8c954ab21b378c240cc869c7c5adde77d450cc936ad"),
+        ("login", "0be3b58369fc6836601927018a580000fe6abbc2116952af5a485189dfb2ae6c"),
+    ],
+)
+def test_synthetic_signing_vectors_cover_body_encoding_and_empty_query_values(
+    monkeypatch, operation: str, expected: str
+) -> None:
     """Lock down independent synthetic vectors, not vendor-captured signatures."""
     from custom_components.gwm_ora.gwm_client import signing
 

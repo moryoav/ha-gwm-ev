@@ -53,7 +53,7 @@ def _is_validated_context(context: ssl.SSLContext, mode: TlsMode) -> bool:
 
 
 def _scoped_bundle(bundle: bytes) -> bytes:
-    """Select the validated three authorities required by the APAC flow."""
+    """Select the three named CA entries required by the APAC TLS context."""
     blocks = _pem_certificate_blocks(bundle, expected_count=4)
     by_subject: dict[str, bytes] = {}
     for pem, der in blocks:
@@ -70,32 +70,52 @@ def create_apac_bootstrap_context(material: EuBootstrapMaterial, *, now: datetim
     """Validate the bootstrap key/chain before creating a host-scoped context."""
     if type(material) is not EuBootstrapMaterial:
         raise EuIdentityError("bootstrap_identity_invalid")
-    scoped = EuBootstrapMaterial(material.certificate_data, material.transformed_private_key_data, _scoped_bundle(material.ca_bundle))
+    scoped = EuBootstrapMaterial(
+        material.certificate_data, material.transformed_private_key_data, _scoped_bundle(material.ca_bundle)
+    )
     context = create_eu_bootstrap_ssl_context(scoped, now=now)
     return _register_validated_context(context, TlsMode.APAC_BOOTSTRAP_MTLS)
 
 
 def create_apac_issued_context(
-    identity: EuIssuedIdentity, *, ca_bundle: bytes, now: datetime | None = None,
+    identity: EuIssuedIdentity,
+    *,
+    ca_bundle: bytes,
+    now: datetime | None = None,
 ) -> ssl.SSLContext:
     """Validate issued identity, issuer and signature without fallback."""
     if type(identity) is not EuIssuedIdentity:
         raise EuIdentityError("issued_identity_invalid")
     try:
-        cert_der = _decode_canonical_base64(identity.certificate, maximum_length=64 * 1024, category="issued_certificate_encoding_invalid")
-        key_der = _decode_canonical_base64(identity.private_key, maximum_length=64 * 1024, category="issued_private_key_encoding_invalid")
+        cert_der = _decode_canonical_base64(
+            identity.certificate, maximum_length=64 * 1024, category="issued_certificate_encoding_invalid"
+        )
+        key_der = _decode_canonical_base64(
+            identity.private_key, maximum_length=64 * 1024, category="issued_private_key_encoding_invalid"
+        )
         certificate = x509.load_der_x509_certificate(cert_der)
         key = serialization.load_der_private_key(key_der, password=None)
         if certificate.public_bytes(serialization.Encoding.DER) != cert_der or not isinstance(key, rsa.RSAPrivateKey):
             raise EuIdentityError("issued_identity_invalid")
-        if key.private_bytes(serialization.Encoding.DER, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()) != key_der:
+        if (
+            key.private_bytes(
+                serialization.Encoding.DER, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()
+            )
+            != key_der
+        ):
             raise EuIdentityError("issued_private_key_encoding_invalid")
         _validate_leaf_identity(
-            certificate, key, expected_issuer=_APAC_ISSUED,
-            now=_normalized_now(now), minimum_remaining_validity=timedelta(hours=24),
+            certificate,
+            key,
+            expected_issuer=_APAC_ISSUED,
+            now=_normalized_now(now),
+            minimum_remaining_validity=timedelta(hours=24),
         )
         context = _create_identity_context(
-            certificate=certificate, private_key=key, ca_bundle=_scoped_bundle(ca_bundle), expected_issuer=_APAC_ISSUED,
+            certificate=certificate,
+            private_key=key,
+            ca_bundle=_scoped_bundle(ca_bundle),
+            expected_issuer=_APAC_ISSUED,
         )
         return _register_validated_context(context, TlsMode.APAC_ISSUED_MTLS)
     except EuIdentityError:
