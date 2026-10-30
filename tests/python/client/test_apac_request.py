@@ -1,6 +1,7 @@
 """Synthetic-only tests for signed APAC request preparation."""
 
 import ssl
+from types import SimpleNamespace
 
 import pytest
 
@@ -109,3 +110,30 @@ def test_issued_context_cannot_replace_the_bootstrap_identity() -> None:
     """Do not send the account-issued identity to the enrollment gateway."""
     with pytest.raises(ValueError, match="^apac_request_invalid$"):
         prepare_apac_request(**_args(mtls=True), operation="enroll_certificate", access_token="synthetic-token", enrollment_device_id="a" * 32 + "1234567890123", body={})
+
+
+@pytest.mark.parametrize("operation,expected", [
+    ("get_last_status", "4bc0dad9591a5dda11b2d8c954ab21b378c240cc869c7c5adde77d450cc936ad"),
+    ("login", "0be3b58369fc6836601927018a580000fe6abbc2116952af5a485189dfb2ae6c"),
+])
+def test_synthetic_signing_vectors_cover_body_encoding_and_empty_query_values(monkeypatch, operation: str, expected: str) -> None:
+    """Lock down independent synthetic vectors, not vendor-captured signatures."""
+    from custom_components.gwm_ora.gwm_client import signing
+
+    monkeypatch.setattr(signing.time, "time_ns", lambda: 1700000000123 * 1_000_000)
+    monkeypatch.setattr(signing.uuid, "uuid4", lambda: SimpleNamespace(hex="0123456789abcdef" * 2))
+    args = _args(mtls=operation == "get_last_status")
+    if operation == "get_last_status":
+        args.update(access_token="synthetic-token", vehicle_id="synthetic/vehicle")
+    else:
+        args["body"] = {"account": "person@example.invalid", "password": "synthetic password"}
+    request = prepare_apac_request(**args, operation=operation)
+    assert request.headers["bt-auth-appkey"] == "synthetic-key"
+    assert request.headers["bt-auth-nonce"] == "0123456789ABCDEF"
+    assert request.headers["bt-auth-timestamp"] == "1700000000123"
+    assert request.headers["bt-auth-sign"] == expected
+    if operation == "get_last_status":
+        assert request.url.endswith("?vin=synthetic%2Fvehicle&seqNo=")
+        assert request.body is None
+    else:
+        assert request.body == b'{"account":"person@example.invalid","password":"synthetic password"}'
