@@ -59,19 +59,19 @@ class ApacReadClient:
     ) -> object:
         if operation not in {"acquire_vehicles", "get_last_status", "get_vehicle_basics"}:
             raise ValueError("apac_operation_not_supported")
-        request = prepare_apac_request(
-            operation=operation,
-            material=self._material,
-            ssl_context=self._session.app_ssl_context,
-            device_id=self._session.device_id,
-            access_token=self._session.access_token,
-            country=self._session.country,
-            vehicle_id=vehicle_id,
-        )
         loop = asyncio.get_running_loop()
         deadline = _Deadline(loop.time() + 30.0)
         try:
             async with asyncio.timeout_at(deadline.expires_at), self._lock:
+                request = prepare_apac_request(
+                    operation=operation,
+                    material=self._material,
+                    ssl_context=self._session.app_ssl_context,
+                    device_id=self._session.device_id,
+                    access_token=self._session.access_token,
+                    country=self._session.country,
+                    vehicle_id=vehicle_id,
+                )
                 response = await self._transport.execute(request, deadline=deadline, connect_timeout=10.0, read_timeout=20.0)
                 return _decode_envelope(response, operation=operation)
         except TimeoutError:

@@ -162,3 +162,27 @@ async def test_invalid_verification_never_reaches_transport() -> None:
     with pytest.raises(ValueError, match="^apac_verification_invalid$"):
         await client.verify_code(None)  # type: ignore[arg-type]
     assert transport.requests == []
+
+
+@pytest.mark.asyncio
+async def test_queued_authentication_is_signed_only_after_the_lock_is_acquired(monkeypatch) -> None:
+    """Do not let queued requests age their signatures while waiting."""
+    import custom_components.gwm_ora.gwm_client.apac_auth_client as auth
+
+    client = _auth_client(FakeTransport())
+    original = auth.prepare_apac_request
+    prepared = []
+    def prepare(**kwargs):
+        """Record when signing occurs relative to the operation lock."""
+        prepared.append(kwargs["operation"])
+        return original(**kwargs)
+    monkeypatch.setattr(auth, "prepare_apac_request", prepare)
+    await client._lock.acquire()
+    task = asyncio.create_task(client.login())
+    try:
+        await asyncio.sleep(0)
+        assert prepared == []
+    finally:
+        client._lock.release()
+        await task
+    assert prepared == ["login"]

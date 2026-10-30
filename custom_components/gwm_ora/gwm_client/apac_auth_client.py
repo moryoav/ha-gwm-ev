@@ -74,14 +74,14 @@ class ApacAuthClient:
     ) -> object:
         if operation not in {"login", "request_verification", "verify_code", "refresh_token"}:
             raise ValueError("apac_operation_not_supported")
-        request = prepare_apac_request(
-            operation=operation, material=self._material, ssl_context=self._h5_context,
-            device_id=self._credentials.device_id, body=body,
-            country=self._credentials.country,
-        )
         deadline = _Deadline(asyncio.get_running_loop().time() + 30)
         try:
             async with asyncio.timeout_at(deadline.expires_at), self._lock:
+                request = prepare_apac_request(
+                    operation=operation, material=self._material, ssl_context=self._h5_context,
+                    device_id=self._credentials.device_id, body=body,
+                    country=self._credentials.country,
+                )
                 response = await self._transport.execute(request, deadline=deadline, connect_timeout=10, read_timeout=20)
                 return _decode_auth_envelope(response, operation=operation, require_data=require_data)
         except TimeoutError:
@@ -120,11 +120,10 @@ class ApacAuthClient:
         """Explicitly enroll an identity, then strictly verify its chain."""
         if type(state) is not ApacTokens:
             raise ValueError("apac_session_invalid")
-        now = datetime.now(UTC)
         deadline = _Deadline(asyncio.get_running_loop().time() + 30)
         try:
             async with asyncio.timeout_at(deadline.expires_at), self._lock:
-                return await self._enroll_identity(state, now=now, deadline=deadline)
+                return await self._enroll_identity(state, now=datetime.now(UTC), deadline=deadline)
         except TimeoutError:
             raise GwmDeadlineExceededError(operation="enroll_certificate") from None
 

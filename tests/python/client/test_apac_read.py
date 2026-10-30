@@ -94,3 +94,27 @@ async def test_read_cancellation_propagates_without_retry() -> None:
     with pytest.raises(asyncio.CancelledError):
         await _client(transport).acquire_vehicles()
     assert transport.operations == ["acquire_vehicles"]
+
+
+@pytest.mark.asyncio
+async def test_queued_reads_are_signed_only_after_the_lock_is_acquired(monkeypatch) -> None:
+    """Build timestamps and nonces immediately before transport dispatch."""
+    import custom_components.gwm_ora.gwm_client.apac_read as reads
+
+    client = _client(FakeTransport())
+    original = reads.prepare_apac_request
+    prepared = []
+    def prepare(**kwargs):
+        """Observe preparation without changing the real request builder."""
+        prepared.append(kwargs["operation"])
+        return original(**kwargs)
+    monkeypatch.setattr(reads, "prepare_apac_request", prepare)
+    await client._lock.acquire()
+    task = asyncio.create_task(client.acquire_vehicles())
+    try:
+        await asyncio.sleep(0)
+        assert prepared == []
+    finally:
+        client._lock.release()
+        await task
+    assert prepared == ["acquire_vehicles"]
