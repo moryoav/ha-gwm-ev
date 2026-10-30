@@ -82,3 +82,27 @@ async def test_enrollment_checks_issued_identity_before_return(monkeypatch, coun
     assert "fake" not in repr(issued)
     assert csr_countries == [country]
     assert transport.requests[0].headers["country"] == country
+
+
+@pytest.mark.parametrize("field", ["access_token", "refresh_token", "gw_id", "bean_id"])
+@pytest.mark.parametrize("invalid", ["", "private\nvalue", "é", "x" * (16 * 1024 + 1), None])
+def test_invalid_token_state_is_rejected_without_disclosing_values(field: str, invalid: object) -> None:
+    """Reject incomplete or unsafe state before it can reach authentication."""
+    values = dict(access_token="synthetic-access", refresh_token="synthetic-refresh", gw_id="synthetic-gw", bean_id="synthetic-bean")
+    values[field] = invalid
+    with pytest.raises(ValueError, match="^apac_session_invalid$"):
+        ApacTokens(**values)
+
+
+@pytest.mark.asyncio
+async def test_invalid_verification_never_reaches_transport() -> None:
+    """Reject user input before a code check or password login is transmitted."""
+    transport = FakeTransport()
+    material = ApacMaterial(EuBootstrapMaterial(b"fake-cert", b"c3ludGhldGljLWtleQ==", b"fake-ca"), "fake-key", "fake-secret")
+    client = ApacAuthClient(material=material, credentials=ApacCredentials("fake@example.invalid", "fake-password", "a" * 32, country="PK"), h5_context=ssl.create_default_context(), transport=transport)
+    for action in (client.login, client.verify_code):
+        with pytest.raises(ValueError, match="^apac_verification_invalid$"):
+            await action("private\ncode")
+    with pytest.raises(ValueError, match="^apac_verification_invalid$"):
+        await client.verify_code(None)  # type: ignore[arg-type]
+    assert transport.requests == []

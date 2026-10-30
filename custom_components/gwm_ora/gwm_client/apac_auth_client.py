@@ -31,6 +31,18 @@ class ApacTokens:
     gw_id: str = field(repr=False)
     bean_id: str = field(repr=False)
 
+    def __post_init__(self) -> None:
+        """Reject invalid private state before refresh or certificate enrollment."""
+        for value, maximum in (
+            (self.access_token, 16 * 1024), (self.refresh_token, 16 * 1024),
+            (self.gw_id, 4 * 1024), (self.bean_id, 4 * 1024),
+        ):
+            if (
+                not isinstance(value, str) or not 0 < len(value) <= maximum
+                or any(not 0x21 <= ord(character) <= 0x7E for character in value)
+            ):
+                raise ValueError("apac_session_invalid")
+
 
 @dataclass(frozen=True, slots=True)
 class ApacIssued:
@@ -83,6 +95,8 @@ class ApacAuthClient:
 
     async def verify_code(self, code: str) -> None:
         """Check a user-supplied verification code."""
+        if not isinstance(code, str):
+            raise ValueError("apac_verification_invalid")
         await self._post("verify_code", verification_body(self._credentials, code), require_data=False)
 
     async def refresh(self, state: ApacTokens) -> ApacTokens:

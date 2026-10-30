@@ -8,6 +8,17 @@ from dataclasses import dataclass, field
 from .apac_policy import apac_calling_code, validate_apac_country
 
 _DEVICE = re.compile(r"[0-9a-fA-F]{32}\Z")
+_MAX_VERIFICATION_CODE_LENGTH = 64
+
+
+def _validate_verification_code(code: str | None) -> None:
+    """Reject malformed verification input without retaining or echoing it."""
+    if code is not None and (
+        not isinstance(code, str)
+        or not 0 < len(code) <= _MAX_VERIFICATION_CODE_LENGTH
+        or any(not 0x21 <= ord(character) <= 0x7E for character in code)
+    ):
+        raise ValueError("apac_verification_invalid")
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,8 +56,7 @@ def login_body(credentials: ApacCredentials, verification_code: str | None = Non
     """Construct an APAC login body from explicitly supplied credentials."""
     if type(credentials) is not ApacCredentials:
         raise ValueError("apac_credentials_invalid")
-    if verification_code is not None and (not isinstance(verification_code, str) or not verification_code):
-        raise ValueError("apac_verification_invalid")
+    _validate_verification_code(verification_code)
     body: dict[str, object] = {
         "account": credentials.account,
         "accountType": credentials.account_type,
@@ -67,8 +77,7 @@ def verification_body(credentials: ApacCredentials, code: str | None = None) -> 
     """Build either a verification request or code-check body."""
     if type(credentials) is not ApacCredentials:
         raise ValueError("apac_credentials_invalid")
-    if code is not None and (not isinstance(code, str) or not code):
-        raise ValueError("apac_verification_invalid")
+    _validate_verification_code(code)
     body: dict[str, object] = {
         "type": "17",
         "account": credentials.account,

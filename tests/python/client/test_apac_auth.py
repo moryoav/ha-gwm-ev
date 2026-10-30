@@ -40,3 +40,12 @@ def test_selected_country_reaches_login_and_verification(country: str, calling_c
     assert login_body(credentials)["country"] == country
     for body in (login_body(credentials), verification_body(credentials), verification_body(credentials, "123456")):
         assert body["countryCode"] == calling_code
+
+
+@pytest.mark.parametrize("code", ["", "123\n456", "123\x00456", " 123456", "123456 ", "é", "x" * 65, 123456, False])
+def test_invalid_verification_codes_fail_without_disclosure(code: object) -> None:
+    """Apply the same bounded input contract to login and verification bodies."""
+    credentials = ApacCredentials("person@example.invalid", "synthetic-password", "a" * 32, country="PK")
+    for builder in (login_body, verification_body):
+        with pytest.raises(ValueError, match="^apac_verification_invalid$"):
+            builder(credentials, code)  # type: ignore[arg-type]
