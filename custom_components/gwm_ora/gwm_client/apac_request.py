@@ -1,4 +1,4 @@
-"""Prepare allowlisted Pakistan requests without sending network traffic."""
+"""Prepare allowlisted APAC requests without sending network traffic."""
 
 from __future__ import annotations
 
@@ -8,9 +8,9 @@ from urllib.parse import quote
 
 from ._dotnet_json import encode_dotnet_json
 from ._protocol import _TransportRequest
-from .pakistan_endpoints import pakistan_endpoint
-from .pakistan_material import PakistanMaterial
-from .pakistan_policy import pakistan_gateways
+from .apac_endpoints import apac_endpoint
+from .apac_material import ApacMaterial
+from .apac_policy import apac_gateways, validate_apac_country
 from .signing import sign_request
 
 _HEX_DEVICE = re.compile(r"[0-9A-Fa-f]{32}\Z")
@@ -21,12 +21,13 @@ _BASE_HEADERS = {
 }
 
 
-def prepare_pakistan_request(
+def prepare_apac_request(
     *,
     operation: str,
-    material: PakistanMaterial,
+    material: ApacMaterial,
     ssl_context: ssl.SSLContext,
     device_id: str,
+    country: str,
     access_token: str | None = None,
     body: dict[str, object] | None = None,
     vehicle_id: str | None = None,
@@ -39,7 +40,8 @@ def prepare_pakistan_request(
     appropriate client certificate; the authentication layer must enforce it.
     """
     try:
-        endpoint = pakistan_endpoint(operation)
+        validate_apac_country(country)
+        endpoint = apac_endpoint(operation)
         if (
             not isinstance(ssl_context, ssl.SSLContext)
             or ssl_context.minimum_version < ssl.TLSVersion.TLSv1_2
@@ -81,10 +83,10 @@ def prepare_pakistan_request(
             query = ""
         else:
             raise ValueError("invalid")
-        gateway = pakistan_gateways(material)[endpoint.gateway]
+        gateway = apac_gateways(material)[endpoint.gateway]
         signed = sign_request(gateway.signing_profile, endpoint.method, gateway.base_url + endpoint.path + query, body_text)
         headers = {
-            **_BASE_HEADERS, "country": "PK", "regionCode": "PK", "deviceId": header_device, "iccid": header_device,
+            **_BASE_HEADERS, "country": country, "regionCode": country, "deviceId": header_device, "iccid": header_device,
             "Accept": "application/json", **signed.headers,
         }
         if access_token is not None:
@@ -96,4 +98,4 @@ def prepare_pakistan_request(
             body=None if body_text is None else body_text.encode("utf-8"),
         )
     except (ValueError, TypeError, UnicodeError):
-        raise ValueError("pakistan_request_invalid") from None
+        raise ValueError("apac_request_invalid") from None

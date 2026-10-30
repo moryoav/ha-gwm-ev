@@ -6,9 +6,9 @@ import ssl
 import pytest
 
 from custom_components.gwm_ora.gwm_client._protocol import _TransportResponse
+from custom_components.gwm_ora.gwm_client.apac_material import ApacMaterial
+from custom_components.gwm_ora.gwm_client.apac_read import ApacReadClient, ApacReadSession
 from custom_components.gwm_ora.gwm_client.eu_identity import EuBootstrapMaterial
-from custom_components.gwm_ora.gwm_client.pakistan_material import PakistanMaterial
-from custom_components.gwm_ora.gwm_client.pakistan_read import PakistanReadClient, PakistanReadSession
 
 
 class FakeTransport:
@@ -24,13 +24,13 @@ class FakeTransport:
         pass
 
 
-def _client(transport: FakeTransport) -> PakistanReadClient:
-    material = PakistanMaterial(
+def _client(transport: FakeTransport) -> ApacReadClient:
+    material = ApacMaterial(
         EuBootstrapMaterial(b"synthetic-certificate", b"c3ludGhldGljLWtleQ==", b"synthetic-ca"),
         "synthetic-key", "synthetic-secret",
     )
-    session = PakistanReadSession("a" * 32, "synthetic-token", ssl.create_default_context())
-    return PakistanReadClient(material=material, session=session, transport=transport)
+    session = ApacReadSession("a" * 32, "synthetic-token", ssl.create_default_context(), country="PK")
+    return ApacReadClient(material=material, session=session, transport=transport)
 
 
 @pytest.mark.asyncio
@@ -48,6 +48,6 @@ async def test_discovery_and_status_use_only_injected_transport() -> None:
 async def test_write_operation_fails_before_transport() -> None:
     transport = FakeTransport()
     client = _client(transport)
-    with pytest.raises(ValueError, match="^pakistan_operation_not_supported$"):
+    with pytest.raises(ValueError, match="^apac_operation_not_supported$"):
         await client._read("set_charging_plan")  # type: ignore[arg-type]
     assert transport.operations == []

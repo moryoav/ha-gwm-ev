@@ -1,4 +1,4 @@
-"""Tests for externally supplied Pakistan material, using synthetic values."""
+"""Tests for externally supplied APAC material, using synthetic values."""
 
 from __future__ import annotations
 
@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
+from custom_components.gwm_ora.gwm_client.apac_material import ApacMaterial, load_apac_material
 from custom_components.gwm_ora.gwm_client.eu_identity import EuBootstrapMaterial
-from custom_components.gwm_ora.gwm_client.pakistan_material import PakistanMaterial, load_pakistan_material
 
 
 def _synthetic_bootstrap() -> EuBootstrapMaterial:
@@ -20,7 +20,7 @@ def _synthetic_bootstrap() -> EuBootstrapMaterial:
 
 
 def test_material_is_private_and_does_not_supply_default_credentials() -> None:
-    material = PakistanMaterial(_synthetic_bootstrap(), "synthetic-key", "synthetic-secret")
+    material = ApacMaterial(_synthetic_bootstrap(), "synthetic-key", "synthetic-secret")
     assert "synthetic" not in repr(material)
     profile = material.signing_profile()
     assert profile.app_key == "synthetic-key"
@@ -33,14 +33,14 @@ def test_material_is_private_and_does_not_supply_default_credentials() -> None:
 
 @pytest.mark.parametrize("key,secret", [("", "synthetic"), ("synthetic", ""), ("a\nb", "ok")])
 def test_invalid_material_fails_without_echoing_values(key: str, secret: str) -> None:
-    with pytest.raises(ValueError, match="^pakistan_material_invalid$") as error:
-        PakistanMaterial(_synthetic_bootstrap(), key, secret)
+    with pytest.raises(ValueError, match="^apac_material_invalid$") as error:
+        ApacMaterial(_synthetic_bootstrap(), key, secret)
     assert "synthetic" not in str(error.value)
 
 
 def test_requires_bootstrap_material() -> None:
-    with pytest.raises(ValueError, match="^pakistan_material_invalid$"):
-        PakistanMaterial(None, "synthetic", "synthetic")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="^apac_material_invalid$"):
+        ApacMaterial(None, "synthetic", "synthetic")  # type: ignore[arg-type]
 
 
 def test_loads_only_explicit_local_files_with_synthetic_material(tmp_path: Path) -> None:
@@ -50,13 +50,13 @@ def test_loads_only_explicit_local_files_with_synthetic_material(tmp_path: Path)
     (tmp_path / "signing.json").write_text(
         json.dumps({"app_key": "synthetic-key", "app_secret": "synthetic-secret"}), encoding="utf-8"
     )
-    material = load_pakistan_material(tmp_path)
+    material = load_apac_material(tmp_path)
     assert material.signing_profile().app_secret == "synthetic-secret"
     assert "synthetic" not in repr(material)
 
 
 def test_missing_or_relative_private_path_fails_without_disclosure(tmp_path: Path) -> None:
     for path in (tmp_path / "private-name", Path("relative-private-name")):
-        with pytest.raises(ValueError, match="^pakistan_material_invalid$") as error:
-            load_pakistan_material(path)
+        with pytest.raises(ValueError, match="^apac_material_invalid$") as error:
+            load_apac_material(path)
         assert "private-name" not in str(error.value)

@@ -1,4 +1,4 @@
-"""Synthetic Pakistan certificate chain tests; no real material is used."""
+"""Synthetic APAC certificate chain tests; no real material is used."""
 
 import base64
 from datetime import UTC, datetime, timedelta
@@ -9,8 +9,8 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
 
+from custom_components.gwm_ora.gwm_client.apac_identity import _scoped_bundle, create_apac_issued_context
 from custom_components.gwm_ora.gwm_client.eu_identity import EuIdentityError, EuIssuedIdentity
-from custom_components.gwm_ora.gwm_client.pakistan_identity import _scoped_bundle, create_pakistan_issued_context
 
 NOW = datetime(2030, 1, 1, tzinfo=UTC)
 
@@ -37,17 +37,17 @@ def _issued(authority, authority_key, *, signing_key=None):
     )
 
 
-def test_pakistan_issuer_chain_is_checked_without_eu_changes() -> None:
+def test_apac_issuer_chain_is_checked_without_eu_changes() -> None:
     authorities = [_authority(n) for n in ("GWM Root CA", "IOV APP General SubCA", "IOV APP SubCA", "IOV APP SubCA2")]
     bundle = b"\n".join(c.public_bytes(serialization.Encoding.PEM) for c, _ in authorities)
     cert, key = authorities[-1]
-    context = create_pakistan_issued_context(_issued(cert, key), ca_bundle=bundle, now=NOW)
+    context = create_apac_issued_context(_issued(cert, key), ca_bundle=bundle, now=NOW)
     assert context.check_hostname
     assert context.verify_mode.value == 2
     assert len(_scoped_bundle(bundle).split(b"-----BEGIN CERTIFICATE-----")) == 4
     wrong_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     with pytest.raises(EuIdentityError, match="^identity_chain_invalid$"):
-        create_pakistan_issued_context(_issued(cert, key, signing_key=wrong_key), ca_bundle=bundle, now=NOW)
+        create_apac_issued_context(_issued(cert, key, signing_key=wrong_key), ca_bundle=bundle, now=NOW)
 
 
 def test_missing_intermediate_is_rejected() -> None:

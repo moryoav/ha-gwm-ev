@@ -1,4 +1,4 @@
-"""Strict Pakistan client-identity validation without changing EU TLS rules.
+"""Strict APAC client-identity validation without changing EU TLS rules.
 
 The private caller supplies the four-certificate CA bundle. This implementation
 never bundles, downloads, or falls back to an unverified certificate.
@@ -31,11 +31,11 @@ from .eu_identity import (
 _ROOT = "GWM Root CA"
 _GENERAL = "IOV APP General SubCA"
 _LEGACY_ISSUED = "IOV APP SubCA"
-_PAKISTAN_ISSUED = "IOV APP SubCA2"
+_APAC_ISSUED = "IOV APP SubCA2"
 
 
 def _scoped_bundle(bundle: bytes) -> bytes:
-    """Select the validated three authorities required by the Pakistan flow."""
+    """Select the validated three authorities required by the APAC flow."""
     blocks = _pem_certificate_blocks(bundle, expected_count=4)
     by_subject: dict[str, bytes] = {}
     for pem, der in blocks:
@@ -43,12 +43,12 @@ def _scoped_bundle(bundle: bytes) -> bytes:
         if len(names) != 1 or names[0] in by_subject:
             raise EuIdentityError("ca_bundle_invalid")
         by_subject[names[0]] = pem
-    if set(by_subject) != {_ROOT, _GENERAL, _LEGACY_ISSUED, _PAKISTAN_ISSUED}:
+    if set(by_subject) != {_ROOT, _GENERAL, _LEGACY_ISSUED, _APAC_ISSUED}:
         raise EuIdentityError("ca_bundle_invalid")
-    return b"\n".join(by_subject[name] for name in (_ROOT, _GENERAL, _PAKISTAN_ISSUED)) + b"\n"
+    return b"\n".join(by_subject[name] for name in (_ROOT, _GENERAL, _APAC_ISSUED)) + b"\n"
 
 
-def create_pakistan_bootstrap_context(material: EuBootstrapMaterial, *, now: datetime | None = None) -> ssl.SSLContext:
+def create_apac_bootstrap_context(material: EuBootstrapMaterial, *, now: datetime | None = None) -> ssl.SSLContext:
     """Validate the bootstrap key/chain before creating a host-scoped context."""
     if type(material) is not EuBootstrapMaterial:
         raise EuIdentityError("bootstrap_identity_invalid")
@@ -56,7 +56,7 @@ def create_pakistan_bootstrap_context(material: EuBootstrapMaterial, *, now: dat
     return create_eu_bootstrap_ssl_context(scoped, now=now)
 
 
-def create_pakistan_issued_context(
+def create_apac_issued_context(
     identity: EuIssuedIdentity, *, ca_bundle: bytes, now: datetime | None = None,
 ) -> ssl.SSLContext:
     """Validate issued identity, issuer and signature without fallback."""
@@ -72,11 +72,11 @@ def create_pakistan_issued_context(
         if key.private_bytes(serialization.Encoding.DER, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()) != key_der:
             raise EuIdentityError("issued_private_key_encoding_invalid")
         _validate_leaf_identity(
-            certificate, key, expected_issuer=_PAKISTAN_ISSUED,
+            certificate, key, expected_issuer=_APAC_ISSUED,
             now=_normalized_now(now), minimum_remaining_validity=timedelta(hours=24),
         )
         return _create_identity_context(
-            certificate=certificate, private_key=key, ca_bundle=_scoped_bundle(ca_bundle), expected_issuer=_PAKISTAN_ISSUED,
+            certificate=certificate, private_key=key, ca_bundle=_scoped_bundle(ca_bundle), expected_issuer=_APAC_ISSUED,
         )
     except EuIdentityError:
         raise
