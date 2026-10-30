@@ -9,10 +9,12 @@ import pytest
 from custom_components.gwm_ora.gwm_client._protocol import _TransportResponse
 from custom_components.gwm_ora.gwm_client.apac_auth import ApacCredentials
 from custom_components.gwm_ora.gwm_client.apac_auth_client import ApacAuthClient, ApacTokens
+from custom_components.gwm_ora.gwm_client.apac_identity import _register_validated_context
 from custom_components.gwm_ora.gwm_client.apac_material import ApacMaterial
 from custom_components.gwm_ora.gwm_client.crypto import GeneratedClientCertificateRequest
 from custom_components.gwm_ora.gwm_client.errors import GwmDeadlineExceededError, GwmSchemaError
 from custom_components.gwm_ora.gwm_client.eu_identity import EuBootstrapMaterial
+from custom_components.gwm_ora.gwm_client.regions import TlsMode
 
 
 class FakeTransport:
@@ -98,6 +100,7 @@ async def test_enrollment_payload_uses_the_client_schema_error(monkeypatch) -> N
 
     context = ssl.create_default_context()
     context.set_ciphers("DEFAULT:@SECLEVEL=0")
+    _register_validated_context(context, TlsMode.APAC_BOOTSTRAP_MTLS)
     monkeypatch.setattr(auth, "generate_client_certificate_request", lambda *args, **kwargs: GeneratedClientCertificateRequest("fake-csr", "c3ludGhldGljLWtleQ=="))
     monkeypatch.setattr(auth, "create_apac_bootstrap_context", lambda *args, **kwargs: context)
     response = _TransportResponse(200, {}, b'{"code":"000000","data":{"encoded":123}}')
@@ -119,6 +122,10 @@ async def test_enrollment_checks_issued_identity_before_return(monkeypatch, coun
     client = ApacAuthClient(material=material, credentials=ApacCredentials("fake@example.invalid", "fake-password", "a" * 32, country=country), h5_context=context, transport=transport)
     identity_context = ssl.create_default_context()
     identity_context.set_ciphers("DEFAULT:@SECLEVEL=0")
+    _register_validated_context(identity_context, TlsMode.APAC_BOOTSTRAP_MTLS)
+    issued_context = ssl.create_default_context()
+    issued_context.set_ciphers("DEFAULT:@SECLEVEL=0")
+    _register_validated_context(issued_context, TlsMode.APAC_ISSUED_MTLS)
     csr_countries = []
     def generate(country_code, *args, **kwargs):
         """Record the country passed into synthetic CSR generation."""
@@ -129,10 +136,10 @@ async def test_enrollment_checks_issued_identity_before_return(monkeypatch, coun
     checks = []
     def validate(identity, **kwargs):
         checks.append((identity, kwargs["ca_bundle"]))
-        return identity_context
+        return issued_context
     monkeypatch.setattr(auth, "create_apac_issued_context", validate)
     issued = await client.enroll_identity(ApacTokens("fake-access", "fake-refresh", "fake-gw", "fake-bean"))
-    assert issued.app_ssl_context is identity_context
+    assert issued.app_ssl_context is issued_context
     assert len(checks) == 1
     assert [r.operation for r in transport.requests] == ["enroll_certificate"]
     assert "fake" not in repr(issued)

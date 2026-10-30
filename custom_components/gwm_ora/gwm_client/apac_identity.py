@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import binascii
 import ssl
+import threading
+import weakref
 from datetime import datetime, timedelta
 
 from cryptography import x509
@@ -27,11 +29,27 @@ from .eu_identity import (
     _validate_leaf_identity,
     create_eu_bootstrap_ssl_context,
 )
+from .regions import TlsMode
 
 _ROOT = "GWM Root CA"
 _GENERAL = "IOV APP General SubCA"
 _LEGACY_ISSUED = "IOV APP SubCA"
 _APAC_ISSUED = "IOV APP SubCA2"
+_CONTEXT_ROLES: weakref.WeakKeyDictionary[ssl.SSLContext, TlsMode] = weakref.WeakKeyDictionary()
+_CONTEXT_LOCK = threading.Lock()
+
+
+def _register_validated_context(context: ssl.SSLContext, mode: TlsMode) -> ssl.SSLContext:
+    """Remember a validated identity's role without retaining its context."""
+    with _CONTEXT_LOCK:
+        _CONTEXT_ROLES[context] = mode
+    return context
+
+
+def _is_validated_context(context: ssl.SSLContext, mode: TlsMode) -> bool:
+    """Accept only contexts returned by the matching APAC identity validator."""
+    with _CONTEXT_LOCK:
+        return _CONTEXT_ROLES.get(context) is mode
 
 
 def _scoped_bundle(bundle: bytes) -> bytes:
@@ -53,7 +71,8 @@ def create_apac_bootstrap_context(material: EuBootstrapMaterial, *, now: datetim
     if type(material) is not EuBootstrapMaterial:
         raise EuIdentityError("bootstrap_identity_invalid")
     scoped = EuBootstrapMaterial(material.certificate_data, material.transformed_private_key_data, _scoped_bundle(material.ca_bundle))
-    return create_eu_bootstrap_ssl_context(scoped, now=now)
+    context = create_eu_bootstrap_ssl_context(scoped, now=now)
+    return _register_validated_context(context, TlsMode.APAC_BOOTSTRAP_MTLS)
 
 
 def create_apac_issued_context(
@@ -75,9 +94,10 @@ def create_apac_issued_context(
             certificate, key, expected_issuer=_APAC_ISSUED,
             now=_normalized_now(now), minimum_remaining_validity=timedelta(hours=24),
         )
-        return _create_identity_context(
+        context = _create_identity_context(
             certificate=certificate, private_key=key, ca_bundle=_scoped_bundle(ca_bundle), expected_issuer=_APAC_ISSUED,
         )
+        return _register_validated_context(context, TlsMode.APAC_ISSUED_MTLS)
     except EuIdentityError:
         raise
     except (TypeError, ValueError, binascii.Error, UnsupportedAlgorithm):

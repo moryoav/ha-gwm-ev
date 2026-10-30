@@ -7,10 +7,12 @@ import ssl
 import pytest
 
 from custom_components.gwm_ora.gwm_client._protocol import _TransportResponse
+from custom_components.gwm_ora.gwm_client.apac_identity import _register_validated_context
 from custom_components.gwm_ora.gwm_client.apac_material import ApacMaterial
 from custom_components.gwm_ora.gwm_client.apac_read import ApacReadClient, ApacReadSession
 from custom_components.gwm_ora.gwm_client.errors import GwmDeadlineExceededError, GwmSchemaError
 from custom_components.gwm_ora.gwm_client.eu_identity import EuBootstrapMaterial
+from custom_components.gwm_ora.gwm_client.regions import TlsMode
 
 
 class FakeTransport:
@@ -38,6 +40,7 @@ def _client(transport: FakeTransport) -> ApacReadClient:
     )
     context = ssl.create_default_context()
     context.set_ciphers("DEFAULT:@SECLEVEL=0")
+    _register_validated_context(context, TlsMode.APAC_ISSUED_MTLS)
     session = ApacReadSession("a" * 32, "synthetic-token", context, country="PK")
     return ApacReadClient(material=material, session=session, transport=transport)
 

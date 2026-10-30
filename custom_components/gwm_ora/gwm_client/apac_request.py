@@ -9,6 +9,7 @@ from urllib.parse import quote
 from ._dotnet_json import encode_dotnet_json
 from ._protocol import _TransportRequest
 from .apac_endpoints import apac_endpoint
+from .apac_identity import _is_validated_context
 from .apac_material import ApacMaterial
 from .apac_policy import apac_gateways, validate_apac_country
 from .regions import TlsMode
@@ -59,7 +60,7 @@ def prepare_apac_request(
             if ssl_context.security_level <= 0:
                 raise ValueError("invalid")
         elif gateway.tls_mode in {TlsMode.APAC_BOOTSTRAP_MTLS, TlsMode.APAC_ISSUED_MTLS}:
-            if ssl_context.security_level != 0:
+            if ssl_context.security_level != 0 or not _is_validated_context(ssl_context, gateway.tls_mode):
                 raise ValueError("invalid")
         else:
             raise ValueError("invalid")

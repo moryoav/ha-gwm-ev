@@ -4,15 +4,18 @@ import ssl
 
 import pytest
 
+from custom_components.gwm_ora.gwm_client.apac_identity import _register_validated_context
 from custom_components.gwm_ora.gwm_client.apac_material import ApacMaterial
 from custom_components.gwm_ora.gwm_client.apac_request import prepare_apac_request
 from custom_components.gwm_ora.gwm_client.eu_identity import EuBootstrapMaterial
+from custom_components.gwm_ora.gwm_client.regions import TlsMode
 
 
 def _args(*, mtls: bool = False) -> dict:
     context = ssl.create_default_context()
     if mtls:
         context.set_ciphers("DEFAULT:@SECLEVEL=0")
+        _register_validated_context(context, TlsMode.APAC_ISSUED_MTLS)
     return {
         "material": ApacMaterial(
             EuBootstrapMaterial(b"synthetic-certificate", b"c3ludGhldGljLWtleQ==", b"synthetic-ca"),
@@ -88,3 +91,21 @@ def test_default_context_cannot_replace_an_mtls_identity(operation: str) -> None
         args["vehicle_id"] = "SYNTHETIC-VEHICLE"
     with pytest.raises(ValueError, match="^apac_request_invalid$"):
         prepare_apac_request(**args, operation=operation)
+
+
+@pytest.mark.parametrize("registered_mode", [None, TlsMode.APAC_BOOTSTRAP_MTLS])
+def test_unvalidated_or_bootstrap_context_cannot_reach_the_vehicle_host(registered_mode: TlsMode | None) -> None:
+    """An untagged legacy context or bootstrap identity cannot authorize reads."""
+    args = _args()
+    context = args["ssl_context"]
+    context.set_ciphers("DEFAULT:@SECLEVEL=0")
+    if registered_mode is not None:
+        _register_validated_context(context, registered_mode)
+    with pytest.raises(ValueError, match="^apac_request_invalid$"):
+        prepare_apac_request(**args, operation="acquire_vehicles", access_token="synthetic-token")
+
+
+def test_issued_context_cannot_replace_the_bootstrap_identity() -> None:
+    """Do not send the account-issued identity to the enrollment gateway."""
+    with pytest.raises(ValueError, match="^apac_request_invalid$"):
+        prepare_apac_request(**_args(mtls=True), operation="enroll_certificate", access_token="synthetic-token", enrollment_device_id="a" * 32 + "1234567890123", body={})

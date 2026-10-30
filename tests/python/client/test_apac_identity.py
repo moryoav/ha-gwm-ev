@@ -9,8 +9,15 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
 
-from custom_components.gwm_ora.gwm_client.apac_identity import _scoped_bundle, create_apac_issued_context
-from custom_components.gwm_ora.gwm_client.eu_identity import EuIdentityError, EuIssuedIdentity
+from custom_components.gwm_ora.gwm_client.apac_identity import (
+    _is_validated_context,
+    _scoped_bundle,
+    create_apac_issued_context,
+)
+from custom_components.gwm_ora.gwm_client.apac_material import ApacMaterial
+from custom_components.gwm_ora.gwm_client.apac_request import prepare_apac_request
+from custom_components.gwm_ora.gwm_client.eu_identity import EuBootstrapMaterial, EuIdentityError, EuIssuedIdentity
+from custom_components.gwm_ora.gwm_client.regions import TlsMode
 
 NOW = datetime(2030, 1, 1, tzinfo=UTC)
 
@@ -44,6 +51,10 @@ def test_apac_issuer_chain_is_checked_without_eu_changes() -> None:
     context = create_apac_issued_context(_issued(cert, key), ca_bundle=bundle, now=NOW)
     assert context.check_hostname
     assert context.verify_mode.value == 2
+    assert _is_validated_context(context, TlsMode.APAC_ISSUED_MTLS)
+    assert not _is_validated_context(context, TlsMode.APAC_BOOTSTRAP_MTLS)
+    request = prepare_apac_request(operation="acquire_vehicles", material=ApacMaterial(EuBootstrapMaterial(b"synthetic-cert", b"c3ludGhldGljLWtleQ==", bundle), "synthetic-key", "synthetic-secret"), ssl_context=context, device_id="a" * 32, country="PK", access_token="synthetic-token")
+    assert request.ssl_context is context
     assert len(_scoped_bundle(bundle).split(b"-----BEGIN CERTIFICATE-----")) == 4
     wrong_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     with pytest.raises(EuIdentityError, match="^identity_chain_invalid$"):
