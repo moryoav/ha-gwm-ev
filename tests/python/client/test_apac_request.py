@@ -9,13 +9,16 @@ from custom_components.gwm_ora.gwm_client.apac_request import prepare_apac_reque
 from custom_components.gwm_ora.gwm_client.eu_identity import EuBootstrapMaterial
 
 
-def _args() -> dict:
+def _args(*, mtls: bool = False) -> dict:
+    context = ssl.create_default_context()
+    if mtls:
+        context.set_ciphers("DEFAULT:@SECLEVEL=0")
     return {
         "material": ApacMaterial(
             EuBootstrapMaterial(b"synthetic-certificate", b"c3ludGhldGljLWtleQ==", b"synthetic-ca"),
             "synthetic-key", "synthetic-secret",
         ),
-        "ssl_context": ssl.create_default_context(),
+        "ssl_context": context,
         "device_id": "a" * 32,
         "country": "PK",
     }
@@ -23,7 +26,7 @@ def _args() -> dict:
 
 def test_signed_status_request_is_read_only_and_redacted() -> None:
     request = prepare_apac_request(
-        **_args(), operation="get_last_status", access_token="synthetic-token", vehicle_id="synthetic/vehicle"
+        **_args(mtls=True), operation="get_last_status", access_token="synthetic-token", vehicle_id="synthetic/vehicle"
     )
     assert request.method == "GET"
     assert request.url.startswith("https://ap-app-gateway.gwmcloud.com/")
@@ -58,6 +61,30 @@ def test_bad_tls_and_missing_authentication_fail_closed() -> None:
 @pytest.mark.parametrize("country", ["TH", "MY", "ID", "PK"])
 def test_selected_country_reaches_request_headers(country: str) -> None:
     """Preserve the selected APAC country instead of defaulting to Pakistan."""
-    args = {**_args(), "country": country}
+    args = {**_args(mtls=True), "country": country}
     request = prepare_apac_request(**args, operation="acquire_vehicles", access_token="synthetic-token")
     assert request.headers["country"] == request.headers["regionCode"] == country
+
+
+@pytest.mark.parametrize("operation", ["login", "request_verification", "verify_code", "refresh_token", "get_user_info"])
+def test_legacy_mtls_policy_cannot_reach_h5_gateways(operation: str) -> None:
+    """Reject weakened identity contexts on standard TLS authentication hosts."""
+    args = _args(mtls=True)
+    if operation == "get_user_info":
+        args["access_token"] = "synthetic-token"
+    else:
+        args["body"] = {}
+    with pytest.raises(ValueError, match="^apac_request_invalid$"):
+        prepare_apac_request(**args, operation=operation)
+
+
+@pytest.mark.parametrize("operation", ["enroll_certificate", "acquire_vehicles", "get_last_status", "get_vehicle_basics"])
+def test_default_context_cannot_replace_an_mtls_identity(operation: str) -> None:
+    """Require APAC identity policy for enrollment and vehicle gateway calls."""
+    args = {**_args(), "access_token": "synthetic-token"}
+    if operation == "enroll_certificate":
+        args.update(body={}, enrollment_device_id="a" * 32 + "1234567890123")
+    elif operation != "acquire_vehicles":
+        args["vehicle_id"] = "SYNTHETIC-VEHICLE"
+    with pytest.raises(ValueError, match="^apac_request_invalid$"):
+        prepare_apac_request(**args, operation=operation)

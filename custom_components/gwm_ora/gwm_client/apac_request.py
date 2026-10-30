@@ -11,6 +11,7 @@ from ._protocol import _TransportRequest
 from .apac_endpoints import apac_endpoint
 from .apac_material import ApacMaterial
 from .apac_policy import apac_gateways, validate_apac_country
+from .regions import TlsMode
 from .signing import sign_request
 
 _HEX_DEVICE = re.compile(r"[0-9A-Fa-f]{32}\Z")
@@ -42,14 +43,25 @@ def prepare_apac_request(
     try:
         validate_apac_country(country)
         endpoint = apac_endpoint(operation)
+        gateway = apac_gateways(material)[endpoint.gateway]
         if (
             not isinstance(ssl_context, ssl.SSLContext)
+            or not ssl_context.check_hostname
+            or ssl_context.verify_mode != ssl.CERT_REQUIRED
             or ssl_context.minimum_version < ssl.TLSVersion.TLSv1_2
             or (
                 ssl_context.maximum_version != ssl.TLSVersion.MAXIMUM_SUPPORTED
                 and ssl_context.maximum_version < ssl_context.minimum_version
             )
         ):
+            raise ValueError("invalid")
+        if gateway.tls_mode is TlsMode.DEFAULT:
+            if ssl_context.security_level <= 0:
+                raise ValueError("invalid")
+        elif gateway.tls_mode in {TlsMode.APAC_BOOTSTRAP_MTLS, TlsMode.APAC_ISSUED_MTLS}:
+            if ssl_context.security_level != 0:
+                raise ValueError("invalid")
+        else:
             raise ValueError("invalid")
         if not isinstance(device_id, str) or _HEX_DEVICE.fullmatch(device_id) is None:
             raise ValueError("invalid")
@@ -83,7 +95,6 @@ def prepare_apac_request(
             query = ""
         else:
             raise ValueError("invalid")
-        gateway = apac_gateways(material)[endpoint.gateway]
         signed = sign_request(gateway.signing_profile, endpoint.method, gateway.base_url + endpoint.path + query, body_text)
         headers = {
             **_BASE_HEADERS, "country": country, "regionCode": country, "deviceId": header_device, "iccid": header_device,

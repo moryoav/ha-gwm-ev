@@ -29,7 +29,9 @@ def _client(transport: FakeTransport) -> ApacReadClient:
         EuBootstrapMaterial(b"synthetic-certificate", b"c3ludGhldGljLWtleQ==", b"synthetic-ca"),
         "synthetic-key", "synthetic-secret",
     )
-    session = ApacReadSession("a" * 32, "synthetic-token", ssl.create_default_context(), country="PK")
+    context = ssl.create_default_context()
+    context.set_ciphers("DEFAULT:@SECLEVEL=0")
+    session = ApacReadSession("a" * 32, "synthetic-token", context, country="PK")
     return ApacReadClient(material=material, session=session, transport=transport)
 
 

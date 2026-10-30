@@ -38,13 +38,13 @@ def apac_gateways(material: ApacMaterial) -> Mapping[GatewayRole, GatewayConfig]
                 GatewayRole.APP_V1,
                 "https://ap-app-gateway.gwmcloud.com/app-api/api/v1.0/",
                 profile,
-                TlsMode.EU_ISSUED_MTLS,
+                TlsMode.APAC_ISSUED_MTLS,
             ),
             GatewayRole.CERTIFICATE_V1: GatewayConfig(
                 GatewayRole.CERTIFICATE_V1,
                 "https://ap-app-gateway-common.gwmcloud.com/app-api/api/v1.0/",
                 profile,
-                TlsMode.EU_BOOTSTRAP_MTLS,
+                TlsMode.APAC_BOOTSTRAP_MTLS,
             ),
         }
     )

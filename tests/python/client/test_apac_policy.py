@@ -22,8 +22,8 @@ def test_gateway_policy_is_immutable_and_uses_injected_profile() -> None:
     routes = apac_gateways(_material())
     assert routes[GatewayRole.AUTH_V2].base_url == "https://ap-h5-gateway.gwmcloud.com/app-api/api/v2.0/"
     assert routes[GatewayRole.H5_V1].base_url == "https://ap-h5-gateway.gwmcloud.com/app-api/api/v1.0/"
-    assert routes[GatewayRole.APP_V1].tls_mode is TlsMode.EU_ISSUED_MTLS
-    assert routes[GatewayRole.CERTIFICATE_V1].tls_mode is TlsMode.EU_BOOTSTRAP_MTLS
+    assert routes[GatewayRole.APP_V1].tls_mode is TlsMode.APAC_ISSUED_MTLS
+    assert routes[GatewayRole.CERTIFICATE_V1].tls_mode is TlsMode.APAC_BOOTSTRAP_MTLS
     assert routes[GatewayRole.APP_V1].signing_profile.app_secret == "synthetic-secret"
     with pytest.raises(TypeError):
         routes[GatewayRole.APP_V1] = routes[GatewayRole.H5_V1]  # type: ignore[index]
@@ -42,8 +42,19 @@ def test_app_listed_countries_have_explicit_calling_codes(country: str, calling_
     assert apac_calling_code(country) == calling_code
 
 
-def test_existing_regional_policy_does_not_change() -> None:
-    before = get_region_protocol("eu")
+@pytest.mark.parametrize("region", ["eu", "aus", "rus"])
+def test_existing_regional_policy_does_not_change(region: str) -> None:
+    before = get_region_protocol(region)
+    before_gateways = dict(before.gateways)
+    before_headers = dict(before.base_headers)
     apac_gateways(_material())
-    assert get_region_protocol("eu") is before
+    assert get_region_protocol(region) is before
+    assert dict(before.gateways) == before_gateways
+    assert dict(before.base_headers) == before_headers
     assert validate_apac_country("PK") == "PK"
+
+
+def test_apac_is_not_registered_as_an_existing_region() -> None:
+    """Keep the experimental APAC client outside production region routing."""
+    with pytest.raises(ValueError, match="^unsupported region$"):
+        get_region_protocol("apac")

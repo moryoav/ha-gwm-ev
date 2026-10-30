@@ -61,20 +61,22 @@ async def test_enrollment_checks_issued_identity_before_return(monkeypatch, coun
     material = ApacMaterial(EuBootstrapMaterial(b"fake-cert", b"c3ludGhldGljLWtleQ==", b"fake-ca"), "fake-key", "fake-secret")
     context = ssl.create_default_context()
     client = ApacAuthClient(material=material, credentials=ApacCredentials("fake@example.invalid", "fake-password", "a" * 32, country=country), h5_context=context, transport=transport)
+    identity_context = ssl.create_default_context()
+    identity_context.set_ciphers("DEFAULT:@SECLEVEL=0")
     csr_countries = []
     def generate(country_code, *args, **kwargs):
         """Record the country passed into synthetic CSR generation."""
         csr_countries.append(country_code)
         return GeneratedClientCertificateRequest("fake-csr", "c3ludGhldGljLWtleQ==")
     monkeypatch.setattr(auth, "generate_client_certificate_request", generate)
-    monkeypatch.setattr(auth, "create_apac_bootstrap_context", lambda material: context)
+    monkeypatch.setattr(auth, "create_apac_bootstrap_context", lambda material: identity_context)
     checks = []
     def validate(identity, **kwargs):
         checks.append((identity, kwargs["ca_bundle"]))
-        return context
+        return identity_context
     monkeypatch.setattr(auth, "create_apac_issued_context", validate)
     issued = await client.enroll_identity(ApacTokens("fake-access", "fake-refresh", "fake-gw", "fake-bean"))
-    assert issued.app_ssl_context is context
+    assert issued.app_ssl_context is identity_context
     assert len(checks) == 1
     assert [r.operation for r in transport.requests] == ["enroll_certificate"]
     assert "fake" not in repr(issued)
