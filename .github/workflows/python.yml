@@ -2,9 +2,9 @@ name: Python
 
 on:
   push:
-    branches: [main]
+    branches: [main, feature/apac]
   pull_request:
-    branches: [main]
+    branches: [main, feature/apac]
 
 permissions:
   contents: read
