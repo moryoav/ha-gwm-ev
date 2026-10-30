@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any
 
 import voluptuous as vol
@@ -54,6 +55,7 @@ from .const import (
     MAX_POLL_INTERVAL_SECONDS,
     MIN_POLL_INTERVAL_SECONDS,
     REGION_ANZ,
+    REGION_APAC,
     REGION_CHINA,
     REGION_EU,
     REGION_RUSSIA,
@@ -80,6 +82,8 @@ from .gwm_client import (
     RussiaIdentityError,
     RussiaVerificationRequired,
 )
+from .gwm_client.apac_flow import ApacAuthenticated, ApacVerificationRequired
+from .gwm_client.apac_material import load_apac_material
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -88,6 +92,7 @@ _REGION_OPTIONS = [
     {"value": REGION_ANZ, "label": "Australia / New Zealand"},
     {"value": REGION_RUSSIA, "label": "Russia"},
     {"value": REGION_CHINA, "label": "Mainland China"},
+    {"value": REGION_APAC, "label": "Asia-Pacific (read-only)"},
 ]
 _ANZ_AUTHENTICATION_OPTIONS = [
     {
@@ -104,18 +109,21 @@ _DEFAULT_COUNTRIES = {
     REGION_ANZ: "AU",
     REGION_RUSSIA: "RU",
     REGION_CHINA: "CN",
+    REGION_APAC: "PK",
 }
 _AUTHENTICATED_TYPES = (
     EuAuthenticated,
     AnzAuthenticated,
     RussiaAuthenticated,
     ChinaAuthenticated,
+    ApacAuthenticated,
 )
 _VERIFICATION_TYPES = (
     EuVerificationRequired,
     AnzVerificationRequired,
     RussiaVerificationRequired,
     ChinaVerificationRequired,
+    ApacVerificationRequired,
 )
 
 
@@ -147,7 +155,11 @@ def _account_schema(
 ) -> vol.Schema:
     defaults = defaults or {}
     fields: dict[vol.Marker, object] = {}
-    if region == REGION_EU:
+    if region == REGION_APAC:
+        fields[vol.Required(CONF_COUNTRY, default=defaults.get(CONF_COUNTRY, "PK"))] = (
+            selector.CountrySelector(selector.CountrySelectorConfig(countries=["PK", "TH", "MY", "ID"]))
+        )
+    elif region == REGION_EU:
         fields[vol.Required(CONF_COUNTRY, default=defaults.get(CONF_COUNTRY, "DE"))] = (
             selector.CountrySelector()
         )
@@ -210,6 +222,13 @@ def _cloud_options_schema(entry: ConfigEntry, defaults: dict[str, Any] | None = 
             default=current.get(CONF_LOG_LEVEL, DEFAULT_LOG_LEVEL),
         ): vol.In(LOG_LEVELS),
     }
+    if region == REGION_APAC:
+        fields = {
+            marker: value
+            for marker, value in fields.items()
+            if marker.schema not in {CONF_ENABLE_REMOTE_COMMANDS, CONF_ENABLE_CHARGING_CONTROL}
+        }
+        return vol.Schema(fields)
     if region != REGION_CHINA:
         fields[
             vol.Optional(
@@ -565,7 +584,15 @@ class GwmConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if credentials is None:
             return None, "invalid_account"
         if self._cloud_authenticator is None:
-            self._cloud_authenticator = GwmCloudAuthenticator()
+            self._cloud_authenticator = (
+                GwmCloudAuthenticator(
+                    apac_material_loader=lambda: load_apac_material(
+                        Path(self.hass.config.path(".storage", "gwm_apac_material"))
+                    )
+                )
+                if credentials.region == REGION_APAC
+                else GwmCloudAuthenticator()
+            )
         try:
             result = await self._cloud_authenticator.async_authenticate(
                 credentials,
@@ -793,6 +820,11 @@ class GwmOptionsFlow(config_entries.OptionsFlowWithReload):
         errors: dict[str, str] = {}
         if user_input is not None:
             normalized = dict(user_input)
+            if entry.data.get(CONF_REGION) == REGION_APAC:
+                normalized.pop(CONF_ENABLE_REMOTE_COMMANDS, None)
+                normalized.pop(CONF_ENABLE_CHARGING_CONTROL, None)
+                normalized.pop(CONF_SECURITY_PIN, None)
+                return self.async_create_entry(data=normalized)
             pin = normalized.get(CONF_SECURITY_PIN)
             normalized_pin = pin.strip() if isinstance(pin, str) else ""
             existing_pin = entry.options.get(CONF_SECURITY_PIN)

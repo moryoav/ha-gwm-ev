@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 from dataclasses import dataclass, field
 
@@ -52,6 +53,16 @@ class ApacCredentials:
     def account_type(self) -> str:
         """Select the phone or email account representation without altering it."""
         return "2" if "@" in self.account else "1"
+
+    @property
+    def account_binding(self) -> str:
+        """Bind private session state to this region, country and account."""
+        digest = hashlib.sha256()
+        digest.update(b"gwm-apac-account-binding-v1\0")
+        digest.update(self.country.encode("ascii"))
+        digest.update(b"\0")
+        digest.update(self.account.encode("utf-8"))
+        return digest.hexdigest()
 
 
 def login_body(credentials: ApacCredentials, verification_code: str | None = None) -> dict[str, object]:

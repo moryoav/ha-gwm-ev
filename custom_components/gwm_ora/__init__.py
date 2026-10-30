@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import timedelta
+from pathlib import Path
 
 import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
@@ -45,6 +46,7 @@ from .const import (
     DOMAIN,
     MIN_CHARGE_WINDOW_MINUTES,
     PLATFORMS,
+    REGION_APAC,
     REGION_CHINA,
     SERVICE_CLEAR_CHARGING_PLAN,
     SERVICE_SET_CHARGING_PLAN,
@@ -62,6 +64,8 @@ from .gwm_client import (
     GwmHttpError,
     RussiaAuthenticated,
 )
+from .gwm_client.apac_flow import ApacAuthenticated
+from .gwm_client.apac_material import load_apac_material
 
 
 @dataclass(slots=True)
@@ -317,7 +321,16 @@ async def _async_load_cloud_bootstrap(
         ) from err
 
     try:
-        result = await GwmCloudAuthenticator().async_authenticate(
+        authenticator = (
+            GwmCloudAuthenticator(
+                apac_material_loader=lambda: load_apac_material(
+                    Path(hass.config.path(".storage", "gwm_apac_material"))
+                )
+            )
+            if credentials.region == REGION_APAC
+            else GwmCloudAuthenticator()
+        )
+        result = await authenticator.async_authenticate(
             credentials,
             state=auth_state,
             allow_session_reclaim=False,
@@ -335,6 +348,7 @@ async def _async_load_cloud_bootstrap(
                 AnzAuthenticated,
                 RussiaAuthenticated,
                 ChinaAuthenticated,
+                ApacAuthenticated,
             ),
         ):
             await state_store.async_clear_auth_state(dict(entry.data))

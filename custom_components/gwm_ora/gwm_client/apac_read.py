@@ -1,6 +1,6 @@
 """An isolated APAC vehicle-read client with injected transport and TLS.
 
-This draft does not manage login, enrollment, persistence or Home Assistant.
+Authentication, enrollment and private persistence are managed by the caller.
 It exposes no vehicle-control or charging-write method.
 """
 
@@ -21,6 +21,7 @@ from .models import (
     CloudVehicle,
     CloudVehicleBasics,
     CloudVehicleStatus,
+    VehicleIdentifier,
     parse_cloud_vehicle_basics,
     parse_cloud_vehicle_status,
     parse_cloud_vehicles,
@@ -44,14 +45,42 @@ class ApacReadSession:
 class ApacReadClient:
     """Only discovery and status reads, with a caller-owned transport."""
 
-    def __init__(self, *, material: ApacMaterial, session: ApacReadSession, transport: _AsyncTransport) -> None:
+    def __init__(
+        self, *, material: ApacMaterial, session: ApacReadSession, transport: _AsyncTransport,
+        owns_transport: bool = False,
+    ) -> None:
         """Retain a private session and caller-owned read transport."""
-        if type(material) is not ApacMaterial or type(session) is not ApacReadSession:
+        if type(material) is not ApacMaterial or type(session) is not ApacReadSession or type(owns_transport) is not bool:
             raise ValueError("apac_session_invalid")
         self._material = material
         self._session = session
         self._transport = transport
+        self._owns_transport = owns_transport
+        self._closed = False
         self._lock = asyncio.Lock()
+
+    @property
+    def authenticated(self) -> bool:
+        """Report whether this private read session is still usable locally."""
+        return not self._closed
+
+    def replace_session(self, session: ApacReadSession) -> None:
+        """Accept a refreshed session only for the same country and device."""
+        if (
+            type(session) is not ApacReadSession
+            or session.country != self._session.country
+            or session.device_id != self._session.device_id
+            or self._closed
+        ):
+            raise ValueError("apac_session_invalid")
+        self._session = session
+
+    async def aclose(self) -> None:
+        """Close an owned transport without closing caller-owned resources."""
+        if not self._closed:
+            self._closed = True
+            if self._owns_transport:
+                await self._transport.aclose()
 
     async def _read(
         self,
@@ -61,6 +90,8 @@ class ApacReadClient:
         """Execute one allowlisted vehicle read with a bounded deadline."""
         if operation not in {"acquire_vehicles", "get_last_status", "get_vehicle_basics"}:
             raise ValueError("apac_operation_not_supported")
+        if self._closed:
+            raise ValueError("apac_session_invalid")
         loop = asyncio.get_running_loop()
         deadline = _Deadline(loop.time() + 30.0)
         try:
@@ -89,17 +120,17 @@ class ApacReadClient:
         except ValueError:
             raise GwmSchemaError(operation="acquire_vehicles") from None
 
-    async def get_last_status(self, vehicle_id: str) -> CloudVehicleStatus:
+    async def get_last_status(self, vehicle_id: str | VehicleIdentifier) -> CloudVehicleStatus:
         """Read the last reported status for one vehicle."""
-        data = await self._read("get_last_status", vehicle_id)
+        data = await self._read("get_last_status", vehicle_id.value if isinstance(vehicle_id, VehicleIdentifier) else vehicle_id)
         try:
             return parse_cloud_vehicle_status(data, allow_stringified_numbers=True, allow_numbers_for_strings=True)
         except ValueError:
             raise GwmSchemaError(operation="get_last_status") from None
 
-    async def get_vehicle_basics(self, vehicle_id: str) -> CloudVehicleBasics:
+    async def get_vehicle_basics(self, vehicle_id: str | VehicleIdentifier) -> CloudVehicleBasics:
         """Read supported vehicle configuration values."""
-        data = await self._read("get_vehicle_basics", vehicle_id)
+        data = await self._read("get_vehicle_basics", vehicle_id.value if isinstance(vehicle_id, VehicleIdentifier) else vehicle_id)
         try:
             return parse_cloud_vehicle_basics(data, allow_numbers_for_strings=True)
         except ValueError:

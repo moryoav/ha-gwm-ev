@@ -80,7 +80,7 @@
       "invalid_verification_code": "The verification code was rejected or expired.",
       "rate_limited": "GWM rate-limited the request. Wait before trying again.",
       "service_error": "GWM rejected the request with an unsupported or unexpected response.",
-      "local_configuration_error": "The bundled regional security material could not be validated.",
+      "local_configuration_error": "The regional security material is missing or invalid.",
       "unsupported_region": "This cloud region is not available for setup yet.",
       "initialization_failed": "The downstream GWM services still could not initialize.",
       "session_reclaim_not_confirmed": "Confirm that you understand the ANZ single-session effect before continuing."

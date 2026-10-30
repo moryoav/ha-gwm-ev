@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import ssl
 from collections.abc import Awaitable, Callable, Mapping
 from contextlib import suppress
 from dataclasses import dataclass, field
@@ -31,6 +32,7 @@ from .const import (
     CONF_REGION,
     DOMAIN,
     REGION_ANZ,
+    REGION_APAC,
     REGION_CHINA,
     REGION_EU,
     REGION_RUSSIA,
@@ -79,7 +81,16 @@ from .gwm_client import (
     is_overseas_session_expired,
     map_vehicle_snapshot,
 )
+from .gwm_client.apac_auth import ApacCredentials
+from .gwm_client.apac_flow import ApacAuthenticated
+from .gwm_client.apac_identity import _is_validated_context
+from .gwm_client.apac_material import ApacMaterial
+from .gwm_client.apac_read import ApacReadClient, ApacReadSession
+from .gwm_client.apac_restore import restore_apac_session
+from .gwm_client.apac_state import ApacAuthState
 from .gwm_client.commands import ChinaRemoteCommandAction
+from .gwm_client.regions import TlsMode
+from .gwm_client.transport import AiohttpTransport
 
 _HANDOFF_TTL_SECONDS = 5 * 60
 _HANDOFF_DATA_KEY = f"{DOMAIN}_cloud_handoffs"
@@ -326,12 +337,15 @@ class GwmCloudBootstrap:
 
     region: str
     account_binding: str = field(repr=False)
-    state: EuAuthState | AnzAuthState | RussiaAuthState | ChinaAuthState = field(repr=False)
-    session: GwmSession | None = field(repr=False)
+    state: CloudAuthState = field(repr=False)
+    session: GwmSession | ApacReadSession | None = field(repr=False)
+    apac_material: ApacMaterial | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         if (
-            self.region not in {REGION_EU, REGION_ANZ, REGION_RUSSIA, REGION_CHINA}
+            self.region not in {REGION_EU, REGION_ANZ, REGION_RUSSIA, REGION_CHINA, REGION_APAC}
+            or (self.region == REGION_APAC) != (type(self.apac_material) is ApacMaterial)
+            or (self.region != REGION_APAC and self.apac_material is not None)
             or not isinstance(self.account_binding, str)
             or _ACCOUNT_BINDING.fullmatch(self.account_binding) is None
             or not _bootstrap_state_matches(
@@ -351,6 +365,19 @@ class GwmCloudBootstrap:
     ) -> GwmCloudBootstrap:
         """Create a handoff only from a complete regional authentication."""
 
+        if credentials.region == REGION_APAC:
+            if (
+                type(result) is not ApacAuthenticated
+                or not result.state.matches(credentials.client_credentials())
+            ):
+                raise GwmConfigurationError(operation="login")
+            return cls(
+                region=credentials.region,
+                account_binding=credentials.account_binding,
+                state=result.state,
+                session=result.session,
+                apac_material=result.material,
+            )
         if credentials.region == REGION_CHINA:
             if type(result) is not ChinaAuthenticated:
                 raise GwmConfigurationError(operation="login")
@@ -456,7 +483,7 @@ class GwmCloudClient:
         lock_window_commands_enabled: bool = False,
         charging_control_enabled: bool = False,
     ) -> None:
-        if region not in {REGION_EU, REGION_ANZ, REGION_RUSSIA, REGION_CHINA}:
+        if region not in {REGION_EU, REGION_ANZ, REGION_RUSSIA, REGION_CHINA, REGION_APAC}:
             raise GwmConfigurationError(operation="request")
         self.region = region
         self._client = client
@@ -480,9 +507,9 @@ class GwmCloudClient:
             or type(charging_control_enabled) is not bool
         ):
             raise GwmConfigurationError(operation="request")
-        self._climate_commands_enabled = climate_commands_enabled
-        self._lock_window_commands_enabled = lock_window_commands_enabled
-        self._charging_control_enabled = charging_control_enabled
+        self._climate_commands_enabled = climate_commands_enabled and region != REGION_APAC
+        self._lock_window_commands_enabled = lock_window_commands_enabled and region != REGION_APAC
+        self._charging_control_enabled = charging_control_enabled and region != REGION_APAC
         self._vehicles: dict[str, CloudVehicle] = {}
         self._china_climate_defaults: dict[str, CloudClimateConfiguration] = {}
 
@@ -518,6 +545,27 @@ class GwmCloudClient:
             or unique_id != cloud_unique_id(credentials)
         ):
             raise GwmConfigurationError(operation="login")
+
+        if credentials.region == REGION_APAC:
+            if type(bootstrap.session) is not ApacReadSession or type(bootstrap.apac_material) is not ApacMaterial:
+                raise GwmConfigurationError(operation="login")
+            apac_client = ApacReadClient(
+                material=bootstrap.apac_material,
+                session=bootstrap.session,
+                transport=AiohttpTransport.create_owned(max_response_bytes=4 * 1024 * 1024),
+                owns_transport=True,
+            )
+            return cls(
+                credentials.region,
+                cast(_OverseasReadClient, apac_client),
+                bootstrap=bootstrap,
+                credentials=credentials,
+                state_store=state_store,
+                entry_data=data,
+                climate_commands_enabled=climate_commands_enabled,
+                lock_window_commands_enabled=lock_window_commands_enabled,
+                charging_control_enabled=charging_control_enabled,
+            )
 
         if credentials.region == REGION_CHINA:
             if type(bootstrap.state) is not ChinaAuthState or bootstrap.session is not None:
@@ -705,6 +753,7 @@ class GwmCloudClient:
         temperature: int,
         operation_time_minutes: int,
     ) -> None:
+        self._ensure_apac_read_only("update_climate_defaults")
         if self.region == REGION_CHINA:
             vehicle = self._vehicles.get(identifier.value)
             if vehicle is None or (vehicle.platform or "").strip().casefold() not in {"navinfo", "beantech"}:
@@ -728,10 +777,14 @@ class GwmCloudClient:
     ) -> ChargingPlanInfo:
         """Read the current charging plan through the authenticated client."""
 
+        self._ensure_apac_read_only("get_charging_plan")
+
         return await self._async_with_session_renewal(lambda: self._client.get_charging_plan(identifier))
 
     async def async_set_charging_plan(self, command: ChargingPlanCommand) -> None:
         """Set or clear the charging plan through the authenticated client."""
+
+        self._ensure_apac_read_only("set_charging_plan")
 
         await self._async_with_session_renewal(lambda: self._client.set_charging_plan(command))
 
@@ -741,6 +794,7 @@ class GwmCloudClient:
         *,
         security_password_hash: str | None = None,
     ) -> RemoteCommandAcceptance:
+        self._ensure_apac_read_only("send_climate_command")
         if self.region == REGION_CHINA:
             return await self._async_with_session_renewal(
                 lambda: cast(_ChinaReadClient, self._client).send_climate_command(command)
@@ -760,6 +814,7 @@ class GwmCloudClient:
         *,
         security_password_hash: str | None = None,
     ) -> RemoteCommandAcceptance:
+        self._ensure_apac_read_only("send_lock_command")
         if self.region == REGION_CHINA:
             return await self._async_with_session_renewal(
                 lambda: cast(_ChinaReadClient, self._client).send_lock_command(command)
@@ -779,6 +834,7 @@ class GwmCloudClient:
         *,
         security_password_hash: str | None = None,
     ) -> RemoteCommandAcceptance:
+        self._ensure_apac_read_only("send_close_windows_command")
         if self.region == REGION_CHINA:
             return await self._async_with_session_renewal(
                 lambda: cast(_ChinaReadClient, self._client).send_close_windows_command(command)
@@ -800,6 +856,8 @@ class GwmCloudClient:
     ) -> RemoteCommandAcceptance:
         """Send one overseas front-defroster operation."""
 
+        self._ensure_apac_read_only("send_front_defroster_command")
+
         if self.region == REGION_CHINA:
             raise GwmRoutePolicyError(operation="send_front_defroster_command")
         if not isinstance(security_password_hash, str):
@@ -819,6 +877,8 @@ class GwmCloudClient:
     ) -> RemoteCommandAcceptance:
         """Send one overseas fixed-duration cabin-clean operation."""
 
+        self._ensure_apac_read_only("send_cabin_clean_command")
+
         if self.region == REGION_CHINA:
             raise GwmRoutePolicyError(operation="send_cabin_clean_command")
         if not isinstance(security_password_hash, str):
@@ -829,6 +889,11 @@ class GwmCloudClient:
                 security_password_hash=security_password_hash,
             )
         )
+
+    def _ensure_apac_read_only(self, operation: str) -> None:
+        """Deny unsupported APAC operations before any client invocation."""
+        if self.region == REGION_APAC:
+            raise GwmRoutePolicyError(operation=operation)
 
     async def async_send_vehicle_control_command(
         self,
@@ -922,6 +987,9 @@ class GwmCloudClient:
     ) -> T:
         """Retry one overseas operation after one serialized token rotation."""
 
+        if self.region == REGION_APAC:
+            return await self._async_with_apac_session_renewal(action)
+
         async with self._session_renewal_lock:
             await self._async_flush_pending_auth_state()
             observed_state = self._current_overseas_auth_state()
@@ -960,6 +1028,64 @@ class GwmCloudClient:
             with suppress(Exception):
                 await self.async_authentication_rejected()
             raise
+
+    async def _async_with_apac_session_renewal[T](self, action: Callable[[], Awaitable[T]]) -> T:
+        """Serialize APAC reads and retry once after safe token restoration."""
+        async with self._session_renewal_lock:
+            await self._async_flush_pending_auth_state()
+            try:
+                return await action()
+            except (GwmAuthenticationError, GwmApiError) as error:
+                if not is_overseas_session_expired(error):
+                    raise
+                trigger = error
+            bootstrap = self._bootstrap
+            credentials = self._credentials
+            client = self._client
+            if (
+                bootstrap is None
+                or type(bootstrap.state) is not ApacAuthState
+                or type(bootstrap.apac_material) is not ApacMaterial
+                or credentials is None
+                or type(client) is not ApacReadClient
+            ):
+                raise GwmAuthenticationError(operation=trigger.operation) from None
+            regional_credentials = credentials.client_credentials()
+            if type(regional_credentials) is not ApacCredentials:
+                raise GwmAuthenticationError(operation=trigger.operation) from None
+            try:
+                h5_context = await asyncio.to_thread(ssl.create_default_context)
+                restored = await restore_apac_session(
+                    credentials=regional_credentials,
+                    material=bootstrap.apac_material,
+                    state=bootstrap.state,
+                    h5_context=h5_context,
+                    transport=client._transport,
+                )
+                replacement = GwmCloudBootstrap(
+                    region=REGION_APAC,
+                    account_binding=credentials.account_binding,
+                    state=restored.state,
+                    session=restored.session,
+                    apac_material=bootstrap.apac_material,
+                )
+                client.replace_session(restored.session)
+                self._bootstrap = replacement
+                if restored.state != bootstrap.state:
+                    self._pending_auth_state = restored.state
+                    await self._async_flush_pending_auth_state()
+                try:
+                    return await action()
+                except GwmApiError as retry_error:
+                    if is_overseas_session_expired(retry_error):
+                        raise GwmAuthenticationError(
+                            operation=retry_error.operation, api_code=retry_error.api_code
+                        ) from None
+                    raise
+            except GwmAuthenticationError:
+                with suppress(Exception):
+                    await self.async_authentication_rejected()
+                raise
 
     async def _async_renew_overseas_session(
         self,
@@ -1201,8 +1327,20 @@ def _bootstrap_state_matches(
     region: str,
     account_binding: str,
     state: object,
-    session: GwmSession | None,
+    session: GwmSession | ApacReadSession | None,
 ) -> bool:
+    if region == REGION_APAC:
+        return (
+            type(state) is ApacAuthState
+            and type(session) is ApacReadSession
+            and state.account_binding == account_binding
+            and state.country == session.country
+            and state.device_id == session.device_id
+            and state.tokens is not None
+            and state.issued_identity is not None
+            and state.tokens.access_token == session.access_token
+            and _is_validated_context(session.app_ssl_context, TlsMode.APAC_ISSUED_MTLS)
+        )
     if region == REGION_CHINA:
         return (
             type(state) is ChinaAuthState

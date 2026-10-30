@@ -17,6 +17,7 @@ from .cloud_storage import (
     GwmCommandJournalEntry,
     GwmOwnedChargingPlan,
 )
+from .const import REGION_APAC
 from .errors import GwmCommandError, GwmCommandForbidden
 from .gwm_client import (
     DEFAULT_OPERATION_TIME_MINUTES,
@@ -633,6 +634,8 @@ class GwmCommandApi:
         )
 
     def _ensure_available(self) -> None:
+        if self._cloud.region == REGION_APAC:
+            raise GwmCommandForbidden("GWM APAC is read-only")
         if not self._enabled:
             raise GwmCommandForbidden("GWM cloud remote commands are disabled")
         if self._cloud.region != "cn" and not self._security_pin:
@@ -788,6 +791,8 @@ class GwmCommandApi:
                 )
 
     def _ensure_charging_available(self) -> None:
+        if self._cloud.region == REGION_APAC:
+            raise GwmCommandForbidden("GWM APAC is read-only")
         if not self._charging_enabled:
             raise GwmCommandForbidden("GWM cloud charging control is disabled")
 

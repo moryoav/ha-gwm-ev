@@ -1030,3 +1030,52 @@ async def test_legacy_addon_options_require_a_fresh_entry() -> None:
 
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "legacy_addon_entry"
+
+@pytest.mark.asyncio
+async def test_apac_setup_verification_creates_read_only_entry(monkeypatch: pytest.MonkeyPatch) -> None:
+    """APAC flow persists private state and never stores tokens in the entry."""
+    import custom_components.gwm_ora.cloud_runtime as runtime
+    from custom_components.gwm_ora.gwm_client.apac_auth import ApacCredentials
+    from custom_components.gwm_ora.gwm_client.apac_auth_client import ApacTokens
+    from custom_components.gwm_ora.gwm_client.apac_flow import ApacAuthenticated, ApacVerificationRequired
+    from custom_components.gwm_ora.gwm_client.apac_material import ApacMaterial
+    from custom_components.gwm_ora.gwm_client.apac_read import ApacReadSession
+    from custom_components.gwm_ora.gwm_client.apac_state import ApacAuthState
+    from custom_components.gwm_ora.gwm_client.eu_identity import EuBootstrapMaterial, EuIssuedIdentity
+
+    class Authenticator:
+        async def async_authenticate(self, credentials, **kwargs):
+            regional = credentials.client_credentials()
+            assert isinstance(regional, ApacCredentials)
+            state = ApacAuthState.for_credentials(regional)
+            if kwargs["verification_code"] is None:
+                return ApacVerificationRequired(state, code_requested=True)
+            tokens = ApacTokens("synthetic-access", "synthetic-refresh", "synthetic-gw", "synthetic-bean")
+            state = replace(state, tokens=tokens, issued_identity=EuIssuedIdentity("c3ludGhldGlj", "c3ludGhldGlj"))
+            session = ApacReadSession(regional.device_id, tokens.access_token, ssl.create_default_context(), regional.country)
+            material = ApacMaterial(EuBootstrapMaterial(b"fake-cert", b"c3ludGhldGljLWtleQ==", b"fake-ca"), "fake-key", "fake-secret")
+            return ApacAuthenticated(state, session, material)
+
+    monkeypatch.setattr(runtime, "_is_validated_context", lambda context, mode: True)
+    flow = _prepare_user_flow(monkeypatch, Authenticator())
+    account = await flow.async_step_user({CONF_REGION: "ap"})
+    assert account["step_id"] == "account"
+    verification = await flow.async_step_account({CONF_COUNTRY: "PK", CONF_ACCOUNT: "account@example.invalid", CONF_PASSWORD: "password"})
+    assert verification["step_id"] == "verification"
+    result = await flow.async_step_verification({CONF_VERIFICATION_CODE: "123456"})
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["title"] == "GWM Asia-Pacific"
+    assert result["data"][CONF_REGION] == "ap"
+    assert result["data"][CONF_COUNTRY] == "PK"
+    assert set(result["data"]).isdisjoint({"access_token", "refresh_token", "device_id", "verification_code", "certificate", "private_key"})
+    assert consume_cloud_bootstrap(flow.hass, flow.context["unique_id"]) is not None
+
+
+def test_apac_options_hide_control_and_charging_fields() -> None:
+    """Even stale enabled options must not make APAC writes configurable."""
+    entry = _entry(data={CONF_CONNECTION_TYPE: CONNECTION_TYPE_CLOUD, CONF_REGION: "ap", CONF_COUNTRY: "PK", CONF_ACCOUNT: "account@example.invalid", CONF_PASSWORD: "password"}, options={CONF_ENABLE_REMOTE_COMMANDS: True, CONF_ENABLE_CHARGING_CONTROL: True})
+    fields = {marker.schema for marker in config_flow._cloud_options_schema(entry).schema}
+    assert CONF_POLL_INTERVAL_SECONDS in fields
+    assert CONF_ENABLE_REMOTE_COMMANDS not in fields
+    assert CONF_ENABLE_CHARGING_CONTROL not in fields
+    assert CONF_SECURITY_PIN not in fields

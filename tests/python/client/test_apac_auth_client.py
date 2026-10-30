@@ -100,6 +100,21 @@ def _auth_client(transport: FakeTransport) -> ApacAuthClient:
 
 
 @pytest.mark.asyncio
+async def test_user_info_returns_identifiers_and_rejects_missing_data() -> None:
+    """Validate account identifiers from the actual protocol response."""
+    transport = FakeTransport()
+    assert await _auth_client(transport).get_user_info("synthetic-access") == (
+        "synthetic-gw",
+        "synthetic-bean",
+    )
+    assert transport.requests[0].operation == "get_user_info"
+
+    malformed = FakeTransport(response=_TransportResponse(200, {}, b'{"code":"000000","data":{}}'))
+    with pytest.raises(GwmSchemaError):
+        await _auth_client(malformed).get_user_info("synthetic-access")
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("operation", ["login", "refresh"])
 async def test_auth_timeouts_use_the_client_error_without_fallback(operation: str) -> None:
     """A timed-out refresh must not start a password login or retry."""

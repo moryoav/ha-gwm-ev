@@ -8,6 +8,10 @@ This project follows semantic versioning. HACS uses the latest GitHub release ta
 
 ## [Unreleased]
 
+### Added
+
+- Added experimental APAC read-only setup, private session storage, refresh, discovery and status. Vehicle commands and charging writes remain disabled. Pakistan, Thailand, Malaysia and Indonesia require live testing of this branch.
+
 ## [0.17.12] - 2026-10-19
 
 ### Changed
