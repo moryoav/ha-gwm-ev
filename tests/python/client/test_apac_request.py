@@ -65,7 +65,7 @@ def test_bad_tls_and_missing_authentication_fail_closed() -> None:
     with pytest.raises(ValueError, match="^apac_request_invalid$"):
         prepare_apac_request(**args, operation="login", body={})
     with pytest.raises(ValueError, match="^apac_request_invalid$"):
-        prepare_apac_request(**_args(), operation="acquire_vehicles")
+        prepare_apac_request(**_args(mtls=True), operation="acquire_vehicles")
 
 
 @pytest.mark.parametrize("country", ["TH", "MY", "ID", "PK"])
