@@ -60,3 +60,36 @@ def test_missing_or_relative_private_path_fails_without_disclosure(tmp_path: Pat
         with pytest.raises(ValueError, match="^apac_material_invalid$") as error:
             load_apac_material(path)
         assert "private-name" not in str(error.value)
+
+
+@pytest.mark.parametrize("git_marker", ["directory", "worktree-file"])
+def test_private_material_inside_the_repository_is_rejected(tmp_path: Path, monkeypatch, git_marker: str) -> None:
+    """Enforce the external directory boundary in regular and linked worktrees."""
+    import custom_components.gwm_ora.gwm_client.apac_material as material
+
+    repository = tmp_path / "repository"
+    private = repository / "private"
+    private.mkdir(parents=True)
+    marker = repository / ".git"
+    if git_marker == "directory":
+        marker.mkdir()
+    else:
+        marker.write_text("gitdir: external-synthetic-directory", encoding="utf-8")
+    monkeypatch.setattr(material, "_SOURCE_DIRECTORY", repository / "package")
+    with pytest.raises(ValueError, match="^apac_material_invalid$") as error:
+        load_apac_material(private)
+    assert str(repository) not in str(error.value)
+
+
+def test_private_file_symlinks_cannot_escape_the_supplied_directory(tmp_path: Path) -> None:
+    """Resolve file aliases before opening any private material."""
+    private = tmp_path / "private"
+    private.mkdir()
+    outside = tmp_path / "outside.json"
+    outside.write_text('{"app_key":"synthetic-key","app_secret":"synthetic-secret"}', encoding="utf-8")
+    try:
+        (private / "signing.json").symlink_to(outside)
+    except (OSError, NotImplementedError):
+        pytest.skip("File symlinks are unavailable on this platform")
+    with pytest.raises(ValueError, match="^apac_material_invalid$"):
+        load_apac_material(private)

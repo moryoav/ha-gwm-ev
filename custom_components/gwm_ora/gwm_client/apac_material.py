@@ -14,6 +14,7 @@ from .eu_identity import EuBootstrapMaterial
 from .signing import SigningProfile
 
 _MAX_FILE_BYTES = 256 * 1024
+_SOURCE_DIRECTORY = Path(__file__).resolve().parent
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,8 +61,16 @@ def load_apac_material(directory: Path) -> ApacMaterial:
     if not isinstance(directory, Path) or not directory.is_absolute():
         raise ValueError("apac_material_invalid")
     try:
+        directory = directory.resolve(strict=True)
+        repository = next((parent for parent in _SOURCE_DIRECTORY.parents if (parent / ".git").exists()), None)
+        if not directory.is_dir() or (repository is not None and directory.is_relative_to(repository)):
+            raise ValueError("apac_material_invalid")
+
         def read_file(name: str) -> bytes:
-            with (directory / name).open("rb") as source:
+            path = (directory / name).resolve(strict=True)
+            if not path.is_relative_to(directory) or not path.is_file():
+                raise ValueError("apac_material_invalid")
+            with path.open("rb") as source:
                 data = source.read(_MAX_FILE_BYTES + 1)
             if not data or len(data) > _MAX_FILE_BYTES:
                 raise ValueError("apac_material_invalid")
@@ -76,5 +85,5 @@ def load_apac_material(directory: Path) -> ApacMaterial:
             ca_bundle=read_file("ca.pem"),
         )
         return ApacMaterial(bootstrap, signing["app_key"], signing["app_secret"])
-    except (OSError, UnicodeError, ValueError, TypeError):
+    except (OSError, UnicodeError, ValueError, TypeError, RuntimeError):
         raise ValueError("apac_material_invalid") from None
