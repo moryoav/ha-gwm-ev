@@ -6,7 +6,7 @@ Remote controls and charging writes are disabled for APAC, including when stale 
 
 ## Private local material
 
-APAC setup requires an explicitly supplied private directory at `/config/.storage/gwm_apac_material/` on the Home Assistant host. It must contain:
+APAC setup loads private material from `.storage/gwm_apac_material/` inside Home Assistant's configuration directory, using `hass.config.path`. For example, if the configuration directory is `/config`, the full path is `/config/.storage/gwm_apac_material/`. Use the actual configuration directory for your installation. It must contain:
 
 - `bootstrap.cer`: the separately supplied bootstrap certificate.
 - `bootstrap.key`: the separately supplied transformed bootstrap key.
