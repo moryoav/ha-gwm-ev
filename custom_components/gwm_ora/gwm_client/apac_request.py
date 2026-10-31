@@ -8,10 +8,12 @@ from urllib.parse import quote
 
 from ._dotnet_json import encode_dotnet_json
 from ._protocol import _TransportRequest
+from .apac_climate import validate_climate_payload
 from .apac_endpoints import apac_endpoint
 from .apac_identity import _is_validated_context
 from .apac_material import ApacMaterial
 from .apac_policy import apac_gateways, validate_apac_country
+from .models import VehicleIdentifier
 from .regions import TlsMode
 from .signing import sign_request
 
@@ -41,8 +43,9 @@ def prepare_apac_request(
     body: dict[str, object] | None = None,
     vehicle_id: str | None = None,
     enrollment_device_id: str | None = None,
+    command_id: str | None = None,
 ) -> _TransportRequest:
-    """Build a signed request for the allowlist; no vehicle write is available.
+    """Build a signed request for the allowlisted regional operations.
 
     Mutual TLS contexts must come from the matching APAC bootstrap or issued
     identity validator. Default contexts use verified standard server TLS.
@@ -101,7 +104,20 @@ def prepare_apac_request(
             query = (
                 "?vin=" + quote(vehicle_id, safe="") + ("&seqNo=" if operation == "get_last_status" else "&flag=true")
             )
-        elif vehicle_id is None:
+        elif operation in {"send_climate_command", "get_remote_command_result"}:
+            if not isinstance(vehicle_id, str) or not vehicle_id or len(vehicle_id) > 512:
+                raise ValueError("invalid")
+            VehicleIdentifier(vehicle_id)
+            if operation == "get_remote_command_result":
+                if not isinstance(command_id, str) or not re.fullmatch(r"[0-9a-f]{32}1234", command_id):
+                    raise ValueError("invalid")
+                query = "?seqNo=" + command_id
+            else:
+                if command_id is not None:
+                    raise ValueError("invalid")
+                validate_climate_payload(body, vehicle_id)
+                query = ""
+        elif vehicle_id is None and command_id is None:
             query = ""
         else:
             raise ValueError("invalid")
@@ -119,6 +135,9 @@ def prepare_apac_request(
         }
         if access_token is not None:
             headers["accessToken"] = access_token
+        if operation in {"send_climate_command", "get_remote_command_result"}:
+            assert vehicle_id is not None
+            headers["vin"] = vehicle_id
         if body_text is not None:
             headers["Content-Type"] = "application/json; charset=utf-8"
         return _TransportRequest(

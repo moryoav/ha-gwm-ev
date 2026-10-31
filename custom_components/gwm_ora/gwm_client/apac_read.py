@@ -1,21 +1,20 @@
-"""An isolated APAC vehicle-read client with injected transport and TLS.
-
-Authentication, enrollment and private persistence are managed by the caller.
-It exposes no vehicle-control or charging-write method.
-"""
+"""Isolated APAC reads and climate commands with injected transport and TLS."""
 
 from __future__ import annotations
 
 import asyncio
 import ssl
+import uuid
 from dataclasses import dataclass, field
 from typing import Literal
 
 from ._protocol import _AsyncTransport, _Deadline
+from .apac_climate import climate_payload
 from .apac_material import ApacMaterial
 from .apac_policy import validate_apac_country
 from .apac_request import prepare_apac_request
 from .client import _decode_envelope
+from .commands import ClimateCommand, RemoteCommandAcceptance, RemoteCommandResultItem, parse_remote_command_results
 from .errors import GwmClosedError, GwmDeadlineExceededError, GwmSchemaError
 from .models import (
     CloudVehicle,
@@ -43,7 +42,7 @@ class ApacReadSession:
 
 
 class ApacReadClient:
-    """Only discovery and status reads, with a caller-owned transport."""
+    """Discovery, status and limited climate operations on a scoped transport."""
 
     def __init__(
         self,
@@ -141,6 +140,47 @@ class ApacReadClient:
             return parse_cloud_vehicles(data, allow_numbers_for_strings=True)
         except ValueError:
             raise GwmSchemaError(operation="acquire_vehicles") from None
+
+    async def send_climate_command(
+        self, command: ClimateCommand, *, security_password_hash: str
+    ) -> RemoteCommandAcceptance:
+        """Send a single climate request, without replaying uncertain writes."""
+        sequence = uuid.uuid4().hex + "1234"
+        payload = climate_payload(command, security_password_hash=security_password_hash, sequence_number=sequence)
+        await self._climate_exchange("send_climate_command", command.identifier, body=payload)
+        return RemoteCommandAcceptance(sequence)
+
+    async def get_remote_command_results(
+        self, identifier: VehicleIdentifier, command_id: str
+    ) -> tuple[RemoteCommandResultItem, ...]:
+        """Read results for an accepted climate request."""
+        data = await self._climate_exchange("get_remote_command_result", identifier, command_id=command_id)
+        try:
+            return parse_remote_command_results(data, allow_integer_strings=True)
+        except (TypeError, ValueError):
+            raise GwmSchemaError(operation="get_remote_command_result") from None
+
+    async def _climate_exchange(
+        self, operation: str, identifier: VehicleIdentifier, *,
+        body: dict[str, object] | None = None, command_id: str | None = None,
+    ) -> object:
+        """Perform one bounded APAC climate exchange using the owned session."""
+        if type(identifier) is not VehicleIdentifier or self._closed or self._closing:
+            raise GwmClosedError(operation=operation)
+        deadline = _Deadline(asyncio.get_running_loop().time() + 30.0)
+        try:
+            async with asyncio.timeout_at(deadline.expires_at), self._lock:
+                if self._closed or self._closing:
+                    raise GwmClosedError(operation=operation)
+                request = prepare_apac_request(
+                    operation=operation, material=self._material, ssl_context=self._session.app_ssl_context,
+                    device_id=self._session.device_id, access_token=self._session.access_token,
+                    country=self._session.country, vehicle_id=identifier.value, body=body, command_id=command_id,
+                )
+                response = await self._transport.execute(request, deadline=deadline, connect_timeout=10.0, read_timeout=20.0)
+                return _decode_envelope(response, operation=operation)
+        except TimeoutError:
+            raise GwmDeadlineExceededError(operation=operation) from None
 
     async def get_last_status(self, vehicle_id: str | VehicleIdentifier) -> CloudVehicleStatus:
         """Read the last reported status for one vehicle."""

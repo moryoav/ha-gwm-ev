@@ -1,0 +1,165 @@
+"""Offline APAC climate contract tests with deliberately synthetic values."""
+
+import json
+import ssl
+
+import pytest
+
+from custom_components.gwm_ora.cloud_commands import GwmCommandApi
+from custom_components.gwm_ora.cloud_runtime import GwmCloudClient
+from custom_components.gwm_ora.const import REGION_APAC
+from custom_components.gwm_ora.gwm_client._protocol import _TransportResponse
+from custom_components.gwm_ora.gwm_client.apac_climate import climate_payload, validate_climate_payload
+from custom_components.gwm_ora.gwm_client.apac_identity import _register_validated_context
+from custom_components.gwm_ora.gwm_client.apac_material import ApacMaterial
+from custom_components.gwm_ora.gwm_client.apac_read import ApacReadClient, ApacReadSession
+from custom_components.gwm_ora.gwm_client.commands import ClimateCommand
+from custom_components.gwm_ora.gwm_client.errors import GwmDeadlineExceededError, GwmRoutePolicyError
+from custom_components.gwm_ora.gwm_client.eu_identity import EuBootstrapMaterial
+from custom_components.gwm_ora.gwm_client.models import VehicleIdentifier
+from custom_components.gwm_ora.gwm_client.regions import TlsMode
+
+
+@pytest.mark.parametrize(("mode", "switch", "duration"), [("auto", "1", "15"), ("off", "2", "0")])
+def test_climate_payload_matches_observed_apac_contract(mode, switch, duration):
+    """Preserve the separate APAC start/stop values and minute-based duration."""
+    command = ClimateCommand(VehicleIdentifier("SYNTHETIC-VEHICLE"), mode, 22, 15)
+    payload = climate_payload(command, security_password_hash="a" * 32, sequence_number="b" * 32 + "1234")
+    assert payload == {
+        "instructions": {"0x04": {"airConditioner": {
+            "operationTime": duration, "switchOrder": switch, "temperature": "22",
+        }}},
+        "remoteType": "0",
+        "securityPassword": "a" * 32,
+        "seqNo": "b" * 32 + "1234",
+        "type": 2,
+        "vin": "SYNTHETIC-VEHICLE",
+    }
+
+
+@pytest.mark.parametrize(("pin_hash", "sequence"), [("bad", "b" * 32 + "1234"), ("a" * 32, "bad")])
+def test_climate_payload_rejects_invalid_command_material(pin_hash, sequence):
+    """Reject malformed credentials and sequence numbers before network I/O."""
+    command = ClimateCommand(VehicleIdentifier("SYNTHETIC-VEHICLE"), "auto", 22, 15)
+    with pytest.raises(ValueError, match="apac_climate_command_invalid"):
+        climate_payload(command, security_password_hash=pin_hash, sequence_number=sequence)
+
+
+def test_climate_request_rejects_other_vehicle_instructions():
+    """Do not allow the climate endpoint to become a generic command route."""
+    command = ClimateCommand(VehicleIdentifier("SYNTHETIC-VEHICLE"), "auto", 22, 15)
+    payload = climate_payload(command, security_password_hash="a" * 32, sequence_number="b" * 32 + "1234")
+    payload["instructions"]["0x05"] = {"switchOrder": "1"}
+    with pytest.raises(ValueError, match="apac_climate_command_invalid"):
+        validate_climate_payload(payload, command.identifier.value)
+
+
+@pytest.mark.asyncio
+async def test_climate_client_sends_one_request_and_reads_its_result():
+    """Use synthetic transport to verify command path, headers, body and response."""
+    class Transport:
+        def __init__(self): self.requests = []
+        async def execute(self, request, **kwargs):
+            self.requests.append(request)
+            data = [] if request.method == "GET" else None
+            return _TransportResponse(200, {}, json.dumps({"code": "000000", "data": data}).encode())
+    context = ssl.create_default_context()
+    context.set_ciphers("DEFAULT:@SECLEVEL=0")
+    _register_validated_context(context, TlsMode.APAC_ISSUED_MTLS)
+    material = ApacMaterial(EuBootstrapMaterial(b"fake", b"fake", b"fake"), "fake-key", "fake-secret")
+    transport = Transport()
+    client = ApacReadClient(material=material, session=ApacReadSession("a" * 32, "fake-token", context, "PK"), transport=transport)
+    identifier = VehicleIdentifier("SYNTHETIC-VEHICLE")
+    result = await client.send_climate_command(ClimateCommand(identifier, "auto", 22, 15), security_password_hash="a" * 32)
+    assert len(transport.requests) == 1
+    request = transport.requests[0]
+    assert request.method == "POST" and request.url.endswith("/vehicle/T5/sendCmd")
+    assert request.headers["vin"] == identifier.value
+    assert json.loads(request.body)["seqNo"] == result.command_id
+    assert await client.get_remote_command_results(identifier, result.command_id) == ()
+    assert transport.requests[1].url.endswith("?seqNo=" + result.command_id)
+    assert transport.requests[1].headers["vin"] == identifier.value
+
+
+@pytest.mark.asyncio
+async def test_runtime_requires_explicit_apac_consent_and_never_replays_timeout():
+    """A write with an uncertain outcome is sent only once and is not retried."""
+    class Transport:
+        def __init__(self): self.calls = 0
+        async def execute(self, request, **kwargs):
+            self.calls += 1
+            raise TimeoutError
+    context = ssl.create_default_context()
+    context.set_ciphers("DEFAULT:@SECLEVEL=0")
+    _register_validated_context(context, TlsMode.APAC_ISSUED_MTLS)
+    material = ApacMaterial(EuBootstrapMaterial(b"fake", b"fake", b"fake"), "fake-key", "fake-secret")
+    transport = Transport()
+    client = ApacReadClient(material=material, session=ApacReadSession("a" * 32, "fake-token", context, "PK"), transport=transport)
+    identifier = VehicleIdentifier("SYNTHETIC-VEHICLE")
+    command = ClimateCommand(identifier, "auto", 22, 15)
+    disabled = GwmCloudClient(REGION_APAC, client, climate_commands_enabled=True)
+    disabled._vehicles[identifier.value] = object()
+    with pytest.raises(GwmRoutePolicyError):
+        await disabled.async_send_climate_command(command, security_password_hash="a" * 32)
+    assert transport.calls == 0
+    enabled = GwmCloudClient(REGION_APAC, client, apac_climate_enabled=True)
+    enabled._vehicles[identifier.value] = object()
+    with pytest.raises(GwmDeadlineExceededError):
+        await enabled.async_send_climate_command(command, security_password_hash="a" * 32)
+    assert transport.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_runtime_does_not_send_if_session_validation_fails(monkeypatch):
+    """Account/session validation must complete before an APAC vehicle write."""
+    from custom_components.gwm_ora.gwm_client.errors import GwmAuthenticationError
+
+    class Transport:
+        def __init__(self): self.calls = 0
+        async def execute(self, request, **kwargs): self.calls += 1
+    context = ssl.create_default_context()
+    material = ApacMaterial(EuBootstrapMaterial(b"fake", b"fake", b"fake"), "fake-key", "fake-secret")
+    transport = Transport()
+    client = ApacReadClient(material=material, session=ApacReadSession("a" * 32, "fake-token", context, "PK"), transport=transport)
+    identifier = VehicleIdentifier("SYNTHETIC-VEHICLE")
+    cloud = GwmCloudClient(REGION_APAC, client, apac_climate_enabled=True)
+    cloud._vehicles[identifier.value] = object()
+    cloud._credentials = object()
+    async def reject(*, force_refresh):
+        assert force_refresh is False
+        raise GwmAuthenticationError(operation="get_user_info")
+    monkeypatch.setattr(cloud, "_async_validate_apac_session", reject)
+    with pytest.raises(GwmAuthenticationError):
+        await cloud.async_send_climate_command(ClimateCommand(identifier, "auto", 22, 15), security_password_hash="a" * 32)
+    assert transport.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_climate_api_dispatches_only_after_consent(monkeypatch):
+    """Exercise the Home Assistant command adapter through a synthetic transport."""
+    class Transport:
+        def __init__(self): self.operations = []
+        async def execute(self, request, **kwargs):
+            self.operations.append(request.operation)
+            return _TransportResponse(200, {}, json.dumps({"code": "000000", "data": {}}).encode())
+    context = ssl.create_default_context()
+    context.set_ciphers("DEFAULT:@SECLEVEL=0")
+    _register_validated_context(context, TlsMode.APAC_ISSUED_MTLS)
+    material = ApacMaterial(EuBootstrapMaterial(b"fake", b"fake", b"fake"), "fake-key", "fake-secret")
+    transport = Transport()
+    client = ApacReadClient(material=material, session=ApacReadSession("a" * 32, "fake-token", context, "PK"), transport=transport)
+    identifier = VehicleIdentifier("SYNTHETIC-VEHICLE")
+    cloud = GwmCloudClient(REGION_APAC, client, apac_climate_enabled=True)
+    cloud._vehicles[identifier.value] = object()
+    api = object.__new__(GwmCommandApi)
+    api._cloud = cloud
+    api._enabled = True
+    api._apac_climate_enabled = True
+    api._security_pin = "1234"
+    api._climate_defaults = {}
+    async def record(identifier, name, command_id):
+        return {"name": name, "command_id": command_id}
+    monkeypatch.setattr(api, "_record_acceptance", record)
+    result = await api.async_set_climate(identifier.value, mode="auto", temperature=22)
+    assert result["name"] == "A/C"
+    assert transport.operations == ["get_vehicle_basics", "send_climate_command"]

@@ -73,6 +73,7 @@ class GwmCommandApi:
         credentials: GwmCloudCredentials,
         *,
         enabled: bool,
+        apac_climate_enabled: bool = False,
         charging_enabled: bool = False,
         security_pin: str | None,
         clock: Callable[[], datetime] | None = None,
@@ -82,6 +83,7 @@ class GwmCommandApi:
             or type(credentials) is not GwmCloudCredentials
             or getattr(cloud, "region", None) != credentials.region
             or type(enabled) is not bool
+            or type(apac_climate_enabled) is not bool
             or type(charging_enabled) is not bool
             or (security_pin is not None and not isinstance(security_pin, str))
             or (clock is not None and not callable(clock))
@@ -92,6 +94,7 @@ class GwmCommandApi:
         self._state_store = state_store
         self._credentials = credentials
         self._enabled = enabled
+        self._apac_climate_enabled = apac_climate_enabled
         self._charging_enabled = charging_enabled
         self._security_pin = security_pin.strip() if security_pin else ""
         self._clock = clock or (lambda: datetime.now(UTC))
@@ -135,7 +138,11 @@ class GwmCommandApi:
     ) -> dict[str, object]:
         """Validate, resolve, send, and journal one climate request."""
 
-        self._ensure_available()
+        if self._cloud.region == REGION_APAC:
+            if not getattr(self, "_apac_climate_enabled", False) or not self._enabled or not self._security_pin:
+                raise GwmCommandForbidden("GWM APAC climate control requires opt-in and a security PIN")
+        else:
+            self._ensure_available()
         if not isinstance(vin, str):
             raise GwmCommandError("A/C command requires a valid vehicle")
         try:
@@ -482,7 +489,12 @@ class GwmCommandApi:
                 )
         except GwmClientError:
             raise
-        region = None if self._cloud.region == "cn" else Region(self._cloud.region)
+        if self._cloud.region == REGION_APAC:
+            results = tuple(
+                result for result in results
+                if result.command_id is not None and result.command_id.casefold() == entry.cloud_command_id.casefold()
+            )
+        region = None if self._cloud.region in {"cn", REGION_APAC} else Region(self._cloud.region)
         result = select_remote_command_result(
             results,
             command_id=entry.cloud_command_id,

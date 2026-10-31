@@ -483,6 +483,7 @@ class GwmCloudClient:
         state_store: _AuthStateStore | None = None,
         entry_data: dict[str, object] | None = None,
         climate_commands_enabled: bool = False,
+        apac_climate_enabled: bool = False,
         lock_window_commands_enabled: bool = False,
         charging_control_enabled: bool = False,
     ) -> None:
@@ -511,11 +512,12 @@ class GwmCloudClient:
             raise GwmConfigurationError(operation="login")
         if (
             type(climate_commands_enabled) is not bool
+            or type(apac_climate_enabled) is not bool
             or type(lock_window_commands_enabled) is not bool
             or type(charging_control_enabled) is not bool
         ):
             raise GwmConfigurationError(operation="request")
-        self._climate_commands_enabled = climate_commands_enabled and region != REGION_APAC
+        self._climate_commands_enabled = apac_climate_enabled if region == REGION_APAC else climate_commands_enabled
         self._lock_window_commands_enabled = lock_window_commands_enabled and region != REGION_APAC
         self._charging_control_enabled = charging_control_enabled and region != REGION_APAC
         self._vehicles: dict[str, CloudVehicle] = {}
@@ -530,6 +532,7 @@ class GwmCloudClient:
         *,
         state_store: _AuthStateStore | None = None,
         climate_commands_enabled: bool = False,
+        apac_climate_enabled: bool = False,
         lock_window_commands_enabled: bool = False,
         charging_control_enabled: bool = False,
     ) -> GwmCloudClient:
@@ -571,6 +574,7 @@ class GwmCloudClient:
                 state_store=state_store,
                 entry_data=data,
                 climate_commands_enabled=climate_commands_enabled,
+                apac_climate_enabled=apac_climate_enabled,
                 lock_window_commands_enabled=lock_window_commands_enabled,
                 charging_control_enabled=charging_control_enabled,
             )
@@ -699,10 +703,10 @@ class GwmCloudClient:
                     raw_items if self.region != REGION_CHINA and isinstance(raw_items, dict) else {}
                 )
                 capabilities["front_defroster_commands"] = (
-                    self._climate_commands_enabled and "2222001" in overseas_status_codes
+                    self.region != REGION_APAC and self._climate_commands_enabled and "2222001" in overseas_status_codes
                 )
                 capabilities["cabin_clean_commands"] = (
-                    self._climate_commands_enabled and "2078020" in overseas_status_codes
+                    self.region != REGION_APAC and self._climate_commands_enabled and "2078020" in overseas_status_codes
                 )
                 snapshot["capabilities"] = capabilities
                 snapshots.append(snapshot)
@@ -768,8 +772,11 @@ class GwmCloudClient:
         temperature: int,
         operation_time_minutes: int,
     ) -> None:
-        """Update supported regional climate defaults while enforcing APAC read-only access."""
-        self._ensure_apac_read_only("update_climate_defaults")
+        """Update supported defaults; APAC keeps its approved settings locally."""
+        if self.region == REGION_APAC:
+            if not self._climate_commands_enabled or identifier.value not in self._vehicles:
+                raise GwmRoutePolicyError(operation="update_climate_defaults")
+            return
         if self.region == REGION_CHINA:
             vehicle = self._vehicles.get(identifier.value)
             if vehicle is None or (vehicle.platform or "").strip().casefold() not in {"navinfo", "beantech"}:
@@ -810,8 +817,23 @@ class GwmCloudClient:
         *,
         security_password_hash: str | None = None,
     ) -> RemoteCommandAcceptance:
-        """Send a supported regional climate command with bounded session recovery."""
-        self._ensure_apac_read_only("send_climate_command")
+        """Send a regional climate command without replaying uncertain APAC writes."""
+        if self.region == REGION_APAC:
+            if (
+                not self._climate_commands_enabled
+                or type(command) is not ClimateCommand
+                or command.identifier.value not in self._vehicles
+                or not isinstance(security_password_hash, str)
+                or type(self._client) is not ApacReadClient
+            ):
+                raise GwmRoutePolicyError(operation="send_climate_command")
+            async with self._session_renewal_lock:
+                if self._apac_closing or self._apac_closed or self._apac_validation_pending:
+                    raise GwmRoutePolicyError(operation="send_climate_command")
+                await self._async_flush_pending_auth_state()
+                if self._credentials is not None:
+                    await self._async_validate_apac_session(force_refresh=False)
+                return await self._client.send_climate_command(command, security_password_hash=security_password_hash)
         if self.region == REGION_CHINA:
             return await self._async_with_session_renewal(
                 lambda: cast(_ChinaReadClient, self._client).send_climate_command(command)

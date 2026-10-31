@@ -100,6 +100,7 @@
         "data": {
           "poll_interval_seconds": "轮询间隔",
           "enable_remote_commands": "启用远程命令",
+          "enable_apac_climate": "启用亚太空调控制",
           "enable_charging_control": "启用充电控制",
           "security_pin": "车辆安全 PIN",
           "log_level": "日志级别"
@@ -107,6 +108,7 @@
         "data_description": {
           "poll_interval_seconds": "账号级云轮询之间的秒数（30–3600）。",
           "enable_remote_commands": "明确选择启用支持的远程命令控制。",
+          "enable_apac_climate": "明确启用实验性的亚太空调命令；其他控制保持禁用。",
           "enable_charging_control": "定时充电的独立明确开关。",
           "security_pin": "中国大陆以外的远程命令需要此 PIN。已存储的值会显示在带掩码的密码字段中，并在诊断信息中保持隐藏。",
           "log_level": "此集成的诊断日志详细程度。"

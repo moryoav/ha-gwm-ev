@@ -8,6 +8,8 @@ This project follows semantic versioning. HACS uses the latest GitHub release ta
 
 ## [Unreleased]
 
+- Added an experimental, separately opted-in APAC climate command path. Other APAC controls and charging writes remain disabled. This implementation requires live validation.
+
 ### Added
 
 - Added APAC read-only setup, private session storage, refresh, discovery and status for Pakistan, Thailand, Malaysia and Indonesia. Vehicle commands and charging writes remain disabled.

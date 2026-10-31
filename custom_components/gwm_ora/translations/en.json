@@ -100,6 +100,7 @@
         "data": {
           "poll_interval_seconds": "Polling interval",
           "enable_remote_commands": "Enable remote commands",
+          "enable_apac_climate": "Enable APAC climate control",
           "enable_charging_control": "Enable charging control",
           "security_pin": "Vehicle security PIN",
           "log_level": "Log level"
@@ -107,6 +108,7 @@
         "data_description": {
           "poll_interval_seconds": "Seconds between account-level cloud polls (30-3600).",
           "enable_remote_commands": "Explicit opt-in for supported remote command controls.",
+          "enable_apac_climate": "Explicitly enable experimental APAC climate commands; other controls remain disabled.",
           "enable_charging_control": "Independent explicit opt-in for charging schedules.",
           "security_pin": "Required for remote commands outside mainland China. The stored value is shown in a masked password field and remains redacted from diagnostics.",
           "log_level": "Integration-specific diagnostic verbosity."

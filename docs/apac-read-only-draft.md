@@ -2,7 +2,7 @@
 
 This development branch adds a shared APAC read-only Home Assistant setup for Pakistan (`PK`), Thailand (`TH`), Malaysia (`MY`) and Indonesia (`ID`), the countries listed in My GWM (`com.gwm.tha`). All four countries use the same regional implementation.
 
-Remote controls and charging writes are disabled for APAC, including when stale enabled options exist or a direct service call is attempted. Existing region policies remain separate. Authentication and vehicle requests use distinct, strictly validated TLS contexts.
+Experimental climate commands require the separate APAC climate opt-in and vehicle security PIN. The new climate implementation has synthetic tests but has not yet been tested live on this branch. Lock, window, other vehicle controls and charging writes remain disabled for APAC, including when stale enabled options exist or a direct service call is attempted. Existing region policies remain separate. Authentication and vehicle requests use distinct, strictly validated TLS contexts.
 
 ## Private local material
 
@@ -21,7 +21,7 @@ The format is shown below using deliberately fake values; these do not authentic
 {"app_key": "synthetic-key", "app_secret": "synthetic-secret"}
 ```
 
-After supplying authorized material, add the GWM integration, choose **Asia-Pacific (read-only)**, select the account's registration country, and enter the account credentials. Complete a verification code only when requested. The integration stores account-bound session state privately in Home Assistant storage. On restart it attempts to restore an issued identity and renew an expired session without silently falling back to password login or requesting another code.
+After supplying authorized material, add the GWM integration, choose **Asia-Pacific (experimental)**, select the account's registration country, and enter the account credentials. Complete a verification code only when requested. The integration stores account-bound session state privately in Home Assistant storage. On restart it attempts to restore an issued identity and renew an expired session without silently falling back to password login or requesting another code.
 
 ## Development testing
 
