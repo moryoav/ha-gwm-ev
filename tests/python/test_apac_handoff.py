@@ -669,7 +669,7 @@ async def test_startup_retries_failed_rotation_save_before_reusing_credentials(t
 async def test_shutdown_flushes_failed_apac_rotation_before_disposing_transport(
     tmp_path, monkeypatch, close_save_fails_once
 ):
-    """Finish a pending publication during cleanup or leave shutdown retryable."""
+    """Publish pending tokens and close owned resources even if publication fails."""
     from homeassistant.core import HomeAssistant
 
     from custom_components.gwm_ora.cloud_auth import cloud_entry_data, cloud_unique_id
@@ -689,7 +689,6 @@ async def test_shutdown_flushes_failed_apac_rotation_before_disposing_transport(
         attempts.append("save")
         if len(attempts) <= (2 if close_save_fails_once else 1):
             raise OSError("synthetic temporary storage failure")
-        assert not transport.closed
         await original_save(data)
 
     monkeypatch.setattr(store._store, "async_save", fail_then_publish)
@@ -700,7 +699,7 @@ async def test_shutdown_flushes_failed_apac_rotation_before_disposing_transport(
         if close_save_fails_once:
             with pytest.raises(GwmNetworkError):
                 await cloud.aclose()
-            assert not transport.closed
+            assert transport.closed
         await cloud.aclose()
         assert len(attempts) == (3 if close_save_fails_once else 2)
         assert transport.closed
