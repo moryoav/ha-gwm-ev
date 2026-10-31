@@ -315,3 +315,43 @@ async def test_apac_state_publication_finishes_while_home_assistant_is_stopping(
     await cloud_state_store(hass, unique_id).async_save_auth_state(credentials, state)
     restarted = cloud_state_store(HomeAssistant(str(tmp_path)), unique_id)
     assert await restarted.async_load_auth_state(cloud_entry_data(credentials)) == state
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["save", "clear", "remove"])
+async def test_direct_apac_storage_calls_finish_after_cancellation_while_waiting_for_lock(tmp_path, operation):
+    """Protect every direct mutation caller while acquiring serialization ownership."""
+    credentials = _credentials()
+    state = replace(
+        ApacAuthState.for_credentials(credentials.client_credentials()),
+        tokens=ApacTokens("synthetic-access", "synthetic-refresh", "synthetic-gw", "synthetic-bean"),
+        issued_identity=EuIssuedIdentity("c3ludGhldGlj", "c3ludGhldGlj"),
+    )
+    replacement = replace(state, tokens=replace(state.tokens, refresh_token="renewed-refresh"))
+    unique_id = cloud_unique_id(credentials)
+    store = cloud_state_store(HomeAssistant(str(tmp_path)), unique_id)
+    await store.async_save_auth_state(credentials, state)
+    await store._lock.acquire()
+    calls = {
+        "save": lambda: store.async_save_auth_state(credentials, replacement),
+        "clear": lambda: store.async_clear_auth_state(cloud_entry_data(credentials)),
+        "remove": store.async_remove,
+    }
+    task = asyncio.create_task(calls[operation]())
+    try:
+        await asyncio.sleep(0)
+        for _ in range(2):
+            task.cancel()
+            await asyncio.sleep(0)
+            assert not task.done()
+        store._lock.release()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    finally:
+        if store._lock.locked():
+            store._lock.release()
+        await asyncio.gather(task, return_exceptions=True)
+    restarted = cloud_state_store(HomeAssistant(str(tmp_path)), unique_id)
+    assert await restarted.async_load_auth_state(cloud_entry_data(credentials)) == (
+        replacement if operation == "save" else None
+    )

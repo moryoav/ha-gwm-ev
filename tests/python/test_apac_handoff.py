@@ -85,6 +85,29 @@ class _RuntimeTransport:
         self.closed = True
 
 
+def _synthetic_config_entry(credentials):
+    """Construct a real Home Assistant entry for synthetic APAC lifecycle tests."""
+    from types import MappingProxyType
+
+    from homeassistant.config_entries import ConfigEntry
+
+    from custom_components.gwm_ora.cloud_auth import cloud_entry_data, cloud_unique_id
+
+    return ConfigEntry(
+        data=cloud_entry_data(credentials),
+        discovery_keys=MappingProxyType({}),
+        domain="gwm_ora",
+        entry_id="synthetic-apac-entry",
+        minor_version=1,
+        options={},
+        source="user",
+        subentries_data=None,
+        title="GWM APAC",
+        unique_id=cloud_unique_id(credentials),
+        version=1,
+    )
+
+
 def test_handoff_requires_matching_account_device_and_token(monkeypatch):
     """Reject runtime handoffs whose account, device, or token binding differs."""
     credentials = GwmCloudCredentials(REGION_APAC, "PK", "person@example.invalid", "synthetic-password", "a" * 32)
@@ -812,4 +835,79 @@ async def test_first_refresh_and_cleanup_save_failures_preserve_automatic_setup_
         restarted = cloud_state_store(HomeAssistant(str(tmp_path)), unique_id)
         assert await restarted.async_load_auth_state(cloud_entry_data(credentials)) == retained
     finally:
+        await cloud.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stopping", [False, True])
+async def test_cancelled_staged_writer_cannot_overwrite_a_later_confirmed_rotation(tmp_path, monkeypatch, stopping):
+    """Retain the old writer's locks until it finishes before accepting a new rotation."""
+    import threading
+
+    from homeassistant.core import CoreState, HomeAssistant
+    from homeassistant.helpers import storage as ha_storage
+
+    import custom_components.gwm_ora as integration
+    import custom_components.gwm_ora.cloud_auth as auth_boundary
+    from custom_components.gwm_ora.cloud_auth import cloud_entry_data, cloud_unique_id
+    from custom_components.gwm_ora.cloud_storage import cloud_state_store
+
+    transport = _RuntimeTransport()
+    cloud, credentials, state = _runtime_with_synthetic_transport(monkeypatch, transport)
+    material = cloud.reusable_bootstrap.apac_material
+    hass = HomeAssistant(str(tmp_path))
+    unique_id = cloud_unique_id(credentials)
+    store = cloud_state_store(hass, unique_id)
+    await store.async_save_auth_state(credentials, state)
+    runtime.stage_cloud_bootstrap(hass, unique_id, cloud.reusable_bootstrap)
+    if stopping:
+        hass.set_state(CoreState.stopping)
+    entry = _synthetic_config_entry(credentials)
+    original_write = ha_storage.write_utf8_file_atomic
+    loop = asyncio.get_running_loop()
+    writer_started = asyncio.Event()
+    writer_finished = asyncio.Event()
+    release_writer = threading.Event()
+    held = []
+
+    def delay_one_write(filename, *args, **kwargs):
+        """Hold the actual executor write independently of its awaiting task."""
+        if filename != store._store.path or held:
+            return original_write(filename, *args, **kwargs)
+        held.append("old-write")
+        loop.call_soon_threadsafe(writer_started.set)
+        try:
+            if not release_writer.wait(timeout=15):
+                raise ha_storage.WriteError("synthetic writer was not released")
+            return original_write(filename, *args, **kwargs)
+        finally:
+            loop.call_soon_threadsafe(writer_finished.set)
+
+    monkeypatch.setattr(ha_storage, "write_utf8_file_atomic", delay_one_write)
+    monkeypatch.setattr(integration, "load_apac_material", lambda *args: material)
+    monkeypatch.setattr(auth_boundary.AiohttpTransport, "create_owned", lambda **kwargs: transport)
+    older = asyncio.create_task(integration._async_load_cloud_bootstrap(hass, entry, store))
+    newer = None
+    try:
+        await asyncio.wait_for(writer_started.wait(), timeout=5)
+        for _ in range(2):
+            older.cancel()
+            await asyncio.sleep(0)
+            assert not older.done()
+        newer = asyncio.create_task(integration._async_load_cloud_bootstrap(hass, entry, store))
+        await asyncio.sleep(0)
+        assert not newer.done()
+        assert transport.operations == []
+        release_writer.set()
+        with pytest.raises(asyncio.CancelledError):
+            await older
+        bootstrap = await newer
+        assert bootstrap.state.tokens.refresh_token == "renewed-refresh"
+        restarted = cloud_state_store(HomeAssistant(str(tmp_path)), unique_id)
+        assert await restarted.async_load_auth_state(cloud_entry_data(credentials)) == bootstrap.state
+        assert transport.operations.count("refresh_token") == 1
+    finally:
+        release_writer.set()
+        await asyncio.gather(*(task for task in (older, newer) if task is not None), return_exceptions=True)
+        await asyncio.wait_for(writer_finished.wait(), timeout=5)
         await cloud.aclose()

@@ -194,6 +194,7 @@ class GwmCloudStateStore:
             raise ValueError("direct_cloud_store_invalid")
         digest = hashlib.sha256(unique_id.encode("utf-8")).hexdigest()
         self.unique_id = unique_id
+        self._apac_storage = unique_id.startswith(f"cloud:{REGION_APAC}:")
         self._store = Store[dict[str, Any]](
             hass,
             _STORAGE_VERSION,
@@ -247,6 +248,15 @@ class GwmCloudStateStore:
         auth_state: CloudAuthState,
     ) -> None:
         """Atomically publish a complete or recoverable partial state revision."""
+        if self._apac_storage:
+            await async_finish_apac_state_save(self._async_save_auth_state(credentials, auth_state))
+        else:
+            await self._async_save_auth_state(credentials, auth_state)
+
+    async def _async_save_auth_state(
+        self, credentials: GwmCloudCredentials, auth_state: CloudAuthState
+    ) -> None:
+        """Validate and publish authentication state under the account lock."""
 
         _validate_credentials_for_store(self.unique_id, credentials)
         _validate_regional_state(
@@ -280,6 +290,13 @@ class GwmCloudStateStore:
         entry_data: dict[str, object],
     ) -> None:
         """Retire rejected auth state without discarding same-account commands."""
+        if self._apac_storage:
+            await async_finish_apac_state_save(self._async_clear_auth_state(entry_data))
+        else:
+            await self._async_clear_auth_state(entry_data)
+
+    async def _async_clear_auth_state(self, entry_data: dict[str, object]) -> None:
+        """Publish authentication retirement while retaining same-account records."""
 
         credentials = _credentials_from_entry(entry_data)
         async with self._lock:
@@ -469,6 +486,13 @@ class GwmCloudStateStore:
 
     async def async_remove(self) -> None:
         """Remove all persisted state for a deleted or replaced config entry."""
+        if self._apac_storage:
+            await async_finish_apac_state_save(self._async_remove())
+        else:
+            await self._async_remove()
+
+    async def _async_remove(self) -> None:
+        """Remove private data while holding serialization ownership to completion."""
 
         async with self._lock:
             await self._store.async_remove()
@@ -517,6 +541,13 @@ class GwmCloudStateStore:
         )
 
     async def _async_save(self, record: _GwmCloudRecord) -> None:
+        """Keep the account lock owned until every APAC executor operation finishes."""
+        if record.region == REGION_APAC:
+            await async_finish_apac_state_save(self._async_publish_record(record))
+        else:
+            await self._async_publish_record(record)
+
+    async def _async_publish_record(self, record: _GwmCloudRecord) -> None:
         """Keep failed APAC revisions private until atomic publication succeeds."""
         if record.region == REGION_APAC:
             self._pending_apac_record = record
