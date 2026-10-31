@@ -75,7 +75,7 @@ class _RuntimeTransport:
         payloads = {
             "refresh_token": {"accessToken": "renewed-access", "refreshToken": "renewed-refresh"},
             "get_user_info": {"gwId": "synthetic-gw", "beanId": "synthetic-bean"},
-            "acquire_vehicles": [{"vin": "SYNTHETIC-VEHICLE"}],
+            "acquire_vehicles": [{"vin": "SYNTHETIC-VEHICLE", "belongPlatform": "beantech", "rudder": "2"}],
             "get_last_status": {"items": [{"code": 2013021, "value": "65", "unit": "%"}]},
             "get_vehicle_basics": {},
         }
@@ -1184,4 +1184,35 @@ async def test_unload_waits_for_apac_acceptance_publication(tmp_path, monkeypatc
     finally:
         release.set()
         await asyncio.gather(caller, unloading, return_exceptions=True)
+        await cloud.aclose()
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("platform", [None, "unrecognized", "navinfo", "beantech"])
+async def test_apac_snapshot_only_advertises_controls_for_supported_platforms(monkeypatch, platform):
+    """Keep opt-in flags from enabling entities for an unknown APAC platform."""
+    import json
+
+    from custom_components.gwm_ora.gwm_client._protocol import _TransportResponse
+
+    class Transport(_RuntimeTransport):
+        """Provide discovery metadata through the actual APAC parser."""
+        async def execute(self, request, **kwargs):
+            """Report a known or unknown platform with an otherwise valid vehicle."""
+            if request.operation == "acquire_vehicles":
+                self.operations.append(request.operation)
+                data = [{"vin": "SYNTHETIC-VEHICLE", "belongPlatform": platform}]
+                return _TransportResponse(200, {}, json.dumps({"code": "000000", "data": data}).encode())
+            return await super().execute(request, **kwargs)
+
+    cloud, _, _ = _runtime_with_synthetic_transport(
+        monkeypatch, Transport(), apac_remote_enabled=True,
+        apac_climate_enabled=True, apac_charging_enabled=True,
+    )
+    try:
+        snapshot = await cloud.async_get_vehicle_data()
+        capabilities = snapshot["vehicles"][0]["capabilities"]
+        for key in ("apac_remote_controls", "apac_direct_charging", "climate_commands", "lock_window_commands"):
+            assert capabilities[key] is (platform in {"navinfo", "beantech"})
+        assert capabilities["charging_control"] is False
+    finally:
         await cloud.aclose()

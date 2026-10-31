@@ -113,7 +113,7 @@ async def test_charging_and_remote_opt_ins_are_independent():
     client = ApacReadClient(material=material, session=ApacReadSession("a" * 32, "fake-token", context, "PK"), transport=transport)
     vehicle = VehicleIdentifier("SYNTHETIC-VEHICLE")
     cloud = GwmCloudClient(REGION_APAC, client, apac_charging_enabled=True)
-    cloud._vehicles[vehicle.value] = object()
+    cloud._vehicles[vehicle.value] = CloudVehicle(vehicle, platform="beantech")
     with pytest.raises(GwmRoutePolicyError):
         await cloud.async_send_apac_control(vehicle, "tailgate_open", security_password_hash="a" * 32)
     assert not transport.requests
@@ -134,7 +134,7 @@ async def test_seat_command_rejects_unknown_driver_side_without_sending():
     client = ApacReadClient(material=material, session=ApacReadSession("a" * 32, "fake-token", context, "PK"), transport=transport)
     vehicle = VehicleIdentifier("SYNTHETIC-VEHICLE")
     cloud = GwmCloudClient(REGION_APAC, client, apac_remote_enabled=True)
-    cloud._vehicles[vehicle.value] = CloudVehicle(vehicle)
+    cloud._vehicles[vehicle.value] = CloudVehicle(vehicle, platform="beantech")
     with pytest.raises(GwmRoutePolicyError):
         await cloud.async_send_apac_control(vehicle, "seat_heating_start", security_password_hash="a" * 32)
     assert transport.requests == []
@@ -158,7 +158,7 @@ async def test_direct_charging_timeout_does_not_resend():
     client = ApacReadClient(material=material, session=ApacReadSession("a" * 32, "fake-token", context, "PK"), transport=transport)
     vehicle = VehicleIdentifier("SYNTHETIC-VEHICLE")
     cloud = GwmCloudClient(REGION_APAC, client, apac_charging_enabled=True)
-    cloud._vehicles[vehicle.value] = CloudVehicle(vehicle)
+    cloud._vehicles[vehicle.value] = CloudVehicle(vehicle, platform="beantech")
     with pytest.raises(GwmDeadlineExceededError):
         await cloud.async_send_apac_control(vehicle, "charge_now", security_password_hash="a" * 32)
     assert transport.calls == 1
@@ -186,7 +186,7 @@ async def test_shutdown_waits_for_active_apac_control():
     client = ApacReadClient(material=material, session=ApacReadSession("a" * 32, "fake-token", context, "PK"), transport=transport, owns_transport=True)
     vehicle = VehicleIdentifier("SYNTHETIC-VEHICLE")
     cloud = GwmCloudClient(REGION_APAC, client, apac_charging_enabled=True)
-    cloud._vehicles[vehicle.value] = CloudVehicle(vehicle)
+    cloud._vehicles[vehicle.value] = CloudVehicle(vehicle, platform="beantech")
     write = asyncio.create_task(cloud.async_send_apac_control(vehicle, "charge_now", security_password_hash="a" * 32))
     await transport.started.wait()
     shutdown = asyncio.create_task(cloud.aclose())
@@ -210,3 +210,39 @@ async def test_apac_charging_button_requires_its_own_capability():
     assert button.available
     await button.async_press()
     api.async_apac_control.assert_awaited_once_with("SYNTHETIC-VEHICLE", "charge_now")
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("platform", [None, "unknown", "navinfo", "BeanTech"])
+@pytest.mark.parametrize("action", ["lock", "unlock", "charge_now", "seat_heating_start"])
+async def test_apac_controls_require_the_supported_vehicle_platform(platform, action):
+    """Reject unsupported platforms before any control request reaches transport."""
+    class Transport:
+        """Record calls without sending traffic to a real service."""
+        def __init__(self):
+            """Start with an empty transport history."""
+            self.requests = []
+
+        async def execute(self, request, **kwargs):
+            """Return a synthetic acceptance for a permitted platform."""
+            self.requests.append(request)
+            return _TransportResponse(200, {}, b'{"code":"000000","data":{}}')
+
+    context = ssl.create_default_context()
+    context.set_ciphers("DEFAULT:@SECLEVEL=0")
+    _register_validated_context(context, TlsMode.APAC_ISSUED_MTLS)
+    material = ApacMaterial(EuBootstrapMaterial(b"fake", b"fake", b"fake"), "fake-key", "fake-secret")
+    transport = Transport()
+    client = ApacReadClient(material=material, session=ApacReadSession("a" * 32, "fake-token", context, "PK"), transport=transport)
+    identifier = VehicleIdentifier("SYNTHETIC-VEHICLE")
+    cloud = GwmCloudClient(REGION_APAC, client, apac_remote_enabled=True, apac_charging_enabled=True)
+    cloud._vehicles[identifier.value] = CloudVehicle(identifier, platform=platform, rudder="2")
+    permitted = platform == "BeanTech" or platform == "navinfo" and not action.startswith("seat_")
+    try:
+        if permitted:
+            await cloud.async_send_apac_control(identifier, action, security_password_hash="a" * 32)
+        else:
+            with pytest.raises(GwmRoutePolicyError):
+                await cloud.async_send_apac_control(identifier, action, security_password_hash="a" * 32)
+        assert len(transport.requests) == int(permitted)
+    finally:
+        await cloud.aclose()

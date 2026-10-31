@@ -699,13 +699,16 @@ class GwmCloudClient:
                     raise TypeError("capabilities_invalid")
                 capabilities = dict(capability_data)
                 if self.region == REGION_APAC:
-                    capabilities["apac_remote_controls"] = self._apac_remote_enabled
-                    capabilities["apac_direct_charging"] = self._apac_charging_enabled
+                    apac_supported = platform in {"beantech", "navinfo"}
+                    capabilities["apac_remote_controls"] = self._apac_remote_enabled and apac_supported
+                    capabilities["apac_direct_charging"] = self._apac_charging_enabled and apac_supported
                 capabilities["climate_commands"] = self._climate_commands_enabled and (
-                    self.region != REGION_CHINA or china_supported
+                    platform in {"beantech", "navinfo"} if self.region == REGION_APAC
+                    else self.region != REGION_CHINA or china_supported
                 )
                 capabilities["lock_window_commands"] = self._lock_window_commands_enabled and (
-                    self.region != REGION_CHINA or china_supported
+                    platform in {"beantech", "navinfo"} if self.region == REGION_APAC
+                    else self.region != REGION_CHINA or china_supported
                 )
                 capabilities["charging_control"] = charging_control_available
                 if self.region == REGION_CHINA and platform == "beantech":
@@ -716,11 +719,11 @@ class GwmCloudClient:
                     raw_items if self.region != REGION_CHINA and isinstance(raw_items, dict) else {}
                 )
                 capabilities["front_defroster_commands"] = (
-                    (self._apac_remote_enabled if self.region == REGION_APAC else self._climate_commands_enabled)
+                    (capabilities["apac_remote_controls"] if self.region == REGION_APAC else self._climate_commands_enabled)
                     and "2222001" in overseas_status_codes
                 )
                 capabilities["cabin_clean_commands"] = (
-                    (self._apac_remote_enabled if self.region == REGION_APAC else self._climate_commands_enabled)
+                    (capabilities["apac_remote_controls"] if self.region == REGION_APAC else self._climate_commands_enabled)
                     and "2078020" in overseas_status_codes
                 )
                 snapshot["capabilities"] = capabilities
@@ -791,6 +794,7 @@ class GwmCloudClient:
         if self.region == REGION_APAC:
             if not self._climate_commands_enabled or type(identifier) is not VehicleIdentifier or identifier.value not in self._vehicles or type(self._client) is not ApacReadClient:
                 raise GwmRoutePolicyError(operation="update_climate_defaults")
+            self._apac_control_vehicle(identifier, operation="update_climate_defaults")
             async with self._session_renewal_lock:
                 await self._async_apac_write_once(
                     "update_climate_defaults",
@@ -847,6 +851,7 @@ class GwmCloudClient:
                 or type(self._client) is not ApacReadClient
             ):
                 raise GwmRoutePolicyError(operation="send_climate_command")
+            self._apac_control_vehicle(command.identifier, operation="send_climate_command")
             async with self._session_renewal_lock:
                 return await self._async_apac_write_once(
                     "send_climate_command",
@@ -869,6 +874,8 @@ class GwmCloudClient:
         self, identifier: VehicleIdentifier, action: str, *, security_password_hash: str,
     ) -> RemoteCommandAcceptance:
         """Send an explicitly enabled APAC control once after session validation."""
+        if not isinstance(action, str):
+            raise GwmRoutePolicyError(operation="send_apac_control")
         is_charging = action in {"charge_now", "charge_off"}
         allowed = self._apac_charging_enabled if is_charging else self._apac_remote_enabled
         if (
@@ -876,9 +883,12 @@ class GwmCloudClient:
             or identifier.value not in self._vehicles or type(self._client) is not ApacReadClient
         ):
             raise GwmRoutePolicyError(operation="send_apac_control")
+        vehicle = self._apac_control_vehicle(
+            identifier, operation="send_apac_control",
+            bean_tech_only=action.startswith(("seat_", "steering_wheel_")),
+        )
         driver_right = None
         if action.startswith(("seat_heating_", "seat_ventilation_")):
-            vehicle = self._vehicles[identifier.value]
             if vehicle.rudder not in {"1", "2"}:
                 raise GwmRoutePolicyError(operation="send_apac_control")
             driver_right = vehicle.rudder == "2"
@@ -887,6 +897,16 @@ class GwmCloudClient:
                 "send_apac_control",
                 lambda: self._client.send_apac_control(identifier, action, security_password_hash=security_password_hash, driver_right=driver_right),
             )
+
+    def _apac_control_vehicle(
+        self, identifier: VehicleIdentifier, *, operation: str, bean_tech_only: bool = False,
+    ) -> CloudVehicle:
+        """Limit APAC writes to a discovered vehicle with the supported platform."""
+        vehicle = self._vehicles.get(identifier.value)
+        supported = {"beantech"} if bean_tech_only else {"beantech", "navinfo"}
+        if vehicle is None or (vehicle.platform or "").strip().casefold() not in supported:
+            raise GwmRoutePolicyError(operation=operation)
+        return vehicle
 
     async def _async_apac_write_once[T](self, operation: str, action: Callable[[], Awaitable[T]]) -> T:
         """Validate account state and retire rejected sessions, without replaying writes.

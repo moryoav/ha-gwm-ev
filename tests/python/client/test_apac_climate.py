@@ -26,7 +26,7 @@ from custom_components.gwm_ora.gwm_client.apac_read import ApacReadClient, ApacR
 from custom_components.gwm_ora.gwm_client.commands import ClimateCommand, RemoteCommandResultItem
 from custom_components.gwm_ora.gwm_client.errors import GwmDeadlineExceededError, GwmRoutePolicyError
 from custom_components.gwm_ora.gwm_client.eu_identity import EuBootstrapMaterial
-from custom_components.gwm_ora.gwm_client.models import VehicleIdentifier
+from custom_components.gwm_ora.gwm_client.models import CloudVehicle, VehicleIdentifier
 from custom_components.gwm_ora.gwm_client.regions import TlsMode
 
 
@@ -152,12 +152,12 @@ async def test_runtime_requires_explicit_apac_consent_and_never_replays_timeout(
     identifier = VehicleIdentifier("SYNTHETIC-VEHICLE")
     command = ClimateCommand(identifier, "auto", 22, 15)
     disabled = GwmCloudClient(REGION_APAC, client, climate_commands_enabled=True)
-    disabled._vehicles[identifier.value] = object()
+    disabled._vehicles[identifier.value] = CloudVehicle(identifier, platform="beantech")
     with pytest.raises(GwmRoutePolicyError):
         await disabled.async_send_climate_command(command, security_password_hash="a" * 32)
     assert transport.calls == 0
     enabled = GwmCloudClient(REGION_APAC, client, apac_climate_enabled=True)
-    enabled._vehicles[identifier.value] = object()
+    enabled._vehicles[identifier.value] = CloudVehicle(identifier, platform="beantech")
     with pytest.raises(GwmDeadlineExceededError):
         await enabled.async_send_climate_command(command, security_password_hash="a" * 32)
     assert transport.calls == 1
@@ -177,7 +177,7 @@ async def test_runtime_does_not_send_if_session_validation_fails(monkeypatch):
     client = ApacReadClient(material=material, session=ApacReadSession("a" * 32, "fake-token", context, "PK"), transport=transport)
     identifier = VehicleIdentifier("SYNTHETIC-VEHICLE")
     cloud = GwmCloudClient(REGION_APAC, client, apac_climate_enabled=True)
-    cloud._vehicles[identifier.value] = object()
+    cloud._vehicles[identifier.value] = CloudVehicle(identifier, platform="beantech")
     cloud._credentials = object()
     retired = []
     async def retire(): retired.append(True)
@@ -210,7 +210,7 @@ async def test_rejected_write_session_is_retired_without_retry(monkeypatch):
     client = ApacReadClient(material=material, session=ApacReadSession("a" * 32, "fake-token", context, "PK"), transport=transport)
     identifier = VehicleIdentifier("SYNTHETIC-VEHICLE")
     cloud = GwmCloudClient(REGION_APAC, client, apac_climate_enabled=True)
-    cloud._vehicles[identifier.value] = object()
+    cloud._vehicles[identifier.value] = CloudVehicle(identifier, platform="beantech")
     retired = []
     async def retire(): retired.append(True)
     monkeypatch.setattr(cloud, "async_authentication_rejected", retire)
@@ -236,7 +236,7 @@ async def test_climate_api_dispatches_only_after_consent(monkeypatch):
     client = ApacReadClient(material=material, session=ApacReadSession("a" * 32, "fake-token", context, "PK"), transport=transport)
     identifier = VehicleIdentifier("SYNTHETIC-VEHICLE")
     cloud = GwmCloudClient(REGION_APAC, client, apac_climate_enabled=True)
-    cloud._vehicles[identifier.value] = object()
+    cloud._vehicles[identifier.value] = CloudVehicle(identifier, platform="beantech")
     api = object.__new__(GwmCommandApi)
     api._apac_closing = False
     api._apac_submissions = {}
