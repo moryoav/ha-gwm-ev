@@ -40,6 +40,9 @@ from .const import (
     CONF_AUTHENTICATION_METHOD,
     CONF_CONNECTION_TYPE,
     CONF_COUNTRY,
+    CONF_ENABLE_APAC_CHARGING,
+    CONF_ENABLE_APAC_CLIMATE,
+    CONF_ENABLE_APAC_REMOTE,
     CONF_ENABLE_CHARGING_CONTROL,
     CONF_ENABLE_REMOTE_COMMANDS,
     CONF_LOG_LEVEL,
@@ -95,7 +98,7 @@ _REGION_OPTIONS = [
     {"value": REGION_ANZ, "label": "Australia / New Zealand"},
     {"value": REGION_RUSSIA, "label": "Russia"},
     {"value": REGION_CHINA, "label": "Mainland China"},
-    {"value": REGION_APAC, "label": "Asia-Pacific (read-only)"},
+    {"value": REGION_APAC, "label": "Asia-Pacific (experimental)"},
 ]
 _ANZ_AUTHENTICATION_OPTIONS = [
     {
@@ -152,9 +155,17 @@ def _region_schema(default: str = REGION_EU) -> vol.Schema:
     )
 
 
-def _apac_read_only_options(options: Mapping[str, Any]) -> dict[str, Any]:
-    """Remove write consent and PINs when an entry becomes read-only APAC."""
-    blocked = {CONF_ENABLE_REMOTE_COMMANDS, CONF_ENABLE_CHARGING_CONTROL, CONF_SECURITY_PIN}
+def _apac_options_after_authentication(
+    options: Mapping[str, Any], *, preserve_consent: bool,
+) -> dict[str, Any]:
+    """Retain explicit APAC consent only when reconnecting the same account."""
+    blocked = {CONF_ENABLE_REMOTE_COMMANDS, CONF_ENABLE_CHARGING_CONTROL, CONF_ENABLE_APAC_CLIMATE}
+    pin = options.get(CONF_SECURITY_PIN)
+    if (
+        not preserve_consent or not isinstance(pin, str) or not pin.strip()
+        or not any(options.get(key) is True for key in (CONF_ENABLE_APAC_REMOTE, CONF_ENABLE_APAC_CHARGING))
+    ):
+        blocked.update({CONF_ENABLE_APAC_REMOTE, CONF_ENABLE_APAC_CHARGING, CONF_SECURITY_PIN})
     return {key: value for key, value in options.items() if key not in blocked}
 
 
@@ -239,6 +250,11 @@ def _cloud_options_schema(entry: ConfigEntry, defaults: dict[str, Any] | None = 
             for marker, value in fields.items()
             if marker.schema not in {CONF_ENABLE_REMOTE_COMMANDS, CONF_ENABLE_CHARGING_CONTROL}
         }
+        fields[vol.Required(CONF_ENABLE_APAC_REMOTE, default=current.get(CONF_ENABLE_APAC_REMOTE, False))] = bool
+        fields[vol.Required(CONF_ENABLE_APAC_CHARGING, default=current.get(CONF_ENABLE_APAC_CHARGING, False))] = bool
+        fields[vol.Optional(CONF_SECURITY_PIN, default=current.get(CONF_SECURITY_PIN, ""))] = _password_selector(
+            autocomplete="off"
+        )
         return vol.Schema(fields)
     if region != REGION_CHINA:
         fields[
@@ -783,7 +799,7 @@ class GwmConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 entry,
                 data={**entry.data, **data},
                 title=title,
-                **({"options": _apac_read_only_options(entry.options)} if credentials.region == REGION_APAC else {}),
+                **({"options": _apac_options_after_authentication(entry.options, preserve_consent=True)} if credentials.region == REGION_APAC else {}),
             )
 
         if self._cloud_mode == "reconfigure":
@@ -805,7 +821,10 @@ class GwmConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 unique_id=unique_id,
                 title=title,
                 data=data,
-                **({"options": _apac_read_only_options(entry.options)} if credentials.region == REGION_APAC else {}),
+                **({"options": _apac_options_after_authentication(
+                    entry.options,
+                    preserve_consent=entry.data.get(CONF_REGION) == REGION_APAC and previous_unique_id == unique_id,
+                )} if credentials.region == REGION_APAC else {}),
             )
             if previous_unique_id != unique_id:
                 await async_remove_cloud_state(self.hass, previous_unique_id)
@@ -837,7 +856,7 @@ class GwmOptionsFlow(config_entries.OptionsFlowWithReload):
         self,
         user_input: dict[str, Any] | None = None,
     ) -> ConfigFlowResult:
-        """Validate entry options and discard control consent for the read-only APAC region."""
+        """Validate region-specific options and explicit control consent."""
         entry = self.config_entry
         if not _is_cloud(entry):
             return self.async_abort(reason="legacy_addon_entry")
@@ -846,21 +865,28 @@ class GwmOptionsFlow(config_entries.OptionsFlowWithReload):
         if user_input is not None:
             normalized = dict(user_input)
             if entry.data.get(CONF_REGION) == REGION_APAC:
-                return self.async_create_entry(data=_apac_read_only_options(normalized))
+                normalized.pop(CONF_ENABLE_APAC_CLIMATE, None)
+                normalized.pop(CONF_ENABLE_CHARGING_CONTROL, None)
+                normalized.pop(CONF_ENABLE_REMOTE_COMMANDS, None)
             pin = normalized.get(CONF_SECURITY_PIN)
             normalized_pin = pin.strip() if isinstance(pin, str) else ""
             existing_pin = entry.options.get(CONF_SECURITY_PIN)
             preserved_pin = existing_pin.strip() if isinstance(existing_pin, str) else ""
+            selected_control = (
+                any(normalized.get(key) is True for key in (CONF_ENABLE_APAC_REMOTE, CONF_ENABLE_APAC_CHARGING))
+                if entry.data.get(CONF_REGION) == REGION_APAC
+                else normalized.get(CONF_ENABLE_REMOTE_COMMANDS) is True
+            )
             if (
                 entry.data.get(CONF_REGION) != REGION_CHINA
-                and normalized.get(CONF_ENABLE_REMOTE_COMMANDS) is True
+                and selected_control
                 and not (normalized_pin or preserved_pin)
             ):
                 errors[CONF_SECURITY_PIN] = "security_pin_required"
             else:
                 if (
                     entry.data.get(CONF_REGION) == REGION_CHINA
-                    or normalized.get(CONF_ENABLE_REMOTE_COMMANDS) is not True
+                    or not selected_control
                 ):
                     normalized.pop(CONF_SECURITY_PIN, None)
                 elif normalized_pin:

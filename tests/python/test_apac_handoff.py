@@ -19,7 +19,7 @@ from custom_components.gwm_ora.gwm_client.errors import GwmAuthenticationError, 
 from custom_components.gwm_ora.gwm_client.eu_identity import EuBootstrapMaterial, EuIssuedIdentity
 
 
-def _runtime_with_synthetic_transport(monkeypatch, transport, state_store=None):
+def _runtime_with_synthetic_transport(monkeypatch, transport, state_store=None, **options):
     """Build the real APAC reader and runtime around a synthetic transport."""
     import custom_components.gwm_ora.gwm_client.apac_restore as restore
     from custom_components.gwm_ora.cloud_auth import cloud_entry_data
@@ -49,6 +49,7 @@ def _runtime_with_synthetic_transport(monkeypatch, transport, state_store=None):
         bootstrap=bootstrap,
         state_store=state_store,
         entry_data=cloud_entry_data(credentials),
+        **options,
     )
     return cloud, credentials, state
 
@@ -74,7 +75,7 @@ class _RuntimeTransport:
         payloads = {
             "refresh_token": {"accessToken": "renewed-access", "refreshToken": "renewed-refresh"},
             "get_user_info": {"gwId": "synthetic-gw", "beanId": "synthetic-bean"},
-            "acquire_vehicles": [{"vin": "SYNTHETIC-VEHICLE"}],
+            "acquire_vehicles": [{"vin": "SYNTHETIC-VEHICLE", "belongPlatform": "beantech", "rudder": "2"}],
             "get_last_status": {"items": [{"code": 2013021, "value": "65", "unit": "%"}]},
             "get_vehicle_basics": {},
         }
@@ -968,5 +969,391 @@ async def test_failed_startup_retirement_publication_retries_before_requesting_r
         assert transport.operations == operations
         restarted = cloud_state_store(HomeAssistant(str(tmp_path)), unique_id)
         assert await restarted.async_load_auth_state(cloud_entry_data(credentials)) is None
+    finally:
+        await cloud.aclose()
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("options", "vehicle", "charging"), [
+    ({}, False, False),
+    ({"enable_apac_climate": True}, False, False),
+    ({"enable_apac_remote": True}, True, False),
+    ({"enable_apac_charging": True}, False, True),
+    ({"enable_apac_remote": True, "enable_apac_charging": True}, True, True),
+])
+async def test_setup_unifies_vehicle_consent_and_keeps_charging_separate(
+    tmp_path, monkeypatch, options, vehicle, charging
+):
+    """Route one vehicle opt-in to climate and remote gates without widening old consent."""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from homeassistant.core import HomeAssistant
+
+    import custom_components.gwm_ora as integration
+    from custom_components.gwm_ora.cloud_auth import cloud_entry_data, cloud_unique_id
+
+    cloud, credentials, _ = _runtime_with_synthetic_transport(monkeypatch, _RuntimeTransport())
+    entry = SimpleNamespace(
+        unique_id=cloud_unique_id(credentials), data=cloud_entry_data(credentials),
+        options={**options, "security_pin": "synthetic-pin"},
+    )
+    hass = HomeAssistant(str(tmp_path))
+    hass.config_entries = SimpleNamespace(async_forward_entry_setups=AsyncMock())
+    monkeypatch.setattr(integration, "_async_load_cloud_bootstrap", AsyncMock(return_value=cloud.reusable_bootstrap))
+    supplied = {}
+
+    def build(*args, **kwargs):
+        """Capture the runtime consent supplied by actual Home Assistant setup."""
+        supplied.update(kwargs)
+        return cloud
+
+    monkeypatch.setattr(integration.GwmCloudClient, "from_entry_data", build)
+    coordinator = SimpleNamespace(async_config_entry_first_refresh=AsyncMock())
+    monkeypatch.setattr(integration, "GwmDataUpdateCoordinator", lambda *args, **kwargs: coordinator)
+    monkeypatch.setattr(integration, "_async_register_services", lambda hass: None)
+    try:
+        assert await integration._async_setup_cloud_entry(hass, entry)
+        assert supplied["apac_climate_enabled"] is vehicle
+        assert supplied["apac_remote_enabled"] is vehicle
+        assert supplied["apac_charging_enabled"] is charging
+        assert entry.runtime_data.api._apac_climate_enabled is vehicle
+        assert entry.runtime_data.api._apac_remote_enabled is vehicle
+        assert entry.runtime_data.api._apac_charging_enabled is charging
+    finally:
+        await cloud.aclose()
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["tailgate_open", "charge_now"])
+@pytest.mark.parametrize("phase", ["session_lock", "preflight", "dispatch"])
+async def test_control_cancellation_respects_actual_dispatch(monkeypatch, action, phase):
+    """Cancel queued controls, but finish one dispatched write and its journal."""
+    from custom_components.gwm_ora.cloud_commands import GwmCommandApi
+    from custom_components.gwm_ora.gwm_client._protocol import _TransportResponse
+
+    class Transport(_RuntimeTransport):
+        """Pause a real request boundary without contacting a vehicle."""
+
+        def __init__(self):
+            """Prepare a controllable pause after initial discovery."""
+            super().__init__()
+            self.pausing = False
+            self.started = asyncio.Event()
+            self.release = asyncio.Event()
+
+        async def execute(self, request, **kwargs):
+            """Pause validation or dispatch and return synthetic acceptance."""
+            target = "get_user_info" if phase == "preflight" else "send_apac_control"
+            if self.pausing and request.operation == target:
+                self.started.set()
+                await self.release.wait()
+            if request.operation == "send_apac_control":
+                self.operations.append(request.operation)
+                return _TransportResponse(200, {}, b'{"code":"000000","data":{}}')
+            return await super().execute(request, **kwargs)
+
+    transport = Transport()
+    cloud, _, _ = _runtime_with_synthetic_transport(
+        monkeypatch, transport, apac_remote_enabled=True, apac_charging_enabled=True
+    )
+    recorded = []
+    api = object.__new__(GwmCommandApi)
+    api._apac_closing = False
+    api._apac_submissions = {}
+    api._cloud = cloud
+    api._security_pin = "1234"
+    api._apac_remote_enabled = True
+    api._apac_charging_enabled = True
+
+    async def record(identifier, name, command_id):
+        """Observe the journal boundary only after provider acceptance."""
+        recorded.append(command_id)
+        return {"id": command_id}
+
+    monkeypatch.setattr(api, "_record_acceptance", record)
+    await cloud.async_get_vehicle_data()
+    transport.operations.clear()
+    transport.pausing = True
+    if phase == "session_lock":
+        await cloud._session_renewal_lock.acquire()
+    task = asyncio.create_task(api.async_apac_control("SYNTHETIC-VEHICLE", action))
+    try:
+        if phase == "session_lock":
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+        else:
+            await asyncio.wait_for(transport.started.wait(), 2)
+        task.cancel()
+        await asyncio.sleep(0)
+        task.cancel()
+        if phase == "session_lock":
+            cloud._session_renewal_lock.release()
+        transport.release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        dispatched = phase == "dispatch"
+        assert transport.operations.count("send_apac_control") == int(dispatched)
+        assert len(recorded) == int(dispatched)
+    finally:
+        transport.release.set()
+        if cloud._session_renewal_lock.locked() and phase == "session_lock":
+            cloud._session_renewal_lock.release()
+        if not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        await cloud.aclose()
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancel_unload", [False, True])
+async def test_unload_waits_for_apac_acceptance_publication(tmp_path, monkeypatch, cancel_unload):
+    """Finish accepted-command storage before unload, even when both callers cancel."""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from homeassistant.core import HomeAssistant
+
+    import custom_components.gwm_ora as integration
+    from custom_components.gwm_ora.cloud_auth import cloud_entry_data, cloud_unique_id
+    from custom_components.gwm_ora.cloud_commands import GwmCommandApi
+    from custom_components.gwm_ora.cloud_storage import cloud_state_store
+    from custom_components.gwm_ora.gwm_client._protocol import _TransportResponse
+
+    class Transport(_RuntimeTransport):
+        """Accept one fake control on the same transport as account validation."""
+
+        async def execute(self, request, **kwargs):
+            """Return a control acceptance without performing a vehicle action."""
+            if request.operation == "send_apac_control":
+                self.operations.append(request.operation)
+                return _TransportResponse(200, {}, b'{"code":"000000","data":{}}')
+            return await super().execute(request, **kwargs)
+
+    transport = Transport()
+    cloud, credentials, _ = _runtime_with_synthetic_transport(
+        monkeypatch, transport, apac_remote_enabled=True
+    )
+    await cloud.async_get_vehicle_data()
+    hass = HomeAssistant(str(tmp_path))
+    hass.config_entries = SimpleNamespace(async_unload_platforms=AsyncMock(return_value=True))
+    store = cloud_state_store(hass, cloud_unique_id(credentials))
+    cloud._state_store = store
+    await store.async_save_auth_state(credentials, cloud.reusable_bootstrap.state)
+    api = GwmCommandApi(cloud, store, credentials, enabled=True,
+                        apac_remote_enabled=True, security_pin="1234")
+    entry = _synthetic_config_entry(credentials)
+    entry.runtime_data = SimpleNamespace(api=api, cloud=cloud, state_store=store,
+        coordinator=SimpleNamespace(async_cancel_command_tasks=AsyncMock()))
+    started = asyncio.Event()
+    release = asyncio.Event()
+    original = store.async_record_accepted_command
+
+    async def delayed_record(*args, **kwargs):
+        """Pause acceptance before the real private disk publication."""
+        started.set()
+        await release.wait()
+        return await original(*args, **kwargs)
+
+    monkeypatch.setattr(store, "async_record_accepted_command", delayed_record)
+    caller = asyncio.create_task(api.async_apac_control("SYNTHETIC-VEHICLE", "tailgate_open"))
+    await asyncio.wait_for(started.wait(), 2)
+    caller.cancel()
+    unloading = asyncio.create_task(integration.async_unload_entry(hass, entry))
+    try:
+        for _ in range(5):
+            await asyncio.sleep(0)
+        assert not unloading.done()
+        assert not transport.closed
+        if cancel_unload:
+            for _ in range(2):
+                unloading.cancel()
+                caller.cancel()
+                await asyncio.sleep(0)
+            assert not unloading.done()
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await caller
+        if cancel_unload:
+            with pytest.raises(asyncio.CancelledError):
+                await unloading
+        else:
+            assert await unloading
+        assert transport.closed
+        restarted = cloud_state_store(HomeAssistant(str(tmp_path)), cloud_unique_id(credentials))
+        journal = await restarted.async_get_command_journal(cloud_entry_data(credentials))
+        assert len(journal) == 1 and journal[0].state == "accepted"
+        assert transport.operations.count("send_apac_control") == 1
+    finally:
+        release.set()
+        await asyncio.gather(caller, unloading, return_exceptions=True)
+        await cloud.aclose()
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("platform", [None, "unrecognized", "navinfo", "beantech"])
+async def test_apac_snapshot_only_advertises_controls_for_supported_platforms(monkeypatch, platform):
+    """Keep opt-in flags from enabling entities for an unknown APAC platform."""
+    import json
+
+    from custom_components.gwm_ora.gwm_client._protocol import _TransportResponse
+
+    class Transport(_RuntimeTransport):
+        """Provide discovery metadata through the actual APAC parser."""
+        async def execute(self, request, **kwargs):
+            """Report a known or unknown platform with an otherwise valid vehicle."""
+            if request.operation == "acquire_vehicles":
+                self.operations.append(request.operation)
+                data = [{"vin": "SYNTHETIC-VEHICLE", "belongPlatform": platform}]
+                return _TransportResponse(200, {}, json.dumps({"code": "000000", "data": data}).encode())
+            return await super().execute(request, **kwargs)
+
+    cloud, _, _ = _runtime_with_synthetic_transport(
+        monkeypatch, Transport(), apac_remote_enabled=True,
+        apac_climate_enabled=True, apac_charging_enabled=True,
+    )
+    try:
+        snapshot = await cloud.async_get_vehicle_data()
+        capabilities = snapshot["vehicles"][0]["capabilities"]
+        for key in ("apac_remote_controls", "apac_direct_charging", "climate_commands", "lock_window_commands"):
+            assert capabilities[key] is (platform in {"navinfo", "beantech"})
+        assert capabilities["charging_control"] is False
+    finally:
+        await cloud.aclose()
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("rudder", "expected"), [("1", True), (2, True), (None, False), ({"bad": 2}, False)])
+async def test_apac_seat_capability_follows_discovery_through_entities(monkeypatch, rudder, expected):
+    """Keep seat entities unavailable when discovery cannot identify the driver side."""
+    import json
+    from types import SimpleNamespace
+
+    from custom_components.gwm_ora.gwm_client._protocol import _TransportResponse
+    from custom_components.gwm_ora.select import GwmApacSeatLevelSelect
+    from custom_components.gwm_ora.switch import GwmRemoteControlSwitch
+
+    class Transport(_RuntimeTransport):
+        """Supply optional steering metadata in otherwise normal discovery."""
+        async def execute(self, request, **kwargs):
+            """Keep sensor refresh working with missing or malformed steering data."""
+            if request.operation == "acquire_vehicles":
+                data = [{"vin": "SYNTHETIC-VEHICLE", "belongPlatform": "beantech", "rudder": rudder}]
+                return _TransportResponse(200, {}, json.dumps({"code": "000000", "data": data}).encode())
+            return await super().execute(request, **kwargs)
+
+    cloud, _, _ = _runtime_with_synthetic_transport(monkeypatch, Transport(), apac_remote_enabled=True)
+    try:
+        vehicle = (await cloud.async_get_vehicle_data())["vehicles"][0]
+        assert vehicle["capabilities"]["apac_remote_controls"] is True
+        assert vehicle["capabilities"]["apac_seat_controls"] is expected
+        assert vehicle["values"]["soc"] == 65
+        coordinator = SimpleNamespace(region="ap", last_update_success=True, vehicle=lambda vin: vehicle)
+        selector = GwmApacSeatLevelSelect(None, coordinator, vehicle["vin"], "front_driver_seat_heater_level", "seat_heating")
+        seat = GwmRemoteControlSwitch(None, coordinator, vehicle["vin"], turn_on_action="seat_heating_start", turn_off_action="seat_heating_stop", translation_key="driver_heating", state_key="front_driver_seat_heater_level")
+        steering = GwmRemoteControlSwitch(None, coordinator, vehicle["vin"], turn_on_action="steering_wheel_heating", turn_off_action="steering_wheel_heatless", translation_key="steering_heating", state_key="steering_wheel_heater_on")
+        assert selector.available is expected
+        assert seat.available is expected
+        assert steering.available
+    finally:
+        await cloud.aclose()
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["removed", "unsupported_platform", "driver_side"])
+async def test_apac_write_uses_freshly_validated_vehicle_metadata(monkeypatch, change):
+    """Do not send with revoked membership, an unsupported platform or stale steering."""
+    import json
+
+    from custom_components.gwm_ora.gwm_client._protocol import _TransportResponse
+    from custom_components.gwm_ora.gwm_client.errors import GwmRoutePolicyError
+    from custom_components.gwm_ora.gwm_client.models import VehicleIdentifier
+
+    class Transport(_RuntimeTransport):
+        """Change account discovery between the last poll and the write preflight."""
+        def __init__(self):
+            """Keep initial discovery valid until the test changes server metadata."""
+            super().__init__()
+            self.changed = False
+            self.writes = []
+
+        async def execute(self, request, **kwargs):
+            """Return the current server membership and capture synthetic writes."""
+            if request.operation == "acquire_vehicles":
+                data = [{"vin": "SYNTHETIC-VEHICLE", "belongPlatform": "beantech", "rudder": "1"}]
+                if self.changed:
+                    if change == "removed":
+                        data = []
+                    elif change == "unsupported_platform":
+                        data[0]["belongPlatform"] = "unknown"
+                    else:
+                        data[0]["rudder"] = "2"
+                return _TransportResponse(200, {}, json.dumps({"code": "000000", "data": data}).encode())
+            if request.operation == "send_apac_control":
+                self.writes.append(json.loads(request.body))
+                return _TransportResponse(200, {}, b'{"code":"000000","data":{}}')
+            return await super().execute(request, **kwargs)
+
+    transport = Transport()
+    cloud, _, _ = _runtime_with_synthetic_transport(monkeypatch, transport, apac_remote_enabled=True)
+    try:
+        await cloud.async_get_vehicle_data()
+        transport.changed = True
+        identifier = VehicleIdentifier("SYNTHETIC-VEHICLE")
+        if change == "driver_side":
+            await cloud.async_send_apac_control(identifier, "seat_heating_start", security_password_hash="a" * 32)
+            seat = transport.writes[0]["instructions"]["0x0A"]["seat"]
+            assert seat["rightFront"] == "3"
+            assert "leftFront" not in seat
+        else:
+            with pytest.raises(GwmRoutePolicyError):
+                await cloud.async_send_apac_control(identifier, "lock", security_password_hash="a" * 32)
+            assert transport.writes == []
+    finally:
+        await cloud.aclose()
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("context_kind", ["system_ca", "issued_identity"])
+async def test_credential_bound_control_times_out_stalled_tls_setup(monkeypatch, context_kind):
+    """Bound both preflight context loads before dispatch and release the session lock."""
+    from unittest.mock import AsyncMock
+
+    import custom_components.gwm_ora.gwm_client.apac_restore as restore
+    from custom_components.gwm_ora.cloud_commands import GwmCommandApi
+    from custom_components.gwm_ora.gwm_client.errors import GwmDeadlineExceededError
+
+    transport = _RuntimeTransport()
+    cloud, _, _ = _runtime_with_synthetic_transport(monkeypatch, transport, apac_remote_enabled=True)
+    await cloud.async_get_vehicle_data()
+    bootstrap = cloud.reusable_bootstrap
+    transport.operations.clear()
+    api = object.__new__(GwmCommandApi)
+    api._cloud = cloud
+    api._security_pin = "1234"
+    api._apac_remote_enabled = True
+    api._apac_charging_enabled = False
+    api._apac_closing = False
+    api._apac_submissions = {}
+    api._record_acceptance = AsyncMock()
+    original_to_thread = asyncio.to_thread
+    target = ssl.create_default_context if context_kind == "system_ca" else restore.create_apac_issued_context
+    started = asyncio.Event()
+
+    async def stall_selected_context(function, *args, **kwargs):
+        """Pause one context builder while retaining the normal behavior of the other."""
+        if function is target:
+            started.set()
+            await asyncio.Event().wait()
+        return await original_to_thread(function, *args, **kwargs)
+
+    monkeypatch.setattr(asyncio, "to_thread", stall_selected_context)
+    if context_kind == "system_ca":
+        monkeypatch.setattr(runtime, "_APAC_TLS_SETUP_TIMEOUT", 0.02)
+    else:
+        monkeypatch.setattr(restore, "_TLS_SETUP_TIMEOUT", 0.02)
+    try:
+        with pytest.raises(GwmDeadlineExceededError):
+            await asyncio.wait_for(api.async_apac_control("SYNTHETIC-VEHICLE", "tailgate_open"), 1.0)
+        assert started.is_set()
+        assert not cloud._session_renewal_lock.locked()
+        assert transport.operations == []
+        assert cloud.reusable_bootstrap == bootstrap
+        assert cloud._pending_auth_state is None
+        api._record_acceptance.assert_not_awaited()
+        assert (await cloud.async_get_vehicle_data())["vehicles"][0]["vin"] == "SYNTHETIC-VEHICLE"
     finally:
         await cloud.aclose()

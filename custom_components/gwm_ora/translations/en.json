@@ -100,6 +100,8 @@
         "data": {
           "poll_interval_seconds": "Polling interval",
           "enable_remote_commands": "Enable remote commands",
+          "enable_apac_remote": "Vehicle controls",
+          "enable_apac_charging": "Charging control",
           "enable_charging_control": "Enable charging control",
           "security_pin": "Vehicle security PIN",
           "log_level": "Log level"
@@ -107,6 +109,8 @@
         "data_description": {
           "poll_interval_seconds": "Seconds between account-level cloud polls (30-3600).",
           "enable_remote_commands": "Explicit opt-in for supported remote command controls.",
+          "enable_apac_remote": "Allow supported climate, locks, windows, seats and other vehicle controls. Requires a vehicle security PIN.",
+          "enable_apac_charging": "Allow starting and stopping charging. Charging schedules are not supported. Requires a vehicle security PIN.",
           "enable_charging_control": "Independent explicit opt-in for charging schedules.",
           "security_pin": "Required for remote commands outside mainland China. The stored value is shown in a masked password field and remains redacted from diagnostics.",
           "log_level": "Integration-specific diagnostic verbosity."
@@ -114,7 +118,7 @@
       }
     },
     "error": {
-      "security_pin_required": "A vehicle security PIN is required when remote commands are enabled for this region."
+      "security_pin_required": "A vehicle security PIN is required when vehicle controls or charging control are enabled."
     },
     "abort": {
       "legacy_addon_entry": "The previous add-on based entry cannot be configured. Remove it and add GWM again."
@@ -297,6 +301,10 @@
       "charge_soc_limit": { "name": "Charge limit" }
     },
     "select": {
+      "front_driver_seat_heater_level": { "name": "Driver seat heating level" },
+      "front_passenger_seat_heater_level": { "name": "Passenger seat heating level" },
+      "front_driver_seat_vent_level": { "name": "Driver seat ventilation level" },
+      "front_passenger_seat_vent_level": { "name": "Passenger seat ventilation level" },
       "charge_window_start": { "name": "Charge window start" },
       "charge_window_end": { "name": "Charge window end" },
       "battery_appointment_time": { "name": "Battery heating departure time" },
@@ -315,6 +323,12 @@
       "horn_and_lights": { "name": "Sound horn and flash lights" },
       "open_tailgate": { "name": "Open tailgate" },
       "close_tailgate": { "name": "Close tailgate" },
+      "apac_steering_on": { "name": "Start steering wheel heating" },
+      "apac_steering_off": { "name": "Stop steering wheel heating" },
+      "apac_charge_start": { "name": "Start charging" },
+      "apac_charge_stop": { "name": "Stop charging" },
+      "apac_rear_defrost_on": { "name": "Start rear defrost" },
+      "apac_rear_defrost_off": { "name": "Stop rear defrost" },
       "close_sunroof": { "name": "Close sunroof" },
       "tilt_sunroof": { "name": "Tilt sunroof" },
       "half_open_sunroof": { "name": "Half open sunroof" },

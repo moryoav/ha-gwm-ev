@@ -20,7 +20,7 @@ def test_allowed_reads_and_authentication_are_fixed() -> None:
 
 @pytest.mark.parametrize(
     "operation",
-    ["send_command", "send_climate_command", "send_lock_command", "set_charging_plan", "charge_now", "unknown"],
+    ["send_command", "send_lock_command", "set_charging_plan", "charge_now", "unknown"],
 )
 def test_writes_and_unknown_operations_are_denied(operation: str) -> None:
     """Reject vehicle controls and unknown operations at the allowlist."""
