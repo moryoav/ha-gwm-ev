@@ -96,8 +96,13 @@ async def restore_apac_session(
     restored = ApacRestored(replace(state, tokens=tokens), session)
     if on_session_updated is not None:
         await on_session_updated(restored)
-    profile = await auth.get_user_info(tokens.access_token)
-    if profile != (state.tokens.gw_id, state.tokens.bean_id):
-        raise GwmAuthenticationError(operation="get_user_info")
-    await ApacReadClient(material=material, session=session, transport=transport).acquire_vehicles()
+    try:
+        profile = await auth.get_user_info(tokens.access_token)
+        if profile != (state.tokens.gw_id, state.tokens.bean_id):
+            raise GwmAuthenticationError(operation="get_user_info")
+        await ApacReadClient(material=material, session=session, transport=transport).acquire_vehicles()
+    except GwmApiError as error:
+        if is_overseas_session_expired(error):
+            raise GwmAuthenticationError(operation=error.operation, api_code=error.api_code) from None
+        raise
     return restored

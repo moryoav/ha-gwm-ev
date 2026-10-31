@@ -444,3 +444,68 @@ async def test_runtime_shutdown_drains_recovery_and_rejects_queued_reads(monkeyp
         release_refresh.set()
         await asyncio.gather(*(task for task in (active, queued, closing) if task is not None), return_exceptions=True)
         await cloud.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("boundary", ["startup", "runtime"])
+@pytest.mark.parametrize("failure_operation", ["get_user_info", "acquire_vehicles"])
+@pytest.mark.parametrize("rejection", ["551004", "http401", "http403"])
+async def test_post_refresh_rejection_requires_reauthentication(
+    tmp_path, monkeypatch, boundary, failure_operation, rejection
+):
+    """Retire failed recovery after one rotation for API-code and HTTP rejection."""
+    from types import SimpleNamespace
+
+    from homeassistant.core import HomeAssistant
+    from homeassistant.exceptions import ConfigEntryAuthFailed
+
+    import custom_components.gwm_ora as integration
+    import custom_components.gwm_ora.cloud_auth as auth_boundary
+    from custom_components.gwm_ora.cloud_auth import cloud_entry_data, cloud_unique_id
+    from custom_components.gwm_ora.cloud_storage import cloud_state_store
+    from custom_components.gwm_ora.gwm_client._protocol import _TransportResponse
+
+    class Transport(_RuntimeTransport):
+        async def execute(self, request, **kwargs):
+            """Reject a validation read after the token rotation has succeeded."""
+            if request.operation == failure_operation and request.headers.get("accessToken") == "renewed-access":
+                self.operations.append(request.operation)
+                if rejection.startswith("http"):
+                    return _TransportResponse(int(rejection[4:]), {}, b"{}")
+                return _TransportResponse(200, {}, b'{"code":"551004","data":{}}')
+            return await super().execute(request, **kwargs)
+
+    transport = Transport()
+    cloud, credentials, state = _runtime_with_synthetic_transport(monkeypatch, transport)
+    material = cloud.reusable_bootstrap.apac_material
+    hass = HomeAssistant(str(tmp_path))
+    unique_id = cloud_unique_id(credentials)
+    store = cloud_state_store(hass, unique_id)
+    await store.async_save_auth_state(credentials, state)
+    cloud._state_store = store
+    if boundary == "startup":
+        monkeypatch.setattr(integration, "load_apac_material", lambda *args: material)
+        monkeypatch.setattr(auth_boundary.AiohttpTransport, "create_owned", lambda **kwargs: transport)
+        entry = SimpleNamespace(data=cloud_entry_data(credentials), unique_id=unique_id)
+
+        async def run():
+            """Restore through the real Home Assistant startup authentication boundary."""
+            return await integration._async_load_cloud_bootstrap(hass, entry, store)
+
+        expected = ConfigEntryAuthFailed
+    else:
+        run = cloud.async_get_vehicle_data
+        expected = GwmAuthenticationError
+    try:
+        with pytest.raises(expected):
+            await run()
+        assert await store.async_load_auth_state(cloud_entry_data(credentials)) is None
+        assert transport.operations.count("refresh_token") == 1
+        operations = list(transport.operations)
+        with pytest.raises(expected):
+            await run()
+        assert transport.operations == operations
+        if boundary == "runtime":
+            assert cloud.reusable_bootstrap is None
+    finally:
+        await cloud.aclose()

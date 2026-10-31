@@ -64,9 +64,9 @@ from .gwm_client import (
     FrontDefrosterCommand,
     GwmApiError,
     GwmAuthenticationError,
-    GwmClosedError,
     GwmClient,
     GwmClientConfig,
+    GwmClosedError,
     GwmConfigurationError,
     GwmNetworkError,
     GwmOptionalEndpointError,
@@ -1049,6 +1049,8 @@ class GwmCloudClient:
         async with self._session_renewal_lock:
             if self._apac_closing or self._apac_closed:
                 raise GwmClosedError(operation="request")
+            if self._credentials is not None and self._bootstrap is None:
+                raise GwmAuthenticationError(operation="request")
             await self._async_flush_pending_auth_state()
             try:
                 return await action()
