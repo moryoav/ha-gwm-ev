@@ -1105,6 +1105,37 @@ def test_apac_options_hide_control_and_charging_fields() -> None:
 
 
 @pytest.mark.asyncio
+async def test_apac_options_submission_discards_write_consent_and_pin() -> None:
+    """Store APAC polling and logging options without submitted control credentials."""
+    entry = _entry(
+        data={
+            CONF_CONNECTION_TYPE: CONNECTION_TYPE_CLOUD,
+            CONF_REGION: "ap",
+            CONF_COUNTRY: "PK",
+            CONF_ACCOUNT: "account@example.invalid",
+            CONF_PASSWORD: "synthetic-password",
+        },
+        options={
+            CONF_ENABLE_REMOTE_COMMANDS: True,
+            CONF_ENABLE_CHARGING_CONTROL: True,
+            CONF_SECURITY_PIN: "synthetic-pin",
+        },
+    )
+    flow = config_flow.GwmOptionsFlow()
+    flow.hass = _Hass(entry)  # type: ignore[assignment]
+    flow.handler = entry.entry_id
+    result = await flow.async_step_init({
+        CONF_POLL_INTERVAL_SECONDS: 120,
+        CONF_LOG_LEVEL: "debug",
+        CONF_ENABLE_REMOTE_COMMANDS: True,
+        CONF_ENABLE_CHARGING_CONTROL: True,
+        CONF_SECURITY_PIN: "synthetic-pin",
+    })
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"] == {CONF_POLL_INTERVAL_SECONDS: 120, CONF_LOG_LEVEL: "debug"}
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["reconfigure", "reauth"])
 async def test_apac_configuration_retires_previous_write_consent(monkeypatch, mode: str) -> None:
     """Require a fresh opt-in if an APAC entry later becomes a writable region."""
