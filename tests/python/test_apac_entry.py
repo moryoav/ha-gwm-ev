@@ -31,8 +31,10 @@ async def test_setup_uses_apac_read_only_data_without_vehicle_writes(tmp_path, m
     """Exercise setup, read polling and shutdown using no real GWM transport."""
     calls = []
     forwarded = []
+
     class FakeTransport:
         async def execute(self, request, **kwargs):
+            """Return the synthetic response for one explicitly requested operation."""
             calls.append(request.operation)
             data = {
                 "acquire_vehicles": [{"vin": "SYNTHETIC-VEHICLE"}],
@@ -40,22 +42,44 @@ async def test_setup_uses_apac_read_only_data_without_vehicle_writes(tmp_path, m
                 "get_vehicle_basics": {},
             }[request.operation]
             return _TransportResponse(200, {}, json.dumps({"code": "000000", "data": data}).encode())
-        async def aclose(self): calls.append("closed")
+
+        async def aclose(self):
+            """Record synthetic transport cleanup without network activity."""
+            calls.append("closed")
+
     class Coordinator:
         def __init__(self, hass, api, **kwargs):
+            """Retain synthetic dependencies without making network requests."""
             self.api = api
             self.data = None
-        async def async_config_entry_first_refresh(self): self.data = await self.api.async_get_vehicles()
-        async def async_cancel_command_tasks(self): pass
+
+        async def async_config_entry_first_refresh(self):
+            """Complete the synthetic coordinator's first refresh without network activity."""
+            self.data = await self.api.async_get_vehicles()
+
+        async def async_cancel_command_tasks(self):
+            """Complete synthetic coordinator cleanup without submitting commands."""
+            pass
+
     class Entries:
         async def async_forward_entry_setups(self, entry, platforms):
+            """Record the Home Assistant platforms forwarded during APAC setup."""
             forwarded.extend(platforms)
-        async def async_unload_platforms(self, entry, platforms): return True
+
+        async def async_unload_platforms(self, entry, platforms):
+            """Confirm that the synthetic Home Assistant platforms unload successfully."""
+            return True
 
     credentials = GwmCloudCredentials(REGION_APAC, country, "person@example.invalid", "synthetic-password", "a" * 32)
     tokens = ApacTokens("synthetic-access", "synthetic-refresh", "synthetic-gw", "synthetic-bean")
-    state = replace(ApacAuthState.for_credentials(credentials.client_credentials()), tokens=tokens, issued_identity=EuIssuedIdentity("c3ludGhldGlj", "c3ludGhldGlj"))
-    material = ApacMaterial(EuBootstrapMaterial(b"fake-cert", b"c3ludGhldGljLWtleQ==", b"fake-ca"), "fake-key", "fake-secret")
+    state = replace(
+        ApacAuthState.for_credentials(credentials.client_credentials()),
+        tokens=tokens,
+        issued_identity=EuIssuedIdentity("c3ludGhldGlj", "c3ludGhldGlj"),
+    )
+    material = ApacMaterial(
+        EuBootstrapMaterial(b"fake-cert", b"c3ludGhldGljLWtleQ==", b"fake-ca"), "fake-key", "fake-secret"
+    )
     context = ssl.create_default_context()
     context.set_ciphers("DEFAULT:@SECLEVEL=0")
     _register_validated_context(context, TlsMode.APAC_ISSUED_MTLS)
@@ -63,7 +87,19 @@ async def test_setup_uses_apac_read_only_data_without_vehicle_writes(tmp_path, m
     bootstrap = runtime.GwmCloudBootstrap.from_authentication(credentials, ApacAuthenticated(state, session, material))
     hass = HomeAssistant(str(tmp_path))
     hass.config_entries = Entries()
-    entry = ConfigEntry(data=cloud_entry_data(credentials), discovery_keys=MappingProxyType({}), domain="gwm_ora", entry_id="synthetic-entry", minor_version=1, options={"enable_remote_commands": True, "enable_charging_control": True}, source="user", subentries_data=None, title="GWM APAC", unique_id=cloud_unique_id(credentials), version=1)
+    entry = ConfigEntry(
+        data=cloud_entry_data(credentials),
+        discovery_keys=MappingProxyType({}),
+        domain="gwm_ora",
+        entry_id="synthetic-entry",
+        minor_version=1,
+        options={"enable_remote_commands": True, "enable_charging_control": True},
+        source="user",
+        subentries_data=None,
+        title="GWM APAC",
+        unique_id=cloud_unique_id(credentials),
+        version=1,
+    )
     stage_cloud_bootstrap(hass, entry.unique_id, bootstrap)
     monkeypatch.setattr(runtime.AiohttpTransport, "create_owned", lambda **kwargs: FakeTransport())
     monkeypatch.setattr(integration, "GwmDataUpdateCoordinator", Coordinator)

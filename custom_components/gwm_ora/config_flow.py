@@ -161,6 +161,7 @@ def _account_schema(
     region: str,
     defaults: dict[str, Any] | None = None,
 ) -> vol.Schema:
+    """Build account fields appropriate to the selected regional authentication flow."""
     defaults = defaults or {}
     fields: dict[vol.Marker, object] = {}
     if region == REGION_APAC:
@@ -207,6 +208,7 @@ def _verification_schema() -> vol.Schema:
 
 
 def _cloud_options_schema(entry: ConfigEntry, defaults: dict[str, Any] | None = None) -> vol.Schema:
+    """Expose only the polling and control options supported by the entry's region."""
     current = {**entry.options, **(defaults or {})}
     region = str(entry.data.get(CONF_REGION, ""))
     fields: dict[vol.Marker, object] = {
@@ -588,6 +590,7 @@ class GwmConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         verification_code: object = None,
         allow_session_reclaim: bool = False,
     ) -> tuple[CloudAuthenticationResult | None, str]:
+        """Authenticate the selected account and persist regional sign-in continuations."""
         credentials = self._cloud_credentials
         if credentials is None:
             return None, "invalid_account"
@@ -740,6 +743,7 @@ class GwmConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self,
         result: CloudAuthenticationResult,
     ) -> ConfigFlowResult:
+        """Persist the authenticated handoff and complete setup, reauthentication, or reconfiguration."""
         credentials = self._cloud_credentials
         if credentials is None:
             return self.async_abort(reason="invalid_flow_state")
@@ -832,6 +836,7 @@ class GwmOptionsFlow(config_entries.OptionsFlowWithReload):
         self,
         user_input: dict[str, Any] | None = None,
     ) -> ConfigFlowResult:
+        """Validate entry options and discard control consent for the read-only APAC region."""
         entry = self.config_entry
         if not _is_cloud(entry):
             return self.async_abort(reason="legacy_addon_entry")

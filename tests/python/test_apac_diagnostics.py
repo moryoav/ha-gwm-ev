@@ -9,6 +9,7 @@ from custom_components.gwm_ora.diagnostics import async_get_config_entry_diagnos
 
 @pytest.mark.asyncio
 async def test_apac_diagnostics_redact_synthetic_authentication_and_signing_data():
+    """Exclude synthetic credentials, tokens, identity, and signing data from diagnostics."""
     secrets = {
         "account": "private-account",
         "password": "private-password",
@@ -24,8 +25,11 @@ async def test_apac_diagnostics_redact_synthetic_authentication_and_signing_data
         "longitude": 87.654321,
     }
     entry = SimpleNamespace(
-        data={"region": "ap", "country": "PK", **secrets}, options={}, title="GWM APAC",
-        unique_id="private-unique-id", runtime_data=SimpleNamespace(coordinator=SimpleNamespace(data={"vehicles": [secrets]})),
+        data={"region": "ap", "country": "PK", **secrets},
+        options={},
+        title="GWM APAC",
+        unique_id="private-unique-id",
+        runtime_data=SimpleNamespace(coordinator=SimpleNamespace(data={"vehicles": [secrets]})),
     )
     result = await async_get_config_entry_diagnostics(None, entry)
     assert result["entry"]["data"]["country"] == "PK"

@@ -19,6 +19,7 @@ from custom_components.gwm_ora.gwm_client.eu_identity import EuBootstrapMaterial
 
 
 def test_handoff_requires_matching_account_device_and_token(monkeypatch):
+    """Reject runtime handoffs whose account, device, or token binding differs."""
     credentials = GwmCloudCredentials(REGION_APAC, "PK", "person@example.invalid", "synthetic-password", "a" * 32)
     regional = credentials.client_credentials()
     tokens = ApacTokens("synthetic-access", "synthetic-refresh", "synthetic-gw", "synthetic-bean")
@@ -45,6 +46,7 @@ def test_handoff_requires_matching_account_device_and_token(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_expired_session_persists_rotated_tokens_before_retry(monkeypatch):
+    """Persist a rotated session before retrying the interrupted runtime read."""
     credentials = GwmCloudCredentials(REGION_APAC, "PK", "person@example.invalid", "synthetic-password", "a" * 32)
     tokens = ApacTokens("synthetic-access", "synthetic-refresh", "synthetic-gw", "synthetic-bean")
     state = replace(
@@ -62,6 +64,7 @@ async def test_expired_session_persists_rotated_tokens_before_retry(monkeypatch)
 
     class FakeStore:
         async def async_save_auth_state(self, credentials, state):
+            """Record the private state revision published by the runtime."""
             calls.append("saved")
 
     client = ApacReadClient(material=material, session=session, transport=None)
@@ -73,12 +76,14 @@ async def test_expired_session_persists_rotated_tokens_before_retry(monkeypatch)
     new_session = replace(session, access_token="renewed-access")
 
     async def fake_restore(**kwargs):
+        """Return the replacement synthetic session for runtime recovery."""
         calls.append("restore")
         return ApacRestored(new_state, new_session)
 
     monkeypatch.setattr(runtime, "restore_apac_session", fake_restore)
 
     async def action():
+        """Reject expired authentication once before returning the requested data."""
         calls.append("read")
         if calls.count("read") == 1:
             raise GwmAuthenticationError(operation="acquire_vehicles")
@@ -103,9 +108,11 @@ async def test_apac_runtime_discovers_and_maps_read_only_snapshot(monkeypatch, e
 
     class FakeTransport:
         def __init__(self):
+            """Retain synthetic dependencies without making network requests."""
             self.operations = []
 
         async def execute(self, request, **kwargs):
+            """Return the synthetic response for one explicitly requested operation."""
             self.operations.append(request.operation)
             if (
                 request.operation == "get_last_status"
@@ -125,6 +132,7 @@ async def test_apac_runtime_discovers_and_maps_read_only_snapshot(monkeypatch, e
             )
 
         async def aclose(self):
+            """Record synthetic transport cleanup without network activity."""
             pass
 
     credentials = GwmCloudCredentials(REGION_APAC, "PK", "person@example.invalid", "synthetic-password", "a" * 32)
@@ -200,6 +208,7 @@ async def test_runtime_retains_a_rotation_when_follow_up_validation_fails(monkey
 
     class Store:
         async def async_save_auth_state(self, supplied, replacement):
+            """Record the private state revision published by the runtime."""
             saved.append(replacement)
 
     client = ApacReadClient(material=material, session=session, transport=None)

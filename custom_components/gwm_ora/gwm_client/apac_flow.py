@@ -1,4 +1,4 @@
-"""Explicit APAC sign-in orchestration for future Home Assistant setup."""
+"""Explicit APAC sign-in orchestration for Home Assistant setup."""
 
 from __future__ import annotations
 
@@ -50,7 +50,8 @@ async def authenticate_apac(
 ) -> ApacAuthenticated | ApacVerificationRequired:
     """Restore or explicitly sign in without hidden OTP requests or writes."""
     if (
-        type(credentials) is not ApacCredentials or type(material) is not ApacMaterial
+        type(credentials) is not ApacCredentials
+        or type(material) is not ApacMaterial
         or type(allow_password_login) is not bool
         or (state is not None and (type(state) is not ApacAuthState or not state.matches(credentials)))
         or (verification_code is not None and not allow_password_login)
@@ -60,7 +61,11 @@ async def authenticate_apac(
     if candidate.tokens is not None and candidate.issued_identity is not None and verification_code is None:
         try:
             result = await restore_apac_session(
-                credentials=credentials, material=material, state=candidate, h5_context=h5_context, transport=transport,
+                credentials=credentials,
+                material=material,
+                state=candidate,
+                h5_context=h5_context,
+                transport=transport,
                 on_session_updated=on_session_updated,
             )
             return ApacAuthenticated(result.state, result.session, material)
@@ -96,11 +101,15 @@ async def authenticate_apac(
         raise GwmAuthenticationError(operation="get_user_info")
     issued = await auth.enroll_identity(tokens)
     session = ApacReadSession(
-        device_id=credentials.device_id, access_token=tokens.access_token,
-        app_ssl_context=issued.app_ssl_context, country=credentials.country,
+        device_id=credentials.device_id,
+        access_token=tokens.access_token,
+        app_ssl_context=issued.app_ssl_context,
+        country=credentials.country,
     )
     authenticated = ApacAuthenticated(
-        replace(candidate, tokens=tokens, issued_identity=issued.identity, verification_requested_at=None), session, material
+        replace(candidate, tokens=tokens, issued_identity=issued.identity, verification_requested_at=None),
+        session,
+        material,
     )
     if on_session_updated is not None:
         await on_session_updated(ApacRestored(authenticated.state, session))

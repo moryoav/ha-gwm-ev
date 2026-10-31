@@ -86,6 +86,7 @@ class GwmCloudCredentials:
     authentication_method: str | None = None
 
     def __post_init__(self) -> None:
+        """Normalize credentials and validate the selected regional account context."""
         if not isinstance(self.region, str):
             raise ValueError("credentials_invalid")
         region = self.region.strip().lower()
@@ -173,6 +174,7 @@ class GwmCloudAuthenticator:
         resource_loader: ResourceLoader | None = None,
         apac_material_loader: Callable[[], ApacMaterial] | None = None,
     ) -> None:
+        """Retain regional client factories and the optional private APAC material loader."""
         self._overseas_client_factory = overseas_client_factory or GwmClient
         self._china_client_factory = china_client_factory or ChinaClient
         self._resource_loader = resource_loader or _load_bootstrap_material

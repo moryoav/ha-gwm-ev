@@ -872,6 +872,7 @@ async def test_china_reauth_requires_no_password_and_restages_complete_state(
 async def test_cloud_reconfigure_authenticates_before_replacing_entry(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Replace a regional entry only after the new account has authenticated successfully."""
     entry = _entry(
         data={
             CONF_CONNECTION_TYPE: CONNECTION_TYPE_CLOUD,
@@ -1066,6 +1067,7 @@ async def test_apac_setup_verification_creates_read_only_entry(monkeypatch: pyte
 
     class Authenticator:
         async def async_authenticate(self, credentials, **kwargs):
+            """Return a synthetic regional authentication result for the test."""
             regional = credentials.client_credentials()
             assert isinstance(regional, ApacCredentials)
             state = ApacAuthState.for_credentials(regional)

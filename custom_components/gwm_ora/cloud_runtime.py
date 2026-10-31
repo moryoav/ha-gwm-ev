@@ -342,6 +342,7 @@ class GwmCloudBootstrap:
     apac_material: ApacMaterial | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
+        """Reject bootstrap handoffs with mismatched regional state or private material."""
         if (
             self.region not in {REGION_EU, REGION_ANZ, REGION_RUSSIA, REGION_CHINA, REGION_APAC}
             or (self.region == REGION_APAC) != (type(self.apac_material) is ApacMaterial)
@@ -483,6 +484,7 @@ class GwmCloudClient:
         lock_window_commands_enabled: bool = False,
         charging_control_enabled: bool = False,
     ) -> None:
+        """Bind the regional reader, persistence, and explicitly enabled command capabilities."""
         if region not in {REGION_EU, REGION_ANZ, REGION_RUSSIA, REGION_CHINA, REGION_APAC}:
             raise GwmConfigurationError(operation="request")
         self.region = region
@@ -753,6 +755,7 @@ class GwmCloudClient:
         temperature: int,
         operation_time_minutes: int,
     ) -> None:
+        """Update supported regional climate defaults while enforcing APAC read-only access."""
         self._ensure_apac_read_only("update_climate_defaults")
         if self.region == REGION_CHINA:
             vehicle = self._vehicles.get(identifier.value)
@@ -794,6 +797,7 @@ class GwmCloudClient:
         *,
         security_password_hash: str | None = None,
     ) -> RemoteCommandAcceptance:
+        """Send a supported regional climate command with bounded session recovery."""
         self._ensure_apac_read_only("send_climate_command")
         if self.region == REGION_CHINA:
             return await self._async_with_session_renewal(
@@ -814,6 +818,7 @@ class GwmCloudClient:
         *,
         security_password_hash: str | None = None,
     ) -> RemoteCommandAcceptance:
+        """Send a supported regional lock command with bounded session recovery."""
         self._ensure_apac_read_only("send_lock_command")
         if self.region == REGION_CHINA:
             return await self._async_with_session_renewal(
@@ -834,6 +839,7 @@ class GwmCloudClient:
         *,
         security_password_hash: str | None = None,
     ) -> RemoteCommandAcceptance:
+        """Send a supported regional window command with bounded session recovery."""
         self._ensure_apac_read_only("send_close_windows_command")
         if self.region == REGION_CHINA:
             return await self._async_with_session_renewal(
@@ -1337,6 +1343,7 @@ def _bootstrap_state_matches(
     state: object,
     session: GwmSession | ApacReadSession | None,
 ) -> bool:
+    """Check that private state and its session belong to the same regional account."""
     if region == REGION_APAC:
         return (
             type(state) is ApacAuthState

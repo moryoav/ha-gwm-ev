@@ -40,7 +40,9 @@ async def restore_apac_session(
 ) -> ApacRestored:
     """Validate stored identity and test access, refreshing once if rejected.
 
-    Publish rotated tokens to the caller before subsequent network reads.
+    Force one refresh after a runtime authentication failure even if discovery
+    would still accept the old token. Publish rotated tokens to the caller
+    before subsequent network reads.
     Persistence remains caller-owned. This function never performs password
     login, requests verification codes, enrolls an identity or writes a vehicle.
     """

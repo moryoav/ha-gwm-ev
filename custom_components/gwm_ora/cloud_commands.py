@@ -634,6 +634,7 @@ class GwmCommandApi:
         )
 
     def _ensure_available(self) -> None:
+        """Require remote-command consent and a writable regional backend."""
         if self._cloud.region == REGION_APAC:
             raise GwmCommandForbidden("GWM APAC is read-only")
         if not self._enabled:
@@ -791,6 +792,7 @@ class GwmCommandApi:
                 )
 
     def _ensure_charging_available(self) -> None:
+        """Require charging consent and a writable regional backend."""
         if self._cloud.region == REGION_APAC:
             raise GwmCommandForbidden("GWM APAC is read-only")
         if not self._charging_enabled:

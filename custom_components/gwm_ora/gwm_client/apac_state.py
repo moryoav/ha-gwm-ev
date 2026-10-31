@@ -77,13 +77,17 @@ def encode_apac_state(state: ApacAuthState) -> dict[str, object]:
         "account_binding": state.account_binding,
         "country": state.country,
         "device_id": state.device_id,
-        "tokens": None if tokens is None else {
+        "tokens": None
+        if tokens is None
+        else {
             "access_token": tokens.access_token,
             "refresh_token": tokens.refresh_token,
             "gw_id": tokens.gw_id,
             "bean_id": tokens.bean_id,
         },
-        "issued_identity": None if identity is None else {
+        "issued_identity": None
+        if identity is None
+        else {
             "certificate": identity.certificate,
             "private_key": identity.private_key,
         },
@@ -98,12 +102,18 @@ def decode_apac_state(data: object, credentials: ApacCredentials | None = None) 
     try:
         if (credentials is not None and type(credentials) is not ApacCredentials) or not isinstance(data, dict):
             raise ValueError("apac_state_invalid")
-        if set(data) != {"account_binding", "country", "device_id", "tokens", "issued_identity", "verification_requested_at"}:
+        if set(data) != {
+            "account_binding",
+            "country",
+            "device_id",
+            "tokens",
+            "issued_identity",
+            "verification_requested_at",
+        }:
             raise ValueError("apac_state_invalid")
         token_data = data["tokens"]
         if token_data is not None and (
-            not isinstance(token_data, dict)
-            or set(token_data) != {"access_token", "refresh_token", "gw_id", "bean_id"}
+            not isinstance(token_data, dict) or set(token_data) != {"access_token", "refresh_token", "gw_id", "bean_id"}
         ):
             raise ValueError("apac_state_invalid")
         tokens = None if token_data is None else ApacTokens(**token_data)
@@ -118,8 +128,12 @@ def decode_apac_state(data: object, credentials: ApacCredentials | None = None) 
             raise ValueError("apac_state_invalid")
         timestamp = None if timestamp_value is None else datetime.fromisoformat(timestamp_value)
         state = ApacAuthState(
-            account_binding=data["account_binding"], country=data["country"], device_id=data["device_id"],
-            tokens=tokens, issued_identity=identity, verification_requested_at=timestamp,
+            account_binding=data["account_binding"],
+            country=data["country"],
+            device_id=data["device_id"],
+            tokens=tokens,
+            issued_identity=identity,
+            verification_requested_at=timestamp,
         )
         if credentials is not None and not state.matches(credentials):
             raise ValueError("apac_state_invalid")

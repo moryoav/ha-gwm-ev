@@ -30,7 +30,7 @@ from .models import (
 
 @dataclass(frozen=True, slots=True)
 class ApacReadSession:
-    """Private pre-authenticated session supplied by the future auth layer."""
+    """Private account-bound session supplied by the APAC authentication flow."""
 
     device_id: str = field(repr=False)
     access_token: str = field(repr=False)
@@ -46,11 +46,19 @@ class ApacReadClient:
     """Only discovery and status reads, with a caller-owned transport."""
 
     def __init__(
-        self, *, material: ApacMaterial, session: ApacReadSession, transport: _AsyncTransport,
+        self,
+        *,
+        material: ApacMaterial,
+        session: ApacReadSession,
+        transport: _AsyncTransport,
         owns_transport: bool = False,
     ) -> None:
         """Retain a private session and caller-owned read transport."""
-        if type(material) is not ApacMaterial or type(session) is not ApacReadSession or type(owns_transport) is not bool:
+        if (
+            type(material) is not ApacMaterial
+            or type(session) is not ApacReadSession
+            or type(owns_transport) is not bool
+        ):
             raise ValueError("apac_session_invalid")
         self._material = material
         self._session = session
@@ -72,7 +80,8 @@ class ApacReadClient:
             type(session) is not ApacReadSession
             or session.country != self._session.country
             or session.device_id != self._session.device_id
-            or self._closed or self._closing
+            or self._closed
+            or self._closing
         ):
             raise ValueError("apac_session_invalid")
         self._session = session
@@ -135,7 +144,9 @@ class ApacReadClient:
 
     async def get_last_status(self, vehicle_id: str | VehicleIdentifier) -> CloudVehicleStatus:
         """Read the last reported status for one vehicle."""
-        data = await self._read("get_last_status", vehicle_id.value if isinstance(vehicle_id, VehicleIdentifier) else vehicle_id)
+        data = await self._read(
+            "get_last_status", vehicle_id.value if isinstance(vehicle_id, VehicleIdentifier) else vehicle_id
+        )
         try:
             return parse_cloud_vehicle_status(data, allow_stringified_numbers=True, allow_numbers_for_strings=True)
         except ValueError:
@@ -143,7 +154,9 @@ class ApacReadClient:
 
     async def get_vehicle_basics(self, vehicle_id: str | VehicleIdentifier) -> CloudVehicleBasics:
         """Read supported vehicle configuration values."""
-        data = await self._read("get_vehicle_basics", vehicle_id.value if isinstance(vehicle_id, VehicleIdentifier) else vehicle_id)
+        data = await self._read(
+            "get_vehicle_basics", vehicle_id.value if isinstance(vehicle_id, VehicleIdentifier) else vehicle_id
+        )
         try:
             return parse_cloud_vehicle_basics(data, allow_numbers_for_strings=True)
         except ValueError:

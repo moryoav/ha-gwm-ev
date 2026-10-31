@@ -161,6 +161,7 @@ class _GwmCloudRecord:
     )
 
     def __post_init__(self) -> None:
+        """Validate regional bindings and the bounded private command and charging records."""
         if (
             self.region not in {REGION_EU, REGION_ANZ, REGION_RUSSIA, REGION_CHINA, REGION_APAC}
             or not isinstance(self.account_binding, str)
@@ -635,6 +636,7 @@ def _validate_regional_state(
     *,
     credentials: GwmCloudCredentials | None = None,
 ) -> None:
+    """Validate the state type and its binding to the selected regional account."""
     expected_type = {
         REGION_EU: EuAuthState,
         REGION_ANZ: AnzAuthState,
@@ -711,6 +713,7 @@ def _decode_record(data: object) -> _GwmCloudRecord:
 
 
 def _encode_auth_state(state: CloudAuthState) -> dict[str, Any]:
+    """Encode regional authentication state for account-bound private storage."""
     if type(state) is ApacAuthState:
         return {"kind": REGION_APAC, **encode_apac_state(state)}
     common: dict[str, Any] = {
@@ -779,6 +782,7 @@ def _encode_auth_state(state: CloudAuthState) -> dict[str, Any]:
 
 
 def _decode_auth_state(region: str, data: object) -> CloudAuthState:
+    """Decode private authentication state using the selected region's strict schema."""
     if not isinstance(data, dict) or data.get("kind") != region:
         raise ValueError("auth_state_invalid")
     if region == REGION_APAC:
