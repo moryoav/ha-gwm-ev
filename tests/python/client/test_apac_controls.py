@@ -246,3 +246,17 @@ async def test_apac_controls_require_the_supported_vehicle_platform(platform, ac
         assert len(transport.requests) == int(permitted)
     finally:
         await cloud.aclose()
+
+@pytest.mark.parametrize(("rudder", "expected"), [
+    ("1", "1"), ("2", "2"), (1, "1"), (2, "2"),
+    (None, None), (True, None), (False, None), (1.0, None),
+    ({"unexpected": "2"}, None), (["2"], None), ("3", None), ("", None),
+])
+def test_optional_rudder_never_breaks_account_discovery(rudder, expected):
+    """Preserve both discovered vehicles when one has unusable steering metadata."""
+    data = [{"vin": "FIRST-SYNTHETIC-VEHICLE", "rudder": rudder}, {"vin": "SECOND-SYNTHETIC-VEHICLE"}]
+    vehicles = parse_cloud_vehicles(data, allow_numbers_for_strings=True, include_rudder=True)
+    assert len(vehicles) == 2
+    assert vehicles[0].rudder == expected
+    assert vehicles[1].rudder is None
+    assert all(vehicle.rudder is None for vehicle in parse_cloud_vehicles(data, allow_numbers_for_strings=True))
