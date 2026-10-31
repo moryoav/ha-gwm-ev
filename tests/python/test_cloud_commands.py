@@ -1014,6 +1014,7 @@ async def test_cancellation_after_provider_acceptance_finishes_recovery_journal(
 async def test_cancelled_apac_dispatch_persists_accepted_command(tmp_path: Path) -> None:
     """Finish an APAC send and save its real private journal before cancellation."""
     from custom_components.gwm_ora.gwm_client.apac_auth_client import ApacTokens
+    from custom_components.gwm_ora.gwm_client.apac_dispatch import mark_apac_dispatch_started
     from custom_components.gwm_ora.gwm_client.apac_state import ApacAuthState
 
     credentials = GwmCloudCredentials("ap", "PK", "synthetic@example.invalid", "synthetic-password", _DEVICE_ID)
@@ -1031,6 +1032,7 @@ async def test_cancelled_apac_dispatch_persists_accepted_command(tmp_path: Path)
     started = asyncio.Event()
     release = asyncio.Event()
     async def send():
+        mark_apac_dispatch_started()
         started.set()
         await release.wait()
         return RemoteCommandAcceptance("synthetic-command")

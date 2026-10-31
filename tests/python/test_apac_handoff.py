@@ -19,7 +19,7 @@ from custom_components.gwm_ora.gwm_client.errors import GwmAuthenticationError, 
 from custom_components.gwm_ora.gwm_client.eu_identity import EuBootstrapMaterial, EuIssuedIdentity
 
 
-def _runtime_with_synthetic_transport(monkeypatch, transport, state_store=None):
+def _runtime_with_synthetic_transport(monkeypatch, transport, state_store=None, **options):
     """Build the real APAC reader and runtime around a synthetic transport."""
     import custom_components.gwm_ora.gwm_client.apac_restore as restore
     from custom_components.gwm_ora.cloud_auth import cloud_entry_data
@@ -49,6 +49,7 @@ def _runtime_with_synthetic_transport(monkeypatch, transport, state_store=None):
         bootstrap=bootstrap,
         state_store=state_store,
         entry_data=cloud_entry_data(credentials),
+        **options,
     )
     return cloud, credentials, state
 
@@ -1019,4 +1020,82 @@ async def test_setup_unifies_vehicle_consent_and_keeps_charging_separate(
         assert entry.runtime_data.api._apac_remote_enabled is vehicle
         assert entry.runtime_data.api._apac_charging_enabled is charging
     finally:
+        await cloud.aclose()
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["tailgate_open", "charge_now"])
+@pytest.mark.parametrize("phase", ["session_lock", "preflight", "dispatch"])
+async def test_control_cancellation_respects_actual_dispatch(monkeypatch, action, phase):
+    """Cancel queued controls, but finish one dispatched write and its journal."""
+    from custom_components.gwm_ora.cloud_commands import GwmCommandApi
+    from custom_components.gwm_ora.gwm_client._protocol import _TransportResponse
+
+    class Transport(_RuntimeTransport):
+        """Pause a real request boundary without contacting a vehicle."""
+
+        def __init__(self):
+            """Prepare a controllable pause after initial discovery."""
+            super().__init__()
+            self.pausing = False
+            self.started = asyncio.Event()
+            self.release = asyncio.Event()
+
+        async def execute(self, request, **kwargs):
+            """Pause validation or dispatch and return synthetic acceptance."""
+            target = "get_user_info" if phase == "preflight" else "send_apac_control"
+            if self.pausing and request.operation == target:
+                self.started.set()
+                await self.release.wait()
+            if request.operation == "send_apac_control":
+                self.operations.append(request.operation)
+                return _TransportResponse(200, {}, b'{"code":"000000","data":{}}')
+            return await super().execute(request, **kwargs)
+
+    transport = Transport()
+    cloud, _, _ = _runtime_with_synthetic_transport(
+        monkeypatch, transport, apac_remote_enabled=True, apac_charging_enabled=True
+    )
+    recorded = []
+    api = object.__new__(GwmCommandApi)
+    api._cloud = cloud
+    api._security_pin = "1234"
+    api._apac_remote_enabled = True
+    api._apac_charging_enabled = True
+
+    async def record(identifier, name, command_id):
+        """Observe the journal boundary only after provider acceptance."""
+        recorded.append(command_id)
+        return {"id": command_id}
+
+    monkeypatch.setattr(api, "_record_acceptance", record)
+    await cloud.async_get_vehicle_data()
+    transport.operations.clear()
+    transport.pausing = True
+    if phase == "session_lock":
+        await cloud._session_renewal_lock.acquire()
+    task = asyncio.create_task(api.async_apac_control("SYNTHETIC-VEHICLE", action))
+    try:
+        if phase == "session_lock":
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+        else:
+            await asyncio.wait_for(transport.started.wait(), 2)
+        task.cancel()
+        await asyncio.sleep(0)
+        task.cancel()
+        if phase == "session_lock":
+            cloud._session_renewal_lock.release()
+        transport.release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        dispatched = phase == "dispatch"
+        assert transport.operations.count("send_apac_control") == int(dispatched)
+        assert len(recorded) == int(dispatched)
+    finally:
+        transport.release.set()
+        if cloud._session_renewal_lock.locked() and phase == "session_lock":
+            cloud._session_renewal_lock.release()
+        if not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
         await cloud.aclose()

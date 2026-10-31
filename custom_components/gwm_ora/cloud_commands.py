@@ -41,6 +41,7 @@ from .gwm_client import (
     select_remote_command_result,
     valid_temperature,
 )
+from .gwm_client.apac_dispatch import ApacCommandDispatch, track_apac_dispatch
 from .gwm_client.commands import (
     BEANTECH_BATTERY_HEAT_ACTIONS,
     BEANTECH_COMFORT_ACTIONS,
@@ -593,10 +594,13 @@ class GwmCommandApi:
         self, identifier: VehicleIdentifier, name: str,
         send: Callable[[], Awaitable[RemoteCommandAcceptance]],
     ) -> dict[str, object]:
-        """Finish an initiated APAC send and its journal before propagating cancellation."""
+        """Cancel queued APAC controls and finish the journal of dispatched writes."""
+        dispatch = ApacCommandDispatch()
+
         async def send_and_record() -> dict[str, object]:
             """Send only once and durably record a successful acceptance."""
-            acceptance = await send()
+            with track_apac_dispatch(dispatch):
+                acceptance = await send()
             return await self._record_acceptance(identifier, name, acceptance.command_id)
 
         task = asyncio.create_task(send_and_record())
@@ -608,14 +612,21 @@ class GwmCommandApi:
                 if task.cancelled():
                     raise
                 cancelled = True
+                if not dispatch.started:
+                    dispatch.cancelled = True
+                    task.cancel()
             except Exception as error:
                 if cancelled:
+                    if not dispatch.started:
+                        raise asyncio.CancelledError from None
                     raise GwmCommandError("Command outcome is uncertain; check the vehicle before retrying") from error
                 raise
         try:
             result = task.result()
         except Exception as error:
             if cancelled:
+                if not dispatch.started:
+                    raise asyncio.CancelledError from None
                 raise GwmCommandError("Command outcome is uncertain; check the vehicle before retrying") from error
             raise
         if cancelled:

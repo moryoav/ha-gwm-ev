@@ -252,6 +252,7 @@ async def test_climate_api_dispatches_only_after_consent(monkeypatch):
 @pytest.mark.asyncio
 async def test_cancelled_apac_command_finishes_recording_accepted_result(monkeypatch):
     """Cancellation waits for the single send and acceptance journal to finish."""
+    from custom_components.gwm_ora.gwm_client.apac_dispatch import mark_apac_dispatch_started
     from custom_components.gwm_ora.gwm_client.commands import RemoteCommandAcceptance
 
     api = object.__new__(GwmCommandApi)
@@ -259,6 +260,7 @@ async def test_cancelled_apac_command_finishes_recording_accepted_result(monkeyp
     release = asyncio.Event()
     recorded = []
     async def send():
+        mark_apac_dispatch_started()
         started.set()
         await release.wait()
         return RemoteCommandAcceptance("synthetic-command")

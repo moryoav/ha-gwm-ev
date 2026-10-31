@@ -11,6 +11,7 @@ from typing import Literal
 from ._protocol import _AsyncTransport, _Deadline
 from .apac_climate import climate_defaults_payload, climate_payload
 from .apac_controls import control_payload
+from .apac_dispatch import mark_apac_dispatch_started
 from .apac_material import ApacMaterial
 from .apac_policy import validate_apac_country
 from .apac_request import prepare_apac_request
@@ -195,6 +196,8 @@ class ApacReadClient:
                     device_id=self._session.device_id, access_token=self._session.access_token,
                     country=self._session.country, vehicle_id=identifier.value, body=body, command_id=command_id,
                 )
+                if operation in {"send_climate_command", "send_apac_control"}:
+                    mark_apac_dispatch_started()
                 response = await self._transport.execute(request, deadline=deadline, connect_timeout=10.0, read_timeout=20.0)
                 return _decode_envelope(response, operation=operation)
         except TimeoutError:
