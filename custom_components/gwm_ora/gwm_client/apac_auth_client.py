@@ -1,6 +1,6 @@
 """APAC authentication primitives using explicitly injected contexts.
 
-These draft primitives are not wired to Home Assistant or persistent storage.
+Home Assistant orchestrates these primitives and persists account-bound state separately.
 They never initiate authentication or verification automatically.
 """
 
@@ -19,7 +19,7 @@ from .apac_material import ApacMaterial
 from .apac_request import prepare_apac_request
 from .crypto import generate_client_certificate_request
 from .errors import GwmDeadlineExceededError, GwmSchemaError
-from .eu_auth import _decode_auth_envelope, _parse_login, _parse_token_pair
+from .eu_auth import _decode_auth_envelope, _parse_login, _parse_token_pair, _required_text
 from .eu_identity import EuIssuedIdentity
 
 
@@ -135,6 +135,29 @@ class ApacAuthClient:
         )
         access, refresh = _parse_token_pair(data, operation="refresh_token")
         return ApacTokens(access, refresh, state.gw_id, state.bean_id)
+
+    async def get_user_info(self, access_token: str) -> tuple[str, str]:
+        """Read account identifiers so restored tokens cannot cross accounts."""
+        deadline = _Deadline(asyncio.get_running_loop().time() + 30)
+        try:
+            async with asyncio.timeout_at(deadline.expires_at), self._lock:
+                request = prepare_apac_request(
+                    operation="get_user_info",
+                    material=self._material,
+                    ssl_context=self._h5_context,
+                    device_id=self._credentials.device_id,
+                    access_token=access_token,
+                    country=self._credentials.country,
+                )
+                response = await self._transport.execute(
+                    request, deadline=deadline, connect_timeout=10, read_timeout=20
+                )
+                data = _decode_auth_envelope(response, operation="get_user_info", require_data=True)
+                gw_id = _required_text(data, "gwId", operation="get_user_info", maximum=4096)
+                bean_id = _required_text(data, "beanId", operation="get_user_info", maximum=4096)
+                return gw_id, bean_id
+        except TimeoutError:
+            raise GwmDeadlineExceededError(operation="get_user_info") from None
 
     async def enroll_identity(self, state: ApacTokens) -> ApacIssued:
         """Explicitly enroll an identity, then strictly verify its chain."""

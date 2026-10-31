@@ -1,19 +1,32 @@
-# APAC read-only client: draft work
+# APAC read-only development setup
 
-This is an early, unintegrated client draft. It is not a working Home Assistant setup, does not automatically authenticate, and must not be used for a live vehicle test yet. The APAC region has not been enabled in the setup flow. The client requires an explicit country: Thailand (`TH`), Malaysia (`MY`), Indonesia (`ID`) or Pakistan (`PK`), as listed in My GWM (`com.gwm.tha`). These countries share a proposed client implementation, not a claim of verified account or vehicle compatibility. Only Pakistan has contributor-reported live results from the earlier prototype; this draft branch has not been validated live in any country.
+This development branch adds a shared APAC read-only Home Assistant setup for Pakistan (`PK`), Thailand (`TH`), Malaysia (`MY`) and Indonesia (`ID`), the countries listed in My GWM (`com.gwm.tha`). All four countries use the same regional implementation.
 
-The draft provides explicitly invoked authentication primitives, strict identity validation, allowlisted discovery/status request preparation and a read-only transport adapter. It has no remote-control or charging-write API. The read-only components are not yet connected to configuration flow, account-bound private state, refresh/restart recovery, entity creation or Home Assistant service guards; those remain required.
+Remote controls and charging writes are disabled for APAC, including when stale enabled options exist or a direct service call is attempted. Existing region policies remain separate. Authentication and vehicle requests use distinct, strictly validated TLS contexts.
 
-## Private material
+## Private local material
 
-No APAC authentication material is included in this branch. The caller must explicitly supply an absolute, private directory outside the repository to `load_apac_material`. The directory is expected to contain `bootstrap.cer`, `bootstrap.key` (the existing transformed format), `ca.pem` (the four-certificate regional bundle) and `signing.json` with `app_key` and `app_secret` strings. The loader performs no downloads, has no default path, and does not log its contents or path. These names describe a proposed local test interface, not a redistribution license or a production setup instruction.
+APAC setup loads private material from `.storage/gwm_apac_material/` inside Home Assistant's configuration directory, using `hass.config.path`. For example, if the configuration directory is `/config`, the full path is `/config/.storage/gwm_apac_material/`. Use the actual configuration directory for your installation. It must contain:
 
-All test inputs in this branch are synthetic. The caller remains responsible for securing any real local files and following the maintainer's provenance decision. Do not copy files or real values into the repository, Git history, logs or issue comments.
+- `bootstrap.cer`: the separately supplied bootstrap certificate.
+- `bootstrap.key`: the separately supplied transformed bootstrap key.
+- `ca.pem`: the separately supplied four-certificate regional CA bundle.
+- `signing.json`: an object with `app_key` and `app_secret` string fields.
 
-## Current checks and limits
+The directory and its contents must remain outside Git workspaces, the repository and public issue/PR history. Restrict access to the Home Assistant account, account for backups, and follow the maintainer's provenance and permission decision. This project does not provide, extract, download or distribute this material. The loader rejects paths inside the source Git workspace and paths resolving outside the private directory. Don't place personal account information, vehicle identifiers or tokens in `signing.json`.
 
-The existing EU identity policy remains unchanged. APAC uses separate TLS roles and identity validators. The issued validator checks the expected certificate issuer and cryptographic signature against the supplied chain and fails closed if they do not match. Enrollment and vehicle requests accept only contexts returned by the matching APAC identity validator. Contexts are recorded weakly so the registry does not retain sessions. Default TLS contexts and identities from another region or gateway role cannot substitute for a validated APAC identity. The caller must not mutate a validated context.
+The format is shown below using deliberately fake values; these do not authenticate:
 
-Synthetic checks cover every app-listed country's request headers, calling code and CSR country; independent signing vectors; schema and deadline failures; read-only endpoint denial; nonempty status values through the shared snapshot mapper; numeric basics fields; and unchanged EU, ANZ and Russia routing. These checks verify code contracts, not vendor compatibility in the untested countries.
+```json
+{"app_key": "synthetic-key", "app_secret": "synthetic-secret"}
+```
 
-Pending work includes account binding and private persistence, verification and reauthentication in the config flow, session renewal/restart recovery without silent password login, explicit denial of every command and charging write at client and integration/service boundaries, diagnostics redaction, translated UI, documentation, and full regression coverage. A real account and vehicle test for each country must use the exact eventual PR branch after those pieces are wired together.
+After supplying authorized material, add the GWM integration, choose **Asia-Pacific (read-only)**, select the account's registration country, and enter the account credentials. Complete a verification code only when requested. The integration stores account-bound session state privately in Home Assistant storage. On restart it attempts to restore an issued identity and renew an expired session without silently falling back to password login or requesting another code.
+
+## Development testing
+
+Synthetic tests cover setup continuation, account/device binding, private state storage, read-only safeguards, response mapping, token expiry and refresh, and existing regional behavior.
+
+The contributor's live test with a Pakistan account and a 2026 Haval H6 PHEV covered setup, vehicle discovery, readings, subsequent updates, and reconnection after a Home Assistant restart.
+
+Live testing of token expiry and refresh is still needed before release.

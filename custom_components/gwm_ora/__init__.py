@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import timedelta
+from pathlib import Path
 
 import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
@@ -26,6 +28,7 @@ from .cloud_runtime import (
 )
 from .cloud_storage import (
     GwmCloudStateStore,
+    async_finish_apac_state_save,
     async_remove_cloud_state,
     cloud_state_store,
     credentials_for_auth_state,
@@ -45,6 +48,7 @@ from .const import (
     DOMAIN,
     MIN_CHARGE_WINDOW_MINUTES,
     PLATFORMS,
+    REGION_APAC,
     REGION_CHINA,
     SERVICE_CLEAR_CHARGING_PLAN,
     SERVICE_SET_CHARGING_PLAN,
@@ -62,6 +66,9 @@ from .gwm_client import (
     GwmHttpError,
     RussiaAuthenticated,
 )
+from .gwm_client.apac_flow import ApacAuthenticated
+from .gwm_client.apac_material import load_apac_material
+from .gwm_client.apac_restore import ApacRestored
 
 
 @dataclass(slots=True)
@@ -275,12 +282,32 @@ async def _async_setup_cloud_entry(
             and entry.unique_id is not None
         ):
             stage_cloud_bootstrap(hass, entry.unique_id, reusable)
-        await cloud.aclose()
+        if entry.data.get(CONF_REGION) == REGION_APAC:
+            # Keep the coordinator's retryable failure if the pending save fails again.
+            # APAC cleanup still closes its transport and the store retains the revision.
+            with suppress(Exception):
+                await cloud.aclose()
+        else:
+            await cloud.aclose()
         raise
     return True
 
 
 async def _async_load_cloud_bootstrap(
+    hass: HomeAssistant,
+    entry: GwmConfigEntry,
+    state_store: GwmCloudStateStore,
+) -> GwmCloudBootstrap:
+    """Resume a session and keep APAC publication failures retryable at startup."""
+    try:
+        return await _async_load_cloud_bootstrap_once(hass, entry, state_store)
+    except OSError as error:
+        if entry.data.get(CONF_REGION) == REGION_APAC:
+            raise ConfigEntryNotReady("GWM APAC private state is temporarily unavailable") from error
+        raise
+
+
+async def _async_load_cloud_bootstrap_once(
     hass: HomeAssistant,
     entry: GwmConfigEntry,
     state_store: GwmCloudStateStore,
@@ -316,12 +343,26 @@ async def _async_load_cloud_bootstrap(
             "GWM cloud private state is temporarily unavailable"
         ) from err
 
+    async def save_apac_session(result: ApacRestored) -> None:
+        """Persist a token rotation before any later restoration read can fail."""
+        await async_finish_apac_state_save(state_store.async_save_auth_state(credentials, result.state))
+
     try:
-        result = await GwmCloudAuthenticator().async_authenticate(
+        authenticator = (
+            GwmCloudAuthenticator(
+                apac_material_loader=lambda: load_apac_material(
+                    Path(hass.config.path(".storage", "gwm_apac_material"))
+                )
+            )
+            if credentials.region == REGION_APAC
+            else GwmCloudAuthenticator()
+        )
+        result = await authenticator.async_authenticate(
             credentials,
             state=auth_state,
             allow_session_reclaim=False,
             allow_password_login=False,
+            **({"apac_session_updated": save_apac_session} if credentials.region == REGION_APAC else {}),
         )
         if isinstance(result, ChinaInitializationRequired):
             await state_store.async_save_auth_state(credentials, result.state)
@@ -335,6 +376,7 @@ async def _async_load_cloud_bootstrap(
                 AnzAuthenticated,
                 RussiaAuthenticated,
                 ChinaAuthenticated,
+                ApacAuthenticated,
             ),
         ):
             await state_store.async_clear_auth_state(dict(entry.data))

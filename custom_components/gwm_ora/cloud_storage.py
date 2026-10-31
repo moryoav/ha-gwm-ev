@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import logging
 import re
 import secrets
+from collections.abc import Coroutine
 from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, cast
 
 from homeassistant.core import HomeAssistant
@@ -29,6 +32,7 @@ from .const import (
     CONF_REGION,
     DOMAIN,
     REGION_ANZ,
+    REGION_APAC,
     REGION_CHINA,
     REGION_EU,
     REGION_RUSSIA,
@@ -40,6 +44,7 @@ from .gwm_client import (
     EuIssuedIdentity,
     RussiaAuthState,
 )
+from .gwm_client.apac_state import ApacAuthState, decode_apac_state, encode_apac_state
 
 _STORAGE_VERSION = 1
 _LOGGER = logging.getLogger(__name__)
@@ -159,8 +164,9 @@ class _GwmCloudRecord:
     )
 
     def __post_init__(self) -> None:
+        """Validate regional bindings and the bounded private command and charging records."""
         if (
-            self.region not in {REGION_EU, REGION_ANZ, REGION_RUSSIA, REGION_CHINA}
+            self.region not in {REGION_EU, REGION_ANZ, REGION_RUSSIA, REGION_CHINA, REGION_APAC}
             or not isinstance(self.account_binding, str)
             or _HASH.fullmatch(self.account_binding) is None
             or not isinstance(self.context_binding, str)
@@ -183,10 +189,12 @@ class GwmCloudStateStore:
     """Serialize one direct account's auth state and future command journal."""
 
     def __init__(self, hass: HomeAssistant, unique_id: str) -> None:
+        """Bind one private store and retain failed APAC publications for retry."""
         if not isinstance(unique_id, str) or not unique_id.startswith("cloud:"):
             raise ValueError("direct_cloud_store_invalid")
         digest = hashlib.sha256(unique_id.encode("utf-8")).hexdigest()
         self.unique_id = unique_id
+        self._apac_storage = unique_id.startswith(f"cloud:{REGION_APAC}:")
         self._store = Store[dict[str, Any]](
             hass,
             _STORAGE_VERSION,
@@ -199,6 +207,7 @@ class GwmCloudStateStore:
         self._loaded = False
         self._invalid_loaded_data = False
         self._record: _GwmCloudRecord | None = None
+        self._pending_apac_record: _GwmCloudRecord | None = None
 
     def __repr__(self) -> str:
         return "GwmCloudStateStore()"
@@ -214,6 +223,12 @@ class GwmCloudStateStore:
         try:
             async with self._lock:
                 await self._async_ensure_loaded()
+                pending = self._pending_apac_record
+                if pending is not None:
+                    if self._record_matches(credentials, record=pending):
+                        await self._async_save(pending)
+                    else:
+                        self._pending_apac_record = None
                 if not self._record_matches(credentials):
                     changed = self._record is not None or self._invalid_loaded_data
                     if changed:
@@ -233,6 +248,15 @@ class GwmCloudStateStore:
         auth_state: CloudAuthState,
     ) -> None:
         """Atomically publish a complete or recoverable partial state revision."""
+        if self._apac_storage:
+            await async_finish_apac_state_save(self._async_save_auth_state(credentials, auth_state))
+        else:
+            await self._async_save_auth_state(credentials, auth_state)
+
+    async def _async_save_auth_state(
+        self, credentials: GwmCloudCredentials, auth_state: CloudAuthState
+    ) -> None:
+        """Validate and publish authentication state under the account lock."""
 
         _validate_credentials_for_store(self.unique_id, credentials)
         _validate_regional_state(
@@ -266,6 +290,13 @@ class GwmCloudStateStore:
         entry_data: dict[str, object],
     ) -> None:
         """Retire rejected auth state without discarding same-account commands."""
+        if self._apac_storage:
+            await async_finish_apac_state_save(self._async_clear_auth_state(entry_data))
+        else:
+            await self._async_clear_auth_state(entry_data)
+
+    async def _async_clear_auth_state(self, entry_data: dict[str, object]) -> None:
+        """Publish authentication retirement while retaining same-account records."""
 
         credentials = _credentials_from_entry(entry_data)
         async with self._lock:
@@ -455,10 +486,18 @@ class GwmCloudStateStore:
 
     async def async_remove(self) -> None:
         """Remove all persisted state for a deleted or replaced config entry."""
+        if self._apac_storage:
+            await async_finish_apac_state_save(self._async_remove())
+        else:
+            await self._async_remove()
+
+    async def _async_remove(self) -> None:
+        """Remove private data while holding serialization ownership to completion."""
 
         async with self._lock:
             await self._store.async_remove()
             self._record = None
+            self._pending_apac_record = None
             self._invalid_loaded_data = False
             self._loaded = True
 
@@ -473,8 +512,11 @@ class GwmCloudStateStore:
             self._invalid_loaded_data = True
         self._loaded = True
 
-    def _record_matches(self, credentials: GwmCloudCredentials) -> bool:
-        record = self._record
+    def _record_matches(
+        self, credentials: GwmCloudCredentials, *, record: _GwmCloudRecord | None = None
+    ) -> bool:
+        """Match a stored or pending revision to the complete current account context."""
+        record = self._record if record is None else record
         return record is not None and (
             record.region == credentials.region
             and record.account_binding == credentials.account_binding
@@ -499,9 +541,57 @@ class GwmCloudStateStore:
         )
 
     async def _async_save(self, record: _GwmCloudRecord) -> None:
-        await self._store.async_save(_encode_record(record))
+        """Keep the account lock owned until every APAC executor operation finishes."""
+        if record.region == REGION_APAC:
+            await async_finish_apac_state_save(self._async_publish_record(record))
+        else:
+            await self._async_publish_record(record)
+
+    async def _async_publish_record(self, record: _GwmCloudRecord) -> None:
+        """Keep failed APAC revisions private until atomic publication succeeds."""
+        if record.region == REGION_APAC:
+            self._pending_apac_record = record
+        encoded = _encode_record(record)
+        await self._store.async_save(encoded)
+        if record.region == REGION_APAC:
+            # Store defers writes during shutdown and logs writer errors without raising.
+            # Drain deferred work, then confirm the exact revision independently of its cache.
+            await self._store._async_handle_write_data()
+            await asyncio.to_thread(_verify_apac_publication, self._store.path, encoded)
         self._record = record
+        if self._pending_apac_record is record:
+            self._pending_apac_record = None
         self._invalid_loaded_data = False
+
+
+def _verify_apac_publication(path: str, expected: dict[str, Any]) -> None:
+    """Confirm the private APAC revision on disk without exposing its contents."""
+    try:
+        envelope = json.loads(Path(path).read_bytes())
+    except (OSError, ValueError):
+        raise OSError("APAC private state publication was not confirmed") from None
+    if (
+        not isinstance(envelope, dict)
+        or envelope.get("version") != _STORAGE_VERSION
+        or envelope.get("data") != expected
+    ):
+        raise OSError("APAC private state publication was not confirmed")
+
+
+async def async_finish_apac_state_save(save: Coroutine[Any, Any, None]) -> None:
+    """Finish an APAC state publication before propagating caller cancellation."""
+    task = asyncio.create_task(save)
+    cancelled = False
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            if task.cancelled():
+                raise
+            cancelled = True
+    task.result()
+    if cancelled:
+        raise asyncio.CancelledError
 
 
 def cloud_state_store(
@@ -587,7 +677,7 @@ def credentials_for_auth_state(
 
     if not isinstance(
         auth_state,
-        (EuAuthState, AnzAuthState, RussiaAuthState, ChinaAuthState),
+        (EuAuthState, AnzAuthState, RussiaAuthState, ChinaAuthState, ApacAuthState),
     ):
         raise ValueError("auth_state_invalid")
     base = _credentials_from_entry(entry_data)
@@ -633,11 +723,13 @@ def _validate_regional_state(
     *,
     credentials: GwmCloudCredentials | None = None,
 ) -> None:
+    """Validate the state type and its binding to the selected regional account."""
     expected_type = {
         REGION_EU: EuAuthState,
         REGION_ANZ: AnzAuthState,
         REGION_RUSSIA: RussiaAuthState,
         REGION_CHINA: ChinaAuthState,
+        REGION_APAC: ApacAuthState,
     }.get(region)
     if expected_type is None or type(state) is not expected_type or state.account_binding != account_binding:
         raise ValueError("auth_state_invalid")
@@ -708,6 +800,9 @@ def _decode_record(data: object) -> _GwmCloudRecord:
 
 
 def _encode_auth_state(state: CloudAuthState) -> dict[str, Any]:
+    """Encode regional authentication state for account-bound private storage."""
+    if type(state) is ApacAuthState:
+        return {"kind": REGION_APAC, **encode_apac_state(state)}
     common: dict[str, Any] = {
         "account_binding": state.account_binding,
         "device_id": state.device_id,
@@ -774,8 +869,11 @@ def _encode_auth_state(state: CloudAuthState) -> dict[str, Any]:
 
 
 def _decode_auth_state(region: str, data: object) -> CloudAuthState:
+    """Decode private authentication state using the selected region's strict schema."""
     if not isinstance(data, dict) or data.get("kind") != region:
         raise ValueError("auth_state_invalid")
+    if region == REGION_APAC:
+        return decode_apac_state({key: value for key, value in data.items() if key != "kind"})
     common = {
         "account_binding": _required_text(data.get("account_binding"), 64),
         "device_id": _required_text(data.get("device_id"), 128),

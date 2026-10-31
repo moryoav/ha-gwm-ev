@@ -100,6 +100,45 @@ def _auth_client(transport: FakeTransport) -> ApacAuthClient:
 
 
 @pytest.mark.asyncio
+async def test_user_info_returns_identifiers_and_rejects_missing_data() -> None:
+    """Validate account identifiers from the actual protocol response."""
+    transport = FakeTransport()
+    assert await _auth_client(transport).get_user_info("synthetic-access") == (
+        "synthetic-gw",
+        "synthetic-bean",
+    )
+    assert transport.requests[0].operation == "get_user_info"
+
+    malformed = FakeTransport(response=_TransportResponse(200, {}, b'{"code":"000000","data":{}}'))
+    with pytest.raises(GwmSchemaError):
+        await _auth_client(malformed).get_user_info("synthetic-access")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field", ["gwId", "beanId"])
+@pytest.mark.parametrize("case", ["missing", "null", "number", "empty", "oversize", "space", "control", "non_ascii"])
+async def test_user_info_rejects_each_malformed_account_identifier(field: str, case: str) -> None:
+    """Reject missing, mistyped, oversized, or non-printable account identifiers."""
+    data: dict[str, object] = {"gwId": "synthetic-gw", "beanId": "synthetic-bean"}
+    if case == "missing":
+        del data[field]
+    else:
+        data[field] = {
+            "null": None,
+            "number": 1,
+            "empty": "",
+            "oversize": "x" * 4097,
+            "space": "bad id",
+            "control": "bad\x00id",
+            "non_ascii": "bad\u0080id",
+        }[case]
+    response = _TransportResponse(200, {}, json.dumps({"code": "000000", "data": data}).encode())
+    with pytest.raises(GwmSchemaError) as raised:
+        await _auth_client(FakeTransport(response=response)).get_user_info("synthetic-access")
+    assert raised.value.operation == "get_user_info"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("operation", ["login", "refresh"])
 async def test_auth_timeouts_use_the_client_error_without_fallback(operation: str) -> None:
     """A timed-out refresh must not start a password login or retry."""

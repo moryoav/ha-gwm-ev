@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import secrets
+import ssl
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -23,6 +24,7 @@ from .const import (
     CONF_REGION,
     CONNECTION_TYPE_CLOUD,
     REGION_ANZ,
+    REGION_APAC,
     REGION_CHINA,
     REGION_EU,
     REGION_RUSSIA,
@@ -48,14 +50,21 @@ from .gwm_client import (
     RussiaCredentials,
 )
 from .gwm_client.anz_auth import AnzAuthenticationResult
+from .gwm_client.apac_auth import ApacCredentials
+from .gwm_client.apac_flow import ApacAuthenticated, ApacVerificationRequired, authenticate_apac
+from .gwm_client.apac_material import ApacMaterial
+from .gwm_client.apac_restore import ApacSessionUpdated
+from .gwm_client.apac_state import ApacAuthState
 from .gwm_client.china_client import ChinaAuthenticationResult
 from .gwm_client.eu_auth import EuAuthenticationResult
 from .gwm_client.russia_auth import RussiaAuthenticationResult
+from .gwm_client.transport import AiohttpTransport
 
-type ClientCredentials = EuCredentials | AnzCredentials | RussiaCredentials | ChinaCredentials
-type CloudAuthState = EuAuthState | AnzAuthState | RussiaAuthState | ChinaAuthState
+type ClientCredentials = EuCredentials | AnzCredentials | RussiaCredentials | ChinaCredentials | ApacCredentials
+type CloudAuthState = EuAuthState | AnzAuthState | RussiaAuthState | ChinaAuthState | ApacAuthState
 type CloudAuthenticationResult = (
     EuAuthenticationResult | AnzAuthenticationResult | RussiaAuthenticationResult | ChinaAuthenticationResult
+    | ApacAuthenticated | ApacVerificationRequired
 )
 type BootstrapMaterial = EuBootstrapMaterial | RussiaBootstrapMaterial | None
 type OverseasClientFactory = Callable[[GwmClientConfig], GwmClient]
@@ -77,10 +86,11 @@ class GwmCloudCredentials:
     authentication_method: str | None = None
 
     def __post_init__(self) -> None:
+        """Normalize credentials and validate the selected regional account context."""
         if not isinstance(self.region, str):
             raise ValueError("credentials_invalid")
         region = self.region.strip().lower()
-        if region not in SUPPORTED_CLOUD_REGIONS:
+        if region not in SUPPORTED_CLOUD_REGIONS and region != REGION_APAC:
             raise ValueError("credentials_invalid")
         object.__setattr__(self, "region", region)
 
@@ -111,6 +121,13 @@ class GwmCloudCredentials:
     def client_credentials(self) -> ClientCredentials:
         """Return the exact regional credential model for one client call."""
 
+        if self.region == REGION_APAC:
+            return ApacCredentials(
+                account=self.account,
+                password=_required_password(self.password),
+                country=self.country,
+                device_id=self.device_id,
+            )
         if self.region == REGION_EU:
             return EuCredentials(
                 account=self.account,
@@ -155,10 +172,13 @@ class GwmCloudAuthenticator:
         overseas_client_factory: OverseasClientFactory | None = None,
         china_client_factory: ChinaClientFactory | None = None,
         resource_loader: ResourceLoader | None = None,
+        apac_material_loader: Callable[[], ApacMaterial] | None = None,
     ) -> None:
+        """Retain regional client factories and the optional private APAC material loader."""
         self._overseas_client_factory = overseas_client_factory or GwmClient
         self._china_client_factory = china_client_factory or ChinaClient
         self._resource_loader = resource_loader or _load_bootstrap_material
+        self._apac_material_loader = apac_material_loader
 
     async def async_authenticate(
         self,
@@ -168,6 +188,7 @@ class GwmCloudAuthenticator:
         verification_code: str | None = None,
         allow_session_reclaim: bool = False,
         allow_password_login: bool = True,
+        apac_session_updated: ApacSessionUpdated | None = None,
     ) -> CloudAuthenticationResult:
         """Authenticate once and close the temporary protocol client."""
 
@@ -180,6 +201,33 @@ class GwmCloudAuthenticator:
             raise GwmConfigurationError(operation="login")
 
         regional_credentials = credentials.client_credentials()
+        if credentials.region == REGION_APAC:
+            if (
+                type(regional_credentials) is not ApacCredentials
+                or (state is not None and type(state) is not ApacAuthState)
+                or self._apac_material_loader is None
+                or allow_session_reclaim
+            ):
+                raise GwmConfigurationError(operation="login")
+            try:
+                material = await asyncio.to_thread(self._apac_material_loader)
+                h5_context = await asyncio.to_thread(ssl.create_default_context)
+            except (OSError, TypeError, ValueError):
+                raise GwmConfigurationError(operation="login") from None
+            transport = AiohttpTransport.create_owned(max_response_bytes=4 * 1024 * 1024)
+            try:
+                return await authenticate_apac(
+                    credentials=regional_credentials,
+                    material=material,
+                    state=state,
+                    h5_context=h5_context,
+                    transport=transport,
+                    verification_code=verification_code,
+                    allow_password_login=allow_password_login,
+                    on_session_updated=apac_session_updated,
+                )
+            finally:
+                await transport.aclose()
         if credentials.region == REGION_CHINA:
             if state is not None and type(state) is not ChinaAuthState:
                 raise GwmConfigurationError(operation="login")
@@ -288,6 +336,7 @@ def cloud_entry_title(region: str) -> str:
     """Return a non-personal title for one GWM cloud entry."""
 
     names = {
+        REGION_APAC: "GWM Asia-Pacific",
         REGION_EU: "GWM Europe",
         REGION_ANZ: "GWM Australia / New Zealand",
         REGION_RUSSIA: "GWM Russia",

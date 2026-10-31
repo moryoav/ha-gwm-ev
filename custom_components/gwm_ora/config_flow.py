@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 
 import voluptuous as vol
@@ -25,6 +27,7 @@ from .cloud_runtime import (
     stage_cloud_bootstrap,
 )
 from .cloud_storage import (
+    async_finish_apac_state_save,
     async_remove_cloud_state,
     cloud_state_store,
     credentials_for_auth_state,
@@ -54,6 +57,7 @@ from .const import (
     MAX_POLL_INTERVAL_SECONDS,
     MIN_POLL_INTERVAL_SECONDS,
     REGION_ANZ,
+    REGION_APAC,
     REGION_CHINA,
     REGION_EU,
     REGION_RUSSIA,
@@ -80,6 +84,9 @@ from .gwm_client import (
     RussiaIdentityError,
     RussiaVerificationRequired,
 )
+from .gwm_client.apac_flow import ApacAuthenticated, ApacVerificationRequired
+from .gwm_client.apac_material import load_apac_material
+from .gwm_client.apac_restore import ApacRestored
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -88,6 +95,7 @@ _REGION_OPTIONS = [
     {"value": REGION_ANZ, "label": "Australia / New Zealand"},
     {"value": REGION_RUSSIA, "label": "Russia"},
     {"value": REGION_CHINA, "label": "Mainland China"},
+    {"value": REGION_APAC, "label": "Asia-Pacific (read-only)"},
 ]
 _ANZ_AUTHENTICATION_OPTIONS = [
     {
@@ -104,18 +112,21 @@ _DEFAULT_COUNTRIES = {
     REGION_ANZ: "AU",
     REGION_RUSSIA: "RU",
     REGION_CHINA: "CN",
+    REGION_APAC: "PK",
 }
 _AUTHENTICATED_TYPES = (
     EuAuthenticated,
     AnzAuthenticated,
     RussiaAuthenticated,
     ChinaAuthenticated,
+    ApacAuthenticated,
 )
 _VERIFICATION_TYPES = (
     EuVerificationRequired,
     AnzVerificationRequired,
     RussiaVerificationRequired,
     ChinaVerificationRequired,
+    ApacVerificationRequired,
 )
 
 
@@ -141,13 +152,24 @@ def _region_schema(default: str = REGION_EU) -> vol.Schema:
     )
 
 
+def _apac_read_only_options(options: Mapping[str, Any]) -> dict[str, Any]:
+    """Remove write consent and PINs when an entry becomes read-only APAC."""
+    blocked = {CONF_ENABLE_REMOTE_COMMANDS, CONF_ENABLE_CHARGING_CONTROL, CONF_SECURITY_PIN}
+    return {key: value for key, value in options.items() if key not in blocked}
+
+
 def _account_schema(
     region: str,
     defaults: dict[str, Any] | None = None,
 ) -> vol.Schema:
+    """Build account fields appropriate to the selected regional authentication flow."""
     defaults = defaults or {}
     fields: dict[vol.Marker, object] = {}
-    if region == REGION_EU:
+    if region == REGION_APAC:
+        fields[vol.Required(CONF_COUNTRY, default=defaults.get(CONF_COUNTRY, "PK"))] = (
+            selector.CountrySelector(selector.CountrySelectorConfig(countries=["PK", "TH", "MY", "ID"]))
+        )
+    elif region == REGION_EU:
         fields[vol.Required(CONF_COUNTRY, default=defaults.get(CONF_COUNTRY, "DE"))] = (
             selector.CountrySelector()
         )
@@ -187,6 +209,7 @@ def _verification_schema() -> vol.Schema:
 
 
 def _cloud_options_schema(entry: ConfigEntry, defaults: dict[str, Any] | None = None) -> vol.Schema:
+    """Expose only the polling and control options supported by the entry's region."""
     current = {**entry.options, **(defaults or {})}
     region = str(entry.data.get(CONF_REGION, ""))
     fields: dict[vol.Marker, object] = {
@@ -210,6 +233,13 @@ def _cloud_options_schema(entry: ConfigEntry, defaults: dict[str, Any] | None = 
             default=current.get(CONF_LOG_LEVEL, DEFAULT_LOG_LEVEL),
         ): vol.In(LOG_LEVELS),
     }
+    if region == REGION_APAC:
+        fields = {
+            marker: value
+            for marker, value in fields.items()
+            if marker.schema not in {CONF_ENABLE_REMOTE_COMMANDS, CONF_ENABLE_CHARGING_CONTROL}
+        }
+        return vol.Schema(fields)
     if region != REGION_CHINA:
         fields[
             vol.Optional(
@@ -561,11 +591,20 @@ class GwmConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         verification_code: object = None,
         allow_session_reclaim: bool = False,
     ) -> tuple[CloudAuthenticationResult | None, str]:
+        """Authenticate the selected account and persist regional sign-in continuations."""
         credentials = self._cloud_credentials
         if credentials is None:
             return None, "invalid_account"
         if self._cloud_authenticator is None:
-            self._cloud_authenticator = GwmCloudAuthenticator()
+            self._cloud_authenticator = (
+                GwmCloudAuthenticator(
+                    apac_material_loader=lambda: load_apac_material(
+                        Path(self.hass.config.path(".storage", "gwm_apac_material"))
+                    )
+                )
+                if credentials.region == REGION_APAC
+                else GwmCloudAuthenticator()
+            )
         try:
             result = await self._cloud_authenticator.async_authenticate(
                 credentials,
@@ -574,6 +613,10 @@ class GwmConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     verification_code if isinstance(verification_code, str) else None
                 ),
                 allow_session_reclaim=allow_session_reclaim,
+                **(
+                    {"apac_session_updated": self._async_apac_session_updated}
+                    if credentials.region == REGION_APAC else {}
+                ),
             )
         except GwmRateLimitError as error:
             _log_cloud_auth_failure(error, credentials)
@@ -600,6 +643,11 @@ class GwmConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         except (TypeError, ValueError):
             return None, "invalid_account"
         return result, ""
+
+    async def _async_apac_session_updated(self, restored: ApacRestored) -> None:
+        """Retain and persist refreshed APAC state before subsequent requests."""
+        self._auth_state = restored.state
+        await async_finish_apac_state_save(self._async_persist_auth_state(restored.state))
 
     async def _async_route_authentication(
         self,
@@ -696,6 +744,7 @@ class GwmConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self,
         result: CloudAuthenticationResult,
     ) -> ConfigFlowResult:
+        """Persist the authenticated handoff and complete setup, reauthentication, or reconfiguration."""
         credentials = self._cloud_credentials
         if credentials is None:
             return self.async_abort(reason="invalid_flow_state")
@@ -734,6 +783,7 @@ class GwmConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 entry,
                 data={**entry.data, **data},
                 title=title,
+                **({"options": _apac_read_only_options(entry.options)} if credentials.region == REGION_APAC else {}),
             )
 
         if self._cloud_mode == "reconfigure":
@@ -755,6 +805,7 @@ class GwmConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 unique_id=unique_id,
                 title=title,
                 data=data,
+                **({"options": _apac_read_only_options(entry.options)} if credentials.region == REGION_APAC else {}),
             )
             if previous_unique_id != unique_id:
                 await async_remove_cloud_state(self.hass, previous_unique_id)
@@ -786,6 +837,7 @@ class GwmOptionsFlow(config_entries.OptionsFlowWithReload):
         self,
         user_input: dict[str, Any] | None = None,
     ) -> ConfigFlowResult:
+        """Validate entry options and discard control consent for the read-only APAC region."""
         entry = self.config_entry
         if not _is_cloud(entry):
             return self.async_abort(reason="legacy_addon_entry")
@@ -793,6 +845,8 @@ class GwmOptionsFlow(config_entries.OptionsFlowWithReload):
         errors: dict[str, str] = {}
         if user_input is not None:
             normalized = dict(user_input)
+            if entry.data.get(CONF_REGION) == REGION_APAC:
+                return self.async_create_entry(data=_apac_read_only_options(normalized))
             pin = normalized.get(CONF_SECURITY_PIN)
             normalized_pin = pin.strip() if isinstance(pin, str) else ""
             existing_pin = entry.options.get(CONF_SECURITY_PIN)

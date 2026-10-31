@@ -1,4 +1,4 @@
-"""APAC gateway policy, not yet registered as a supported region.
+"""APAC gateway policy for the regional read-only integration.
 
 The profile must be supplied by the caller and no credentials are bundled.
 This module alone does not implement authentication or make network requests.
@@ -53,8 +53,7 @@ def apac_gateways(material: ApacMaterial) -> Mapping[GatewayRole, GatewayConfig]
 def validate_apac_country(country: str) -> str:
     """Accept the four countries listed by the My GWM APAC app.
 
-    App-listed countries are protocol candidates, not a claim of live validation.
-    No APAC country is registered with the Home Assistant setup flow yet.
+    All four use the regional gateways and country-specific request headers.
     """
     if not isinstance(country, str) or country not in _CALLING_CODES:
         raise ValueError("apac_country_invalid")

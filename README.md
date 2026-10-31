@@ -42,6 +42,7 @@ The setup flow currently offers:
 - Australia and New Zealand.
 - Russia.
 - Mainland China, using the phone number registered in the official GWM app.
+- Asia-Pacific (development branch, read-only): Pakistan, Thailand, Malaysia and Indonesia. See [APAC development setup](docs/apac-read-only-draft.md).
 
 The account region must match the region used by the official GWM app. It is not based on the vehicle's current location.
 

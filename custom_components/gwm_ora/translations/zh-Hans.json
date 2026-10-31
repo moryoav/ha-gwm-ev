@@ -80,7 +80,7 @@
       "invalid_verification_code": "验证码被拒绝或已过期。",
       "rate_limited": "GWM 限制了请求频率，请稍后重试。",
       "service_error": "GWM 返回了不支持或意外的响应。",
-      "local_configuration_error": "无法验证内置的区域安全材料。",
+      "local_configuration_error": "区域安全材料缺失或无效。",
       "unsupported_region": "此云区域暂不可用于设置。",
       "initialization_failed": "下游 GWM 服务仍无法初始化。",
       "session_reclaim_not_confirmed": "继续前请确认您了解 ANZ 单会话的影响。"
