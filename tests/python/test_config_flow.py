@@ -172,6 +172,25 @@ def _authenticated(credentials: config_flow.GwmCloudCredentials) -> object:
             auto_ai_user_id="synthetic-auto-user",
         )
         return ChinaAuthenticated(state)
+    from custom_components.gwm_ora.gwm_client.apac_auth import ApacCredentials
+
+    if isinstance(regional, ApacCredentials):
+        from custom_components.gwm_ora.gwm_client.apac_auth_client import ApacTokens
+        from custom_components.gwm_ora.gwm_client.apac_flow import ApacAuthenticated
+        from custom_components.gwm_ora.gwm_client.apac_identity import _register_validated_context
+        from custom_components.gwm_ora.gwm_client.apac_material import ApacMaterial
+        from custom_components.gwm_ora.gwm_client.apac_read import ApacReadSession
+        from custom_components.gwm_ora.gwm_client.apac_state import ApacAuthState
+        from custom_components.gwm_ora.gwm_client.eu_identity import EuBootstrapMaterial, EuIssuedIdentity
+        from custom_components.gwm_ora.gwm_client.regions import TlsMode
+
+        context.set_ciphers("DEFAULT:@SECLEVEL=0")
+        _register_validated_context(context, TlsMode.APAC_ISSUED_MTLS)
+        tokens = ApacTokens("synthetic-access", "synthetic-refresh", "synthetic-gw", "synthetic-bean")
+        state = replace(ApacAuthState.for_credentials(regional), tokens=tokens, issued_identity=EuIssuedIdentity("c3ludGhldGlj", "c3ludGhldGlj"))
+        session = ApacReadSession(regional.device_id, tokens.access_token, context, regional.country)
+        material = ApacMaterial(EuBootstrapMaterial(b"fake-cert", b"c3ludGhldGljLWtleQ==", b"fake-ca"), "fake-key", "fake-secret")
+        return ApacAuthenticated(state, session, material)
     raise AssertionError("unexpected credentials")
 
 
@@ -894,6 +913,7 @@ async def test_cloud_reconfigure_authenticates_before_replacing_entry(
 
     assert result["reason"] == "reconfigure_successful"
     assert updates[0]["data"][CONF_REGION] == "rus"
+    assert "options" not in updates[0]
     assert updates[0]["data"][CONF_ACCOUNT] == "replacement"
     assert updates[0]["unique_id"].startswith("cloud:rus:")
     assert consume_cloud_bootstrap(flow.hass, updates[0]["unique_id"]) is not None
@@ -1079,3 +1099,39 @@ def test_apac_options_hide_control_and_charging_fields() -> None:
     assert CONF_ENABLE_REMOTE_COMMANDS not in fields
     assert CONF_ENABLE_CHARGING_CONTROL not in fields
     assert CONF_SECURITY_PIN not in fields
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["reconfigure", "reauth"])
+async def test_apac_configuration_retires_previous_write_consent(monkeypatch, mode: str) -> None:
+    """Require a fresh opt-in if an APAC entry later becomes a writable region."""
+    source_region = "eu" if mode == "reconfigure" else "ap"
+    country = "DE" if source_region == "eu" else "PK"
+    entry = _entry(data={CONF_CONNECTION_TYPE: CONNECTION_TYPE_CLOUD, CONF_REGION: source_region, CONF_COUNTRY: country, CONF_ACCOUNT: "account@example.invalid", CONF_PASSWORD: "synthetic-password"}, options={CONF_ENABLE_REMOTE_COMMANDS: True, CONF_ENABLE_CHARGING_CONTROL: True, CONF_SECURITY_PIN: "synthetic-pin", CONF_POLL_INTERVAL_SECONDS: 300, CONF_LOG_LEVEL: "debug"})
+    updates = []
+
+    class Authenticator:
+        async def async_authenticate(self, credentials, **kwargs):
+            """Return a synthetic APAC session without vehicle traffic."""
+            return _authenticated(credentials)
+
+    flow = config_flow.GwmConfigFlow()
+    flow.hass = _Hass(entry)
+    flow.context = {"source": mode, "entry_id": entry.entry_id}
+    flow._cloud_authenticator = Authenticator()
+
+    def update_and_abort(updated_entry, **kwargs):
+        """Capture the options that Home Assistant would persist."""
+        assert updated_entry is entry
+        updates.append(kwargs)
+        return flow.async_abort(reason=f"{mode}_successful")
+
+    monkeypatch.setattr(flow, "async_update_reload_and_abort", update_and_abort)
+    if mode == "reconfigure":
+        await flow.async_step_reconfigure({CONF_REGION: "ap"})
+        result = await flow.async_step_reconfigure_account({CONF_COUNTRY: "PK", CONF_ACCOUNT: "account@example.invalid", CONF_PASSWORD: "synthetic-password"})
+    else:
+        await flow.async_step_reauth(dict(entry.data))
+        result = await flow.async_step_reauth_confirm({CONF_PASSWORD: "synthetic-password"})
+    assert result["reason"] == f"{mode}_successful"
+    assert updates[0]["options"] == {CONF_POLL_INTERVAL_SECONDS: 300, CONF_LOG_LEVEL: "debug"}

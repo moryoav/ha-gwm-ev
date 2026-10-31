@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -148,6 +149,12 @@ def _region_schema(default: str = REGION_EU) -> vol.Schema:
             )
         }
     )
+
+
+def _apac_read_only_options(options: Mapping[str, Any]) -> dict[str, Any]:
+    """Remove write consent and PINs when an entry becomes read-only APAC."""
+    blocked = {CONF_ENABLE_REMOTE_COMMANDS, CONF_ENABLE_CHARGING_CONTROL, CONF_SECURITY_PIN}
+    return {key: value for key, value in options.items() if key not in blocked}
 
 
 def _account_schema(
@@ -771,6 +778,7 @@ class GwmConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 entry,
                 data={**entry.data, **data},
                 title=title,
+                **({"options": _apac_read_only_options(entry.options)} if credentials.region == REGION_APAC else {}),
             )
 
         if self._cloud_mode == "reconfigure":
@@ -792,6 +800,7 @@ class GwmConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 unique_id=unique_id,
                 title=title,
                 data=data,
+                **({"options": _apac_read_only_options(entry.options)} if credentials.region == REGION_APAC else {}),
             )
             if previous_unique_id != unique_id:
                 await async_remove_cloud_state(self.hass, previous_unique_id)
@@ -831,10 +840,7 @@ class GwmOptionsFlow(config_entries.OptionsFlowWithReload):
         if user_input is not None:
             normalized = dict(user_input)
             if entry.data.get(CONF_REGION) == REGION_APAC:
-                normalized.pop(CONF_ENABLE_REMOTE_COMMANDS, None)
-                normalized.pop(CONF_ENABLE_CHARGING_CONTROL, None)
-                normalized.pop(CONF_SECURITY_PIN, None)
-                return self.async_create_entry(data=normalized)
+                return self.async_create_entry(data=_apac_read_only_options(normalized))
             pin = normalized.get(CONF_SECURITY_PIN)
             normalized_pin = pin.strip() if isinstance(pin, str) else ""
             existing_pin = entry.options.get(CONF_SECURITY_PIN)
