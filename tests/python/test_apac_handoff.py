@@ -710,3 +710,45 @@ async def test_shutdown_flushes_failed_apac_rotation_before_disposing_transport(
         assert restored.tokens.refresh_token == "renewed-refresh"
     finally:
         await cloud.aclose()
+
+
+@pytest.mark.asyncio
+async def test_logged_atomic_writer_failure_keeps_rotation_pending_until_disk_confirmation(tmp_path, monkeypatch):
+    """Detect the real Store's swallowed writer error and retry before cleanup succeeds."""
+    from homeassistant.core import HomeAssistant
+    from homeassistant.helpers import storage as ha_storage
+
+    from custom_components.gwm_ora.cloud_auth import cloud_entry_data, cloud_unique_id
+    from custom_components.gwm_ora.cloud_storage import cloud_state_store
+
+    transport = _RuntimeTransport()
+    cloud, credentials, state = _runtime_with_synthetic_transport(monkeypatch, transport)
+    unique_id = cloud_unique_id(credentials)
+    store = cloud_state_store(HomeAssistant(str(tmp_path)), unique_id)
+    await store.async_save_auth_state(credentials, state)
+    cloud._state_store = store
+    original_write = ha_storage.write_utf8_file_atomic
+    attempts = []
+
+    def fail_one_atomic_write(filename, *args, **kwargs):
+        """Raise the writer error which Home Assistant itself catches and logs."""
+        if filename == store._store.path:
+            attempts.append("write")
+            if len(attempts) == 1:
+                raise ha_storage.WriteError("synthetic atomic writer failure")
+        return original_write(filename, *args, **kwargs)
+
+    monkeypatch.setattr(ha_storage, "write_utf8_file_atomic", fail_one_atomic_write)
+    try:
+        with pytest.raises(GwmNetworkError):
+            await cloud.async_get_vehicle_data()
+        assert cloud.reusable_bootstrap is None
+        await cloud.aclose()
+        assert len(attempts) == 2
+        assert transport.closed
+        assert transport.operations == ["acquire_vehicles", "refresh_token"]
+        restarted = cloud_state_store(HomeAssistant(str(tmp_path)), unique_id)
+        restored = await restarted.async_load_auth_state(cloud_entry_data(credentials))
+        assert restored.tokens.refresh_token == "renewed-refresh"
+    finally:
+        await cloud.aclose()

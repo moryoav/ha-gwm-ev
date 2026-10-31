@@ -296,3 +296,22 @@ async def test_cancelled_apac_setup_finishes_rotated_token_persistence(tmp_path,
         await asyncio.gather(task, return_exceptions=True)
     restarted = cloud_state_store(HomeAssistant(str(tmp_path)), unique_id)
     assert await restarted.async_load_auth_state(cloud_entry_data(credentials)) == replacement
+
+
+@pytest.mark.asyncio
+async def test_apac_state_publication_finishes_while_home_assistant_is_stopping(tmp_path):
+    """Write a pending APAC revision before shutdown reports publication complete."""
+    from homeassistant.core import CoreState
+
+    credentials = _credentials()
+    state = replace(
+        ApacAuthState.for_credentials(credentials.client_credentials()),
+        tokens=ApacTokens("synthetic-access", "synthetic-refresh", "synthetic-gw", "synthetic-bean"),
+        issued_identity=EuIssuedIdentity("c3ludGhldGlj", "c3ludGhldGlj"),
+    )
+    hass = HomeAssistant(str(tmp_path))
+    hass.set_state(CoreState.stopping)
+    unique_id = cloud_unique_id(credentials)
+    await cloud_state_store(hass, unique_id).async_save_auth_state(credentials, state)
+    restarted = cloud_state_store(HomeAssistant(str(tmp_path)), unique_id)
+    assert await restarted.async_load_auth_state(cloud_entry_data(credentials)) == state

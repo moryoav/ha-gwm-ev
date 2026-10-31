@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import logging
 import re
 import secrets
@@ -11,6 +12,7 @@ from collections.abc import Coroutine
 from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, cast
 
 from homeassistant.core import HomeAssistant
@@ -518,11 +520,31 @@ class GwmCloudStateStore:
         """Keep failed APAC revisions private until atomic publication succeeds."""
         if record.region == REGION_APAC:
             self._pending_apac_record = record
-        await self._store.async_save(_encode_record(record))
+        encoded = _encode_record(record)
+        await self._store.async_save(encoded)
+        if record.region == REGION_APAC:
+            # Store defers writes during shutdown and logs writer errors without raising.
+            # Drain deferred work, then confirm the exact revision independently of its cache.
+            await self._store._async_handle_write_data()
+            await asyncio.to_thread(_verify_apac_publication, self._store.path, encoded)
         self._record = record
         if self._pending_apac_record is record:
             self._pending_apac_record = None
         self._invalid_loaded_data = False
+
+
+def _verify_apac_publication(path: str, expected: dict[str, Any]) -> None:
+    """Confirm the private APAC revision on disk without exposing its contents."""
+    try:
+        envelope = json.loads(Path(path).read_bytes())
+    except (OSError, ValueError):
+        raise OSError("APAC private state publication was not confirmed") from None
+    if (
+        not isinstance(envelope, dict)
+        or envelope.get("version") != _STORAGE_VERSION
+        or envelope.get("data") != expected
+    ):
+        raise OSError("APAC private state publication was not confirmed")
 
 
 async def async_finish_apac_state_save(save: Coroutine[Any, Any, None]) -> None:
