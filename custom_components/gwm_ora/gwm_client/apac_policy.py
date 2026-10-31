@@ -53,8 +53,7 @@ def apac_gateways(material: ApacMaterial) -> Mapping[GatewayRole, GatewayConfig]
 def validate_apac_country(country: str) -> str:
     """Accept the four countries listed by the My GWM APAC app.
 
-    App-listed countries are protocol candidates, not a claim of live validation.
-    The Home Assistant flow offers all four with live validation still pending.
+    All four use the regional gateways and country-specific request headers.
     """
     if not isinstance(country, str) or country not in _CALLING_CODES:
         raise ValueError("apac_country_invalid")
