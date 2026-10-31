@@ -16,6 +16,7 @@ from .cloud_storage import (
     GwmCloudStateStore,
     GwmCommandJournalEntry,
     GwmOwnedChargingPlan,
+    async_finish_apac_state_save,
 )
 from .const import REGION_APAC
 from .errors import GwmCommandError, GwmCommandForbidden
@@ -127,6 +128,8 @@ class GwmCommandApi:
         self._commands: dict[str, GwmCommandJournalEntry] = {}
         self._timeout_ids: set[str] = set()
         self._climate_defaults: dict[str, tuple[int, int]] = {}
+        self._apac_closing = False
+        self._apac_submissions: dict[asyncio.Task[dict[str, object]], ApacCommandDispatch] = {}
 
     async def async_restore(
         self,
@@ -598,6 +601,8 @@ class GwmCommandApi:
         send: Callable[[], Awaitable[RemoteCommandAcceptance]],
     ) -> dict[str, object]:
         """Cancel queued APAC controls and finish the journal of dispatched writes."""
+        if self._apac_closing:
+            raise GwmCommandForbidden("GWM vehicle controls are shutting down")
         dispatch = ApacCommandDispatch()
 
         async def send_and_record() -> dict[str, object]:
@@ -607,6 +612,31 @@ class GwmCommandApi:
             return await self._record_acceptance(identifier, name, acceptance.command_id)
 
         task = asyncio.create_task(send_and_record())
+        self._apac_submissions[task] = dispatch
+        try:
+            return await self._async_wait_apac_submission(task, dispatch)
+        finally:
+            self._apac_submissions.pop(task, None)
+
+    async def async_shutdown_apac_commands(self) -> None:
+        """Cancel queued APAC actions and drain dispatched writes through storage."""
+        self._apac_closing = True
+        submissions = tuple(self._apac_submissions.items())
+        for task, dispatch in submissions:
+            if not dispatch.started:
+                dispatch.cancelled = True
+                task.cancel()
+
+        async def drain() -> None:
+            """Join all owned submissions, including their acceptance journals."""
+            await asyncio.gather(*(task for task, _ in submissions), return_exceptions=True)
+
+        await async_finish_apac_state_save(drain())
+
+    async def _async_wait_apac_submission(
+        self, task: asyncio.Task[dict[str, object]], dispatch: ApacCommandDispatch,
+    ) -> dict[str, object]:
+        """Finish dispatched work while allowing cancellation of queued actions."""
         cancelled = False
         while not task.done():
             try:

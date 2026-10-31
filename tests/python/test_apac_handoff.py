@@ -1057,6 +1057,8 @@ async def test_control_cancellation_respects_actual_dispatch(monkeypatch, action
     )
     recorded = []
     api = object.__new__(GwmCommandApi)
+    api._apac_closing = False
+    api._apac_submissions = {}
     api._cloud = cloud
     api._security_pin = "1234"
     api._apac_remote_enabled = True
@@ -1098,4 +1100,88 @@ async def test_control_cancellation_respects_actual_dispatch(monkeypatch, action
         if not task.done():
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
+        await cloud.aclose()
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancel_unload", [False, True])
+async def test_unload_waits_for_apac_acceptance_publication(tmp_path, monkeypatch, cancel_unload):
+    """Finish accepted-command storage before unload, even when both callers cancel."""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from homeassistant.core import HomeAssistant
+
+    import custom_components.gwm_ora as integration
+    from custom_components.gwm_ora.cloud_auth import cloud_entry_data, cloud_unique_id
+    from custom_components.gwm_ora.cloud_commands import GwmCommandApi
+    from custom_components.gwm_ora.cloud_storage import cloud_state_store
+    from custom_components.gwm_ora.gwm_client._protocol import _TransportResponse
+
+    class Transport(_RuntimeTransport):
+        """Accept one fake control on the same transport as account validation."""
+
+        async def execute(self, request, **kwargs):
+            """Return a control acceptance without performing a vehicle action."""
+            if request.operation == "send_apac_control":
+                self.operations.append(request.operation)
+                return _TransportResponse(200, {}, b'{"code":"000000","data":{}}')
+            return await super().execute(request, **kwargs)
+
+    transport = Transport()
+    cloud, credentials, _ = _runtime_with_synthetic_transport(
+        monkeypatch, transport, apac_remote_enabled=True
+    )
+    await cloud.async_get_vehicle_data()
+    hass = HomeAssistant(str(tmp_path))
+    hass.config_entries = SimpleNamespace(async_unload_platforms=AsyncMock(return_value=True))
+    store = cloud_state_store(hass, cloud_unique_id(credentials))
+    cloud._state_store = store
+    await store.async_save_auth_state(credentials, cloud.reusable_bootstrap.state)
+    api = GwmCommandApi(cloud, store, credentials, enabled=True,
+                        apac_remote_enabled=True, security_pin="1234")
+    entry = _synthetic_config_entry(credentials)
+    entry.runtime_data = SimpleNamespace(api=api, cloud=cloud, state_store=store,
+        coordinator=SimpleNamespace(async_cancel_command_tasks=AsyncMock()))
+    started = asyncio.Event()
+    release = asyncio.Event()
+    original = store.async_record_accepted_command
+
+    async def delayed_record(*args, **kwargs):
+        """Pause acceptance before the real private disk publication."""
+        started.set()
+        await release.wait()
+        return await original(*args, **kwargs)
+
+    monkeypatch.setattr(store, "async_record_accepted_command", delayed_record)
+    caller = asyncio.create_task(api.async_apac_control("SYNTHETIC-VEHICLE", "tailgate_open"))
+    await asyncio.wait_for(started.wait(), 2)
+    caller.cancel()
+    unloading = asyncio.create_task(integration.async_unload_entry(hass, entry))
+    try:
+        for _ in range(5):
+            await asyncio.sleep(0)
+        assert not unloading.done()
+        assert not transport.closed
+        if cancel_unload:
+            for _ in range(2):
+                unloading.cancel()
+                caller.cancel()
+                await asyncio.sleep(0)
+            assert not unloading.done()
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await caller
+        if cancel_unload:
+            with pytest.raises(asyncio.CancelledError):
+                await unloading
+        else:
+            assert await unloading
+        assert transport.closed
+        restarted = cloud_state_store(HomeAssistant(str(tmp_path)), cloud_unique_id(credentials))
+        journal = await restarted.async_get_command_journal(cloud_entry_data(credentials))
+        assert len(journal) == 1 and journal[0].state == "accepted"
+        assert transport.operations.count("send_apac_control") == 1
+    finally:
+        release.set()
+        await asyncio.gather(caller, unloading, return_exceptions=True)
         await cloud.aclose()

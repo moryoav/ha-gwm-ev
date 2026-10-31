@@ -190,14 +190,24 @@ async def async_unload_entry(hass: HomeAssistant, entry: GwmConfigEntry) -> bool
     unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if not unloaded:
         return False
-    await entry.runtime_data.coordinator.async_cancel_command_tasks()
     cloud = entry.runtime_data.cloud
-    if (
-        (bootstrap := cloud.reusable_bootstrap) is not None
-        and entry.unique_id is not None
-    ):
-        stage_cloud_bootstrap(hass, entry.unique_id, bootstrap)
-    await cloud.aclose()
+
+    async def finish_unload() -> None:
+        """Drain entry-owned work before disposing of the cloud transport."""
+        if cloud.region == REGION_APAC:
+            await entry.runtime_data.api.async_shutdown_apac_commands()
+        await entry.runtime_data.coordinator.async_cancel_command_tasks()
+        if (
+            (bootstrap := cloud.reusable_bootstrap) is not None
+            and entry.unique_id is not None
+        ):
+            stage_cloud_bootstrap(hass, entry.unique_id, bootstrap)
+        await cloud.aclose()
+
+    if cloud.region == REGION_APAC:
+        await async_finish_apac_state_save(finish_unload())
+    else:
+        await finish_unload()
     return True
 
 
@@ -291,6 +301,8 @@ async def _async_setup_cloud_entry(
         _async_register_services(hass)
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     except BaseException:
+        if entry.data.get(CONF_REGION) == REGION_APAC:
+            await api.async_shutdown_apac_commands()
         await coordinator.async_cancel_command_tasks()
         if (
             (reusable := cloud.reusable_bootstrap) is not None

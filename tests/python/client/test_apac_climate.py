@@ -87,6 +87,8 @@ async def test_apac_result_uses_legacy_fallback_when_id_does_not_match(monkeypat
             assert command_id == entry.cloud_command_id
             return (RemoteCommandResultItem(provider_id, "0x04", "0", "Success"),)
     api = object.__new__(GwmCommandApi)
+    api._apac_closing = False
+    api._apac_submissions = {}
     api._cloud = Cloud()
     api._commands = {entry.journal_id: entry}
     api._timeout_ids = set()
@@ -236,6 +238,8 @@ async def test_climate_api_dispatches_only_after_consent(monkeypatch):
     cloud = GwmCloudClient(REGION_APAC, client, apac_climate_enabled=True)
     cloud._vehicles[identifier.value] = object()
     api = object.__new__(GwmCommandApi)
+    api._apac_closing = False
+    api._apac_submissions = {}
     api._cloud = cloud
     api._enabled = True
     api._apac_climate_enabled = True
@@ -256,6 +260,8 @@ async def test_cancelled_apac_command_finishes_recording_accepted_result(monkeyp
     from custom_components.gwm_ora.gwm_client.commands import RemoteCommandAcceptance
 
     api = object.__new__(GwmCommandApi)
+    api._apac_closing = False
+    api._apac_submissions = {}
     started = asyncio.Event()
     release = asyncio.Event()
     recorded = []
