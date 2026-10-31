@@ -11,7 +11,7 @@ from .apac_auth import ApacCredentials
 from .apac_auth_client import ApacAuthClient
 from .apac_material import ApacMaterial
 from .apac_read import ApacReadClient, ApacReadSession
-from .apac_restore import ApacSessionUpdated, restore_apac_session
+from .apac_restore import ApacRestored, ApacSessionUpdated, restore_apac_session
 from .apac_state import ApacAuthState
 from .errors import GwmApiError, GwmAuthenticationError
 
@@ -99,7 +99,10 @@ async def authenticate_apac(
         device_id=credentials.device_id, access_token=tokens.access_token,
         app_ssl_context=issued.app_ssl_context, country=credentials.country,
     )
-    await ApacReadClient(material=material, session=session, transport=transport).acquire_vehicles()
-    return ApacAuthenticated(
+    authenticated = ApacAuthenticated(
         replace(candidate, tokens=tokens, issued_identity=issued.identity, verification_requested_at=None), session, material
     )
+    if on_session_updated is not None:
+        await on_session_updated(ApacRestored(authenticated.state, session))
+    await ApacReadClient(material=material, session=session, transport=transport).acquire_vehicles()
+    return authenticated

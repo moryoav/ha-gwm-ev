@@ -12,7 +12,7 @@ from custom_components.gwm_ora.gwm_client.apac_auth import ApacCredentials
 from custom_components.gwm_ora.gwm_client.apac_auth_client import ApacTokens
 from custom_components.gwm_ora.gwm_client.apac_material import ApacMaterial
 from custom_components.gwm_ora.gwm_client.apac_state import ApacAuthState
-from custom_components.gwm_ora.gwm_client.errors import GwmApiError, GwmAuthenticationError
+from custom_components.gwm_ora.gwm_client.errors import GwmApiError, GwmAuthenticationError, GwmNetworkError
 from custom_components.gwm_ora.gwm_client.eu_identity import EuBootstrapMaterial, EuIssuedIdentity
 
 
@@ -87,3 +87,59 @@ async def test_wrong_account_state_is_rejected_before_network():
     args["state"] = replace(ApacAuthState.for_credentials(other), verification_requested_at=datetime.now(UTC))
     with pytest.raises(GwmAuthenticationError):
         await flow.authenticate_apac(**args, allow_password_login=True)
+
+
+@pytest.mark.asyncio
+async def test_discovery_failure_preserves_sign_in_for_a_login_free_retry(monkeypatch):
+    """Persist verified tokens and identity before discovery, then resume them."""
+    import custom_components.gwm_ora.gwm_client.apac_restore as restore
+
+    args = _arguments()
+    context = args["h5_context"]
+    identity = EuIssuedIdentity("c3ludGhldGlj", "c3ludGhldGlj")
+    calls = []
+    saved = []
+
+    class Auth:
+        def __init__(self, **kwargs):
+            pass
+
+        async def login(self, code):
+            calls.append("login")
+            return ApacTokens("synthetic-access", "synthetic-refresh", "synthetic-gw", "synthetic-bean")
+
+        async def get_user_info(self, token):
+            calls.append("profile")
+            return "synthetic-gw", "synthetic-bean"
+
+        async def enroll_identity(self, tokens):
+            calls.append("enroll")
+            return SimpleNamespace(identity=identity, app_ssl_context=context)
+
+    class Reader:
+        def __init__(self, **kwargs):
+            pass
+
+        async def acquire_vehicles(self):
+            calls.append("discovery")
+            if calls.count("discovery") == 1:
+                raise GwmNetworkError(operation="acquire_vehicles")
+            return ()
+
+    async def persist(result):
+        """Publish a restorable session independently of discovery success."""
+        saved.append(result.state)
+
+    for module in (flow, restore):
+        monkeypatch.setattr(module, "ApacAuthClient", Auth)
+        monkeypatch.setattr(module, "ApacReadClient", Reader)
+    monkeypatch.setattr(restore, "create_apac_issued_context", lambda *a, **k: context)
+    with pytest.raises(GwmNetworkError):
+        await flow.authenticate_apac(**args, allow_password_login=True, on_session_updated=persist)
+    assert len(saved) == 1
+    assert saved[0].tokens is not None and saved[0].issued_identity == identity
+    args["state"] = saved[0]
+    result = await flow.authenticate_apac(**args, allow_password_login=False)
+    assert isinstance(result, flow.ApacAuthenticated)
+    assert result.state == saved[0]
+    assert calls == ["login", "profile", "enroll", "discovery", "discovery", "profile"]
