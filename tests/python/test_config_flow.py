@@ -1052,7 +1052,8 @@ async def test_legacy_addon_options_require_a_fresh_entry() -> None:
     assert result["reason"] == "legacy_addon_entry"
 
 @pytest.mark.asyncio
-async def test_apac_setup_verification_creates_read_only_entry(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("country", ["PK", "TH", "MY", "ID"])
+async def test_apac_setup_verification_creates_read_only_entry(monkeypatch: pytest.MonkeyPatch, country: str) -> None:
     """APAC flow persists private state and never stores tokens in the entry."""
     import custom_components.gwm_ora.cloud_runtime as runtime
     from custom_components.gwm_ora.gwm_client.apac_auth import ApacCredentials
@@ -1080,13 +1081,13 @@ async def test_apac_setup_verification_creates_read_only_entry(monkeypatch: pyte
     flow = _prepare_user_flow(monkeypatch, Authenticator())
     account = await flow.async_step_user({CONF_REGION: "ap"})
     assert account["step_id"] == "account"
-    verification = await flow.async_step_account({CONF_COUNTRY: "PK", CONF_ACCOUNT: "account@example.invalid", CONF_PASSWORD: "password"})
+    verification = await flow.async_step_account({CONF_COUNTRY: country, CONF_ACCOUNT: "account@example.invalid", CONF_PASSWORD: "password"})
     assert verification["step_id"] == "verification"
     result = await flow.async_step_verification({CONF_VERIFICATION_CODE: "123456"})
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["title"] == "GWM Asia-Pacific"
     assert result["data"][CONF_REGION] == "ap"
-    assert result["data"][CONF_COUNTRY] == "PK"
+    assert result["data"][CONF_COUNTRY] == country
     assert set(result["data"]).isdisjoint({"access_token", "refresh_token", "device_id", "verification_code", "certificate", "private_key"})
     assert consume_cloud_bootstrap(flow.hass, flow.context["unique_id"]) is not None
 

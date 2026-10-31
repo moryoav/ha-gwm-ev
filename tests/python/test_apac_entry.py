@@ -13,7 +13,7 @@ import custom_components.gwm_ora as integration
 import custom_components.gwm_ora.cloud_runtime as runtime
 from custom_components.gwm_ora.cloud_auth import GwmCloudCredentials, cloud_entry_data, cloud_unique_id
 from custom_components.gwm_ora.cloud_runtime import stage_cloud_bootstrap
-from custom_components.gwm_ora.const import REGION_APAC
+from custom_components.gwm_ora.const import PLATFORMS, REGION_APAC
 from custom_components.gwm_ora.gwm_client._protocol import _TransportResponse
 from custom_components.gwm_ora.gwm_client.apac_auth_client import ApacTokens
 from custom_components.gwm_ora.gwm_client.apac_flow import ApacAuthenticated
@@ -26,9 +26,11 @@ from custom_components.gwm_ora.gwm_client.regions import TlsMode
 
 
 @pytest.mark.asyncio
-async def test_setup_uses_apac_read_only_data_without_vehicle_writes(tmp_path, monkeypatch):
+@pytest.mark.parametrize("country", ["PK", "TH", "MY", "ID"])
+async def test_setup_uses_apac_read_only_data_without_vehicle_writes(tmp_path, monkeypatch, country):
     """Exercise setup, read polling and shutdown using no real GWM transport."""
     calls = []
+    forwarded = []
     class FakeTransport:
         async def execute(self, request, **kwargs):
             calls.append(request.operation)
@@ -46,17 +48,18 @@ async def test_setup_uses_apac_read_only_data_without_vehicle_writes(tmp_path, m
         async def async_config_entry_first_refresh(self): self.data = await self.api.async_get_vehicles()
         async def async_cancel_command_tasks(self): pass
     class Entries:
-        async def async_forward_entry_setups(self, entry, platforms): pass
+        async def async_forward_entry_setups(self, entry, platforms):
+            forwarded.extend(platforms)
         async def async_unload_platforms(self, entry, platforms): return True
 
-    credentials = GwmCloudCredentials(REGION_APAC, "PK", "person@example.invalid", "synthetic-password", "a" * 32)
+    credentials = GwmCloudCredentials(REGION_APAC, country, "person@example.invalid", "synthetic-password", "a" * 32)
     tokens = ApacTokens("synthetic-access", "synthetic-refresh", "synthetic-gw", "synthetic-bean")
     state = replace(ApacAuthState.for_credentials(credentials.client_credentials()), tokens=tokens, issued_identity=EuIssuedIdentity("c3ludGhldGlj", "c3ludGhldGlj"))
     material = ApacMaterial(EuBootstrapMaterial(b"fake-cert", b"c3ludGhldGljLWtleQ==", b"fake-ca"), "fake-key", "fake-secret")
     context = ssl.create_default_context()
     context.set_ciphers("DEFAULT:@SECLEVEL=0")
     _register_validated_context(context, TlsMode.APAC_ISSUED_MTLS)
-    session = ApacReadSession(credentials.device_id, tokens.access_token, context, "PK")
+    session = ApacReadSession(credentials.device_id, tokens.access_token, context, country)
     bootstrap = runtime.GwmCloudBootstrap.from_authentication(credentials, ApacAuthenticated(state, session, material))
     hass = HomeAssistant(str(tmp_path))
     hass.config_entries = Entries()
@@ -67,6 +70,7 @@ async def test_setup_uses_apac_read_only_data_without_vehicle_writes(tmp_path, m
     monkeypatch.setattr(integration, "_async_register_services", lambda hass: None)
 
     assert await integration.async_setup_entry(hass, entry)
+    assert set(forwarded) == set(PLATFORMS)
     assert entry.runtime_data.coordinator.data["vehicles"][0]["values"]["soc"] == 65.0
     assert entry.runtime_data.coordinator.data["remote_commands_enabled"] is False
     assert entry.runtime_data.coordinator.data["charging_control_enabled"] is False
