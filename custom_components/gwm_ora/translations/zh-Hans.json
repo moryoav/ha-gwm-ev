@@ -118,7 +118,7 @@
       }
     },
     "error": {
-      "security_pin_required": "为此区域启用远程命令时必须提供车辆安全 PIN。"
+      "security_pin_required": "启用车辆控制或充电控制时，需要提供车辆安全 PIN。"
     },
     "abort": {
       "legacy_addon_entry": "旧的加载项条目无法配置。请将其删除，然后重新添加 GWM。"

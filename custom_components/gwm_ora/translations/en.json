@@ -118,7 +118,7 @@
       }
     },
     "error": {
-      "security_pin_required": "A vehicle security PIN is required when remote commands are enabled for this region."
+      "security_pin_required": "A vehicle security PIN is required when vehicle controls or charging control are enabled."
     },
     "abort": {
       "legacy_addon_entry": "The previous add-on based entry cannot be configured. Remove it and add GWM again."
