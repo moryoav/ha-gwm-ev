@@ -187,6 +187,7 @@ class GwmCloudStateStore:
     """Serialize one direct account's auth state and future command journal."""
 
     def __init__(self, hass: HomeAssistant, unique_id: str) -> None:
+        """Bind one private store and retain failed APAC publications for retry."""
         if not isinstance(unique_id, str) or not unique_id.startswith("cloud:"):
             raise ValueError("direct_cloud_store_invalid")
         digest = hashlib.sha256(unique_id.encode("utf-8")).hexdigest()
@@ -203,6 +204,7 @@ class GwmCloudStateStore:
         self._loaded = False
         self._invalid_loaded_data = False
         self._record: _GwmCloudRecord | None = None
+        self._pending_apac_record: _GwmCloudRecord | None = None
 
     def __repr__(self) -> str:
         return "GwmCloudStateStore()"
@@ -218,6 +220,12 @@ class GwmCloudStateStore:
         try:
             async with self._lock:
                 await self._async_ensure_loaded()
+                pending = self._pending_apac_record
+                if pending is not None:
+                    if self._record_matches(credentials, record=pending):
+                        await self._async_save(pending)
+                    else:
+                        self._pending_apac_record = None
                 if not self._record_matches(credentials):
                     changed = self._record is not None or self._invalid_loaded_data
                     if changed:
@@ -463,6 +471,7 @@ class GwmCloudStateStore:
         async with self._lock:
             await self._store.async_remove()
             self._record = None
+            self._pending_apac_record = None
             self._invalid_loaded_data = False
             self._loaded = True
 
@@ -477,8 +486,11 @@ class GwmCloudStateStore:
             self._invalid_loaded_data = True
         self._loaded = True
 
-    def _record_matches(self, credentials: GwmCloudCredentials) -> bool:
-        record = self._record
+    def _record_matches(
+        self, credentials: GwmCloudCredentials, *, record: _GwmCloudRecord | None = None
+    ) -> bool:
+        """Match a stored or pending revision to the complete current account context."""
+        record = self._record if record is None else record
         return record is not None and (
             record.region == credentials.region
             and record.account_binding == credentials.account_binding
@@ -503,8 +515,13 @@ class GwmCloudStateStore:
         )
 
     async def _async_save(self, record: _GwmCloudRecord) -> None:
+        """Keep failed APAC revisions private until atomic publication succeeds."""
+        if record.region == REGION_APAC:
+            self._pending_apac_record = record
         await self._store.async_save(_encode_record(record))
         self._record = record
+        if self._pending_apac_record is record:
+            self._pending_apac_record = None
         self._invalid_loaded_data = False
 
 

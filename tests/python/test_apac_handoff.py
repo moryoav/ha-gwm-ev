@@ -596,3 +596,69 @@ async def test_refresh_failure_before_rotation_can_retry_without_skipping_refres
         assert cloud.reusable_bootstrap.state.tokens.refresh_token == "renewed-refresh"
     finally:
         await cloud.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("retry_context", ["same", "changed_password", "removed"])
+async def test_startup_retries_failed_rotation_save_before_reusing_credentials(tmp_path, monkeypatch, retry_context):
+    """Retry private publication without reviving tokens after context change or removal."""
+    from types import SimpleNamespace
+
+    from homeassistant.core import HomeAssistant
+    from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
+
+    import custom_components.gwm_ora as integration
+    import custom_components.gwm_ora.cloud_auth as auth_boundary
+    from custom_components.gwm_ora.cloud_auth import cloud_entry_data, cloud_unique_id
+    from custom_components.gwm_ora.cloud_storage import cloud_state_store
+
+    first_transport = _RuntimeTransport()
+    cloud, credentials, state = _runtime_with_synthetic_transport(monkeypatch, first_transport)
+    material = cloud.reusable_bootstrap.apac_material
+    hass = HomeAssistant(str(tmp_path))
+    unique_id = cloud_unique_id(credentials)
+    store = cloud_state_store(hass, unique_id)
+    await store.async_save_auth_state(credentials, state)
+    original_save = store._store.async_save
+    save_attempts = []
+    transports = []
+
+    async def fail_one_save(data):
+        """Raise once at the actual Home Assistant disk publication boundary."""
+        save_attempts.append("save")
+        if len(save_attempts) == 1:
+            raise OSError("synthetic temporary storage failure")
+        await original_save(data)
+
+    def make_transport(**kwargs):
+        """Give each startup attempt a separately owned synthetic transport."""
+        transport = first_transport if not transports else _RuntimeTransport()
+        transports.append(transport)
+        return transport
+
+    monkeypatch.setattr(store._store, "async_save", fail_one_save)
+    monkeypatch.setattr(integration, "load_apac_material", lambda *args: material)
+    monkeypatch.setattr(auth_boundary.AiohttpTransport, "create_owned", make_transport)
+    entry = SimpleNamespace(data=cloud_entry_data(credentials), unique_id=unique_id)
+    try:
+        with pytest.raises(ConfigEntryNotReady):
+            await integration._async_load_cloud_bootstrap(hass, entry, store)
+        assert first_transport.operations == ["acquire_vehicles", "refresh_token"]
+        if retry_context == "same":
+            bootstrap = await integration._async_load_cloud_bootstrap(hass, entry, store)
+            assert bootstrap.state.tokens.refresh_token == "renewed-refresh"
+            assert transports[1].operations == ["acquire_vehicles", "get_user_info"]
+            restarted = cloud_state_store(HomeAssistant(str(tmp_path)), unique_id)
+            assert await restarted.async_load_auth_state(cloud_entry_data(credentials)) == bootstrap.state
+        else:
+            if retry_context == "changed_password":
+                credentials = replace(credentials, password="replacement-password")
+                entry.data = cloud_entry_data(credentials)
+            else:
+                await store.async_remove()
+            with pytest.raises(ConfigEntryAuthFailed):
+                await integration._async_load_cloud_bootstrap(hass, entry, store)
+            assert len(transports) == 1
+            assert await store.async_load_auth_state(entry.data) is None
+    finally:
+        await cloud.aclose()
