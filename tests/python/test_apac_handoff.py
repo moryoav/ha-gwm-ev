@@ -911,3 +911,62 @@ async def test_cancelled_staged_writer_cannot_overwrite_a_later_confirmed_rotati
         await asyncio.gather(*(task for task in (older, newer) if task is not None), return_exceptions=True)
         await asyncio.wait_for(writer_finished.wait(), timeout=5)
         await cloud.aclose()
+
+
+@pytest.mark.asyncio
+async def test_failed_startup_retirement_publication_retries_before_requesting_reauthentication(tmp_path, monkeypatch):
+    """Classify a logged clear failure as retryable until the rejected state is retired."""
+    import json
+
+    from homeassistant.core import HomeAssistant
+    from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
+    from homeassistant.helpers import storage as ha_storage
+
+    import custom_components.gwm_ora as integration
+    import custom_components.gwm_ora.cloud_auth as auth_boundary
+    from custom_components.gwm_ora.cloud_auth import cloud_entry_data, cloud_unique_id
+    from custom_components.gwm_ora.cloud_storage import cloud_state_store
+    from custom_components.gwm_ora.gwm_client._protocol import _TransportResponse
+
+    class Transport(_RuntimeTransport):
+        async def execute(self, request, **kwargs):
+            """Reject the renewed session during account validation."""
+            if request.operation == "get_user_info":
+                self.operations.append(request.operation)
+                return _TransportResponse(401, {}, b"{}")
+            return await super().execute(request, **kwargs)
+
+    transport = Transport()
+    cloud, credentials, state = _runtime_with_synthetic_transport(monkeypatch, transport)
+    material = cloud.reusable_bootstrap.apac_material
+    hass = HomeAssistant(str(tmp_path))
+    unique_id = cloud_unique_id(credentials)
+    store = cloud_state_store(hass, unique_id)
+    await store.async_save_auth_state(credentials, state)
+    entry = _synthetic_config_entry(credentials)
+    original_write = ha_storage.write_utf8_file_atomic
+    failed_clear = []
+
+    def fail_one_retirement_write(filename, data, *args, **kwargs):
+        """Inject a real writer failure only when retiring rejected authentication."""
+        if filename == store._store.path and json.loads(data)["data"]["auth_state"] is None and not failed_clear:
+            failed_clear.append("clear")
+            raise ha_storage.WriteError("synthetic retirement writer failure")
+        return original_write(filename, data, *args, **kwargs)
+
+    monkeypatch.setattr(ha_storage, "write_utf8_file_atomic", fail_one_retirement_write)
+    monkeypatch.setattr(integration, "load_apac_material", lambda *args: material)
+    monkeypatch.setattr(auth_boundary.AiohttpTransport, "create_owned", lambda **kwargs: transport)
+    try:
+        with pytest.raises(ConfigEntryNotReady):
+            await integration._async_load_cloud_bootstrap(hass, entry, store)
+        assert failed_clear == ["clear"]
+        assert transport.closed
+        operations = list(transport.operations)
+        with pytest.raises(ConfigEntryAuthFailed):
+            await integration._async_load_cloud_bootstrap(hass, entry, store)
+        assert transport.operations == operations
+        restarted = cloud_state_store(HomeAssistant(str(tmp_path)), unique_id)
+        assert await restarted.async_load_auth_state(cloud_entry_data(credentials)) is None
+    finally:
+        await cloud.aclose()

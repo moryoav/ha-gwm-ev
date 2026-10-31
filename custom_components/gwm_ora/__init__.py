@@ -298,6 +298,20 @@ async def _async_load_cloud_bootstrap(
     entry: GwmConfigEntry,
     state_store: GwmCloudStateStore,
 ) -> GwmCloudBootstrap:
+    """Resume a session and keep APAC publication failures retryable at startup."""
+    try:
+        return await _async_load_cloud_bootstrap_once(hass, entry, state_store)
+    except OSError as error:
+        if entry.data.get(CONF_REGION) == REGION_APAC:
+            raise ConfigEntryNotReady("GWM APAC private state is temporarily unavailable") from error
+        raise
+
+
+async def _async_load_cloud_bootstrap_once(
+    hass: HomeAssistant,
+    entry: GwmConfigEntry,
+    state_store: GwmCloudStateStore,
+) -> GwmCloudBootstrap:
     """Load or resume one account-bound session without a fresh login."""
 
     bootstrap = consume_cloud_bootstrap(hass, entry.unique_id)
@@ -331,10 +345,7 @@ async def _async_load_cloud_bootstrap(
 
     async def save_apac_session(result: ApacRestored) -> None:
         """Persist a token rotation before any later restoration read can fail."""
-        try:
-            await async_finish_apac_state_save(state_store.async_save_auth_state(credentials, result.state))
-        except OSError as error:
-            raise ConfigEntryNotReady("GWM APAC private state is temporarily unavailable") from error
+        await async_finish_apac_state_save(state_store.async_save_auth_state(credentials, result.state))
 
     try:
         authenticator = (
