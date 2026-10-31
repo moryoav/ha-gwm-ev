@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
@@ -281,7 +282,13 @@ async def _async_setup_cloud_entry(
             and entry.unique_id is not None
         ):
             stage_cloud_bootstrap(hass, entry.unique_id, reusable)
-        await cloud.aclose()
+        if entry.data.get(CONF_REGION) == REGION_APAC:
+            # Keep the coordinator's retryable failure if the pending save fails again.
+            # APAC cleanup still closes its transport and the store retains the revision.
+            with suppress(Exception):
+                await cloud.aclose()
+        else:
+            await cloud.aclose()
         raise
     return True
 

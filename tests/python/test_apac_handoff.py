@@ -752,3 +752,64 @@ async def test_logged_atomic_writer_failure_keeps_rotation_pending_until_disk_co
         assert restored.tokens.refresh_token == "renewed-refresh"
     finally:
         await cloud.aclose()
+
+
+@pytest.mark.asyncio
+async def test_first_refresh_and_cleanup_save_failures_preserve_automatic_setup_retry(tmp_path, monkeypatch):
+    """Keep the real coordinator's retryable setup failure through failed cleanup."""
+    from types import MappingProxyType
+
+    from homeassistant.config_entries import ConfigEntry, ConfigEntryState
+    from homeassistant.core import HomeAssistant
+    from homeassistant.exceptions import ConfigEntryNotReady
+
+    import custom_components.gwm_ora as integration
+    from custom_components.gwm_ora.cloud_auth import cloud_entry_data, cloud_unique_id
+    from custom_components.gwm_ora.cloud_storage import cloud_state_store
+
+    transport = _RuntimeTransport()
+    cloud, credentials, state = _runtime_with_synthetic_transport(monkeypatch, transport)
+    hass = HomeAssistant(str(tmp_path))
+    unique_id = cloud_unique_id(credentials)
+    store = cloud_state_store(hass, unique_id)
+    await store.async_save_auth_state(credentials, state)
+    runtime.stage_cloud_bootstrap(hass, unique_id, cloud.reusable_bootstrap)
+    entry = ConfigEntry(
+        data=cloud_entry_data(credentials),
+        discovery_keys=MappingProxyType({}),
+        domain="gwm_ora",
+        entry_id="synthetic-setup-entry",
+        minor_version=1,
+        options={},
+        source="user",
+        subentries_data=None,
+        title="GWM APAC",
+        unique_id=unique_id,
+        version=1,
+    )
+    entry._async_set_state(hass, ConfigEntryState.SETUP_IN_PROGRESS, None)
+    original_save = store._store.async_save
+    failed_saves = []
+
+    async def fail_rotated_publications(data):
+        """Fail the first-refresh and cleanup publications of replacement credentials."""
+        if data["auth_state"]["tokens"]["refresh_token"] == "renewed-refresh":
+            failed_saves.append("save")
+            if len(failed_saves) <= 2:
+                raise OSError("synthetic temporary storage failure")
+        await original_save(data)
+
+    monkeypatch.setattr(store._store, "async_save", fail_rotated_publications)
+    monkeypatch.setattr(runtime.AiohttpTransport, "create_owned", lambda **kwargs: transport)
+    try:
+        with pytest.raises(ConfigEntryNotReady):
+            await integration.async_setup_entry(hass, entry)
+        assert len(failed_saves) == 2
+        assert transport.closed
+        assert runtime.consume_cloud_bootstrap(hass, unique_id) is None
+        retained = await store.async_load_auth_state(cloud_entry_data(credentials))
+        assert retained.tokens.refresh_token == "renewed-refresh"
+        restarted = cloud_state_store(HomeAssistant(str(tmp_path)), unique_id)
+        assert await restarted.async_load_auth_state(cloud_entry_data(credentials)) == retained
+    finally:
+        await cloud.aclose()
