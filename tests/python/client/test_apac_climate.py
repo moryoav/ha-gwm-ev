@@ -1,6 +1,7 @@
 """Offline APAC climate contract tests with deliberately synthetic values."""
 
 import json
+import logging
 import ssl
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -59,7 +60,7 @@ def test_climate_request_rejects_other_vehicle_instructions():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("provider_id", [None, "different-provider-id"])
-async def test_apac_result_uses_legacy_fallback_when_id_does_not_match(monkeypatch, provider_id):
+async def test_apac_result_uses_legacy_fallback_when_id_does_not_match(monkeypatch, provider_id, caplog):
     """Verify the test build accepts the first result returned for the queried command."""
     now = datetime(2026, 1, 1, tzinfo=UTC)
     entry = GwmCommandJournalEntry("a" * 32, "SYNTHETIC-VEHICLE", "A/C", "b" * 32 + "1234", "polling", now, now)
@@ -78,8 +79,14 @@ async def test_apac_result_uses_legacy_fallback_when_id_does_not_match(monkeypat
         api._commands[updated.journal_id] = updated
         return updated
     monkeypatch.setattr(api, "_durably_update_command", update)
-    result = await api.async_get_command(entry.journal_id)
+    with caplog.at_level(logging.DEBUG, logger="custom_components.gwm_ora.cloud_commands"):
+        result = await api.async_get_command(entry.journal_id)
     assert result["state"] == "completed"
+    assert "APAC command result candidates=1 matching_id=0" in caplog.text
+    assert ("missing_id=1" if provider_id is None else "different_id=1") in caplog.text
+    assert "SYNTHETIC-VEHICLE" not in caplog.text
+    assert entry.cloud_command_id not in caplog.text
+    assert "different-provider-id" not in caplog.text
 
 
 @pytest.mark.asyncio

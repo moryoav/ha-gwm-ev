@@ -489,6 +489,16 @@ class GwmCommandApi:
                 )
         except GwmClientError:
             raise
+        if self._cloud.region == REGION_APAC:
+            matching = sum(
+                item.command_id is not None and item.command_id.casefold() == entry.cloud_command_id.casefold()
+                for item in results
+            )
+            missing = sum(item.command_id is None or not item.command_id for item in results)
+            _LOGGER.debug(
+                "APAC command result candidates=%d matching_id=%d missing_id=%d different_id=%d",
+                len(results), matching, missing, len(results) - matching - missing,
+            )
         region = None if self._cloud.region in {"cn", REGION_APAC} else Region(self._cloud.region)
         result = select_remote_command_result(
             results,
