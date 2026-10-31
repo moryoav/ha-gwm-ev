@@ -286,3 +286,35 @@ async def test_cancelled_apac_command_finishes_recording_accepted_result(monkeyp
     with pytest.raises(asyncio.CancelledError):
         await task
     assert recorded == [("A/C", "synthetic-command")]
+
+@pytest.mark.asyncio
+async def test_climate_defaults_deadline_includes_ca_loading(monkeypatch):
+    """Release the runtime session lock if loading the CA context stalls."""
+    import custom_components.gwm_ora.gwm_client.apac_read as reader
+    from custom_components.gwm_ora.gwm_client._protocol import _Deadline
+
+    class Transport:
+        """Reject any dispatch after the setup deadline has elapsed."""
+        async def execute(self, request, **kwargs):
+            """Fail the test if the stalled operation reaches transport."""
+            pytest.fail("No request should be sent after CA loading times out")
+
+    context = ssl.create_default_context()
+    context.set_ciphers("DEFAULT:@SECLEVEL=0")
+    _register_validated_context(context, TlsMode.APAC_ISSUED_MTLS)
+    material = ApacMaterial(EuBootstrapMaterial(b"fake", b"fake", b"fake"), "fake-key", "fake-secret")
+    client = ApacReadClient(material=material, session=ApacReadSession("a" * 32, "fake-token", context, "PK"), transport=Transport())
+    identifier = VehicleIdentifier("SYNTHETIC-VEHICLE")
+    cloud = GwmCloudClient(REGION_APAC, client, apac_climate_enabled=True)
+    cloud._vehicles[identifier.value] = CloudVehicle(identifier, platform="beantech")
+
+    async def stalled_context(*args, **kwargs):
+        """Simulate a blocked CA load without leaving a real worker thread."""
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(reader.asyncio, "to_thread", stalled_context)
+    monkeypatch.setattr(reader, "_Deadline", lambda _: _Deadline(asyncio.get_running_loop().time() + 0.02))
+    with pytest.raises(GwmDeadlineExceededError):
+        await asyncio.wait_for(cloud.async_update_climate_defaults(identifier, temperature=22, operation_time_minutes=15), 0.5)
+    assert not cloud._session_renewal_lock.locked()
+    await cloud.aclose()

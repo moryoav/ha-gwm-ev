@@ -187,21 +187,29 @@ class ApacReadClient:
             raise GwmClosedError(operation=operation)
         deadline = _Deadline(asyncio.get_running_loop().time() + 30.0)
         try:
-            h5_context = await asyncio.to_thread(ssl.create_default_context) if operation == "update_climate_defaults" else None
-            async with asyncio.timeout_at(deadline.expires_at), self._lock:
-                if self._closed or self._closing:
-                    raise GwmClosedError(operation=operation)
-                request = prepare_apac_request(
-                    operation=operation, material=self._material, ssl_context=h5_context or self._session.app_ssl_context,
-                    device_id=self._session.device_id, access_token=self._session.access_token,
-                    country=self._session.country, vehicle_id=identifier.value, body=body, command_id=command_id,
-                )
-                if operation in {"send_climate_command", "send_apac_control"}:
-                    mark_apac_dispatch_started()
-                response = await self._transport.execute(request, deadline=deadline, connect_timeout=10.0, read_timeout=20.0)
-                return _decode_envelope(response, operation=operation)
+            async with asyncio.timeout_at(deadline.expires_at):
+                h5_context = await asyncio.to_thread(ssl.create_default_context) if operation == "update_climate_defaults" else None
+                return await self._locked_climate_exchange(operation, identifier, body, command_id, deadline, h5_context)
         except TimeoutError:
             raise GwmDeadlineExceededError(operation=operation) from None
+
+    async def _locked_climate_exchange(
+        self, operation: str, identifier: VehicleIdentifier, body: dict[str, object] | None,
+        command_id: str | None, deadline: _Deadline, h5_context: ssl.SSLContext | None,
+    ) -> object:
+        """Wait for the APAC reader lock within the caller's exchange deadline."""
+        async with self._lock:
+            if self._closed or self._closing:
+                raise GwmClosedError(operation=operation)
+            request = prepare_apac_request(
+                operation=operation, material=self._material, ssl_context=h5_context or self._session.app_ssl_context,
+                device_id=self._session.device_id, access_token=self._session.access_token,
+                country=self._session.country, vehicle_id=identifier.value, body=body, command_id=command_id,
+            )
+            if operation in {"send_climate_command", "send_apac_control"}:
+                mark_apac_dispatch_started()
+            response = await self._transport.execute(request, deadline=deadline, connect_timeout=10.0, read_timeout=20.0)
+            return _decode_envelope(response, operation=operation)
 
     async def get_last_status(self, vehicle_id: str | VehicleIdentifier) -> CloudVehicleStatus:
         """Read the last reported status for one vehicle."""
