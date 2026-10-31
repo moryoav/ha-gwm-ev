@@ -84,6 +84,7 @@ from .gwm_client import (
 )
 from .gwm_client.apac_flow import ApacAuthenticated, ApacVerificationRequired
 from .gwm_client.apac_material import load_apac_material
+from .gwm_client.apac_restore import ApacRestored
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -601,6 +602,10 @@ class GwmConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     verification_code if isinstance(verification_code, str) else None
                 ),
                 allow_session_reclaim=allow_session_reclaim,
+                **(
+                    {"apac_session_updated": self._async_apac_session_updated}
+                    if credentials.region == REGION_APAC else {}
+                ),
             )
         except GwmRateLimitError as error:
             _log_cloud_auth_failure(error, credentials)
@@ -627,6 +632,11 @@ class GwmConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         except (TypeError, ValueError):
             return None, "invalid_account"
         return result, ""
+
+    async def _async_apac_session_updated(self, restored: ApacRestored) -> None:
+        """Retain and persist refreshed APAC state before subsequent requests."""
+        self._auth_state = restored.state
+        await self._async_persist_auth_state(restored.state)
 
     async def _async_route_authentication(
         self,

@@ -10,7 +10,7 @@ from custom_components.gwm_ora.gwm_client.apac_auth import ApacCredentials
 from custom_components.gwm_ora.gwm_client.apac_auth_client import ApacTokens
 from custom_components.gwm_ora.gwm_client.apac_material import ApacMaterial
 from custom_components.gwm_ora.gwm_client.apac_state import ApacAuthState
-from custom_components.gwm_ora.gwm_client.errors import GwmApiError, GwmAuthenticationError
+from custom_components.gwm_ora.gwm_client.errors import GwmApiError, GwmAuthenticationError, GwmNetworkError
 from custom_components.gwm_ora.gwm_client.eu_identity import EuBootstrapMaterial, EuIssuedIdentity
 
 
@@ -130,3 +130,55 @@ async def test_restored_server_profile_must_match_private_account_state(monkeypa
     with pytest.raises(GwmAuthenticationError):
         await restore.restore_apac_session(credentials=credentials, material=material, state=state, h5_context=context, transport=None)
     assert calls == ["read", "profile"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure_operation", ["get_user_info", "acquire_vehicles"])
+async def test_rotated_tokens_are_published_before_follow_up_reads_fail(monkeypatch, failure_operation):
+    """Preserve a successful refresh even when profile or discovery is unavailable."""
+    credentials, material, state = _inputs()
+    context = ssl.create_default_context()
+    monkeypatch.setattr(restore, "create_apac_issued_context", lambda *args, **kwargs: context)
+    calls = []
+    published = []
+
+    class Reader:
+        def __init__(self, **kwargs):
+            self.token = kwargs["session"].access_token
+
+        async def acquire_vehicles(self):
+            calls.append(("read", self.token))
+            if self.token == "synthetic-access":
+                raise GwmAuthenticationError(operation="acquire_vehicles")
+            if failure_operation == "acquire_vehicles":
+                raise GwmNetworkError(operation=failure_operation)
+            return ()
+
+    class Auth:
+        def __init__(self, **kwargs):
+            pass
+
+        async def refresh(self, tokens):
+            calls.append(("refresh", tokens.refresh_token))
+            return ApacTokens("renewed-access", "renewed-refresh", tokens.gw_id, tokens.bean_id)
+
+        async def get_user_info(self, token):
+            calls.append(("profile", token))
+            if failure_operation == "get_user_info":
+                raise GwmNetworkError(operation=failure_operation)
+            return "synthetic-gw", "synthetic-bean"
+
+    async def publish(result):
+        """Model the caller's private persistence boundary."""
+        calls.append(("persist", result.state.tokens.refresh_token))
+        published.append(result)
+
+    monkeypatch.setattr(restore, "ApacReadClient", Reader)
+    monkeypatch.setattr(restore, "ApacAuthClient", Auth)
+    with pytest.raises(GwmNetworkError):
+        await restore.restore_apac_session(credentials=credentials, material=material, state=state, h5_context=context, transport=None, on_session_updated=publish)
+    assert len(published) == 1
+    assert published[0].state.tokens.refresh_token == "renewed-refresh"
+    assert published[0].session.access_token == "renewed-access"
+    assert calls.index(("persist", "renewed-refresh")) < calls.index(("profile", "renewed-access"))
+    assert [call for call in calls if call[0] == "refresh"] == [("refresh", "synthetic-refresh")]

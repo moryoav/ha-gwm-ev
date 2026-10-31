@@ -53,6 +53,7 @@ from .gwm_client.anz_auth import AnzAuthenticationResult
 from .gwm_client.apac_auth import ApacCredentials
 from .gwm_client.apac_flow import ApacAuthenticated, ApacVerificationRequired, authenticate_apac
 from .gwm_client.apac_material import ApacMaterial
+from .gwm_client.apac_restore import ApacSessionUpdated
 from .gwm_client.apac_state import ApacAuthState
 from .gwm_client.china_client import ChinaAuthenticationResult
 from .gwm_client.eu_auth import EuAuthenticationResult
@@ -185,6 +186,7 @@ class GwmCloudAuthenticator:
         verification_code: str | None = None,
         allow_session_reclaim: bool = False,
         allow_password_login: bool = True,
+        apac_session_updated: ApacSessionUpdated | None = None,
     ) -> CloudAuthenticationResult:
         """Authenticate once and close the temporary protocol client."""
 
@@ -220,6 +222,7 @@ class GwmCloudAuthenticator:
                     transport=transport,
                     verification_code=verification_code,
                     allow_password_login=allow_password_login,
+                    on_session_updated=apac_session_updated,
                 )
             finally:
                 await transport.aclose()

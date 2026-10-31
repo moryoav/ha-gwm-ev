@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import ssl
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
 
 from ._protocol import _AsyncTransport
@@ -23,6 +24,8 @@ class ApacRestored:
     state: ApacAuthState = field(repr=False)
     session: ApacReadSession = field(repr=False)
 
+type ApacSessionUpdated = Callable[[ApacRestored], Awaitable[None]]
+
 
 async def restore_apac_session(
     *,
@@ -31,11 +34,13 @@ async def restore_apac_session(
     state: ApacAuthState,
     h5_context: ssl.SSLContext,
     transport: _AsyncTransport,
+    on_session_updated: ApacSessionUpdated | None = None,
 ) -> ApacRestored:
     """Validate stored identity and test access, refreshing once if rejected.
 
-    This function never performs password login, requests verification codes,
-    enrolls a new identity, persists state, or performs a vehicle write.
+    Publish rotated tokens to the caller before subsequent network reads.
+    Persistence remains caller-owned. This function never performs password
+    login, requests verification codes, enrolls an identity or writes a vehicle.
     """
     if (
         type(credentials) is not ApacCredentials
@@ -79,9 +84,12 @@ async def restore_apac_session(
         if is_overseas_refresh_rejected(error):
             raise GwmAuthenticationError(operation="refresh_token", api_code=error.api_code) from None
         raise
+    session = read_session(tokens.access_token)
+    restored = ApacRestored(replace(state, tokens=tokens), session)
+    if on_session_updated is not None:
+        await on_session_updated(restored)
     profile = await auth.get_user_info(tokens.access_token)
     if profile != (state.tokens.gw_id, state.tokens.bean_id):
         raise GwmAuthenticationError(operation="get_user_info")
-    session = read_session(tokens.access_token)
     await ApacReadClient(material=material, session=session, transport=transport).acquire_vehicles()
-    return ApacRestored(replace(state, tokens=tokens), session)
+    return restored

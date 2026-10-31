@@ -105,3 +105,61 @@ async def test_apac_restart_restores_private_state_without_password_login(tmp_pa
     assert calls == [(state, False)]
     assert handoff.state == state
     assert await store.async_load_auth_state(dict(entry.data)) == state
+
+
+@pytest.mark.asyncio
+async def test_startup_rotation_survives_a_follow_up_failure_and_process_restart(tmp_path, monkeypatch):
+    """Reload the rotated pair from disk after startup restoration fails."""
+    import json
+    import ssl
+    from types import SimpleNamespace
+
+    from homeassistant.exceptions import ConfigEntryNotReady
+
+    import custom_components.gwm_ora as integration
+    import custom_components.gwm_ora.cloud_auth as auth_boundary
+    import custom_components.gwm_ora.gwm_client.apac_restore as restore
+    from custom_components.gwm_ora.gwm_client._protocol import _TransportResponse
+    from custom_components.gwm_ora.gwm_client.apac_identity import _register_validated_context
+    from custom_components.gwm_ora.gwm_client.apac_material import ApacMaterial
+    from custom_components.gwm_ora.gwm_client.eu_identity import EuBootstrapMaterial
+    from custom_components.gwm_ora.gwm_client.regions import TlsMode
+
+    credentials = _credentials()
+    state = replace(ApacAuthState.for_credentials(credentials.client_credentials()), tokens=ApacTokens("synthetic-access", "synthetic-refresh", "synthetic-gw", "synthetic-bean"), issued_identity=EuIssuedIdentity("c3ludGhldGlj", "c3ludGhldGlj"))
+    unique_id = cloud_unique_id(credentials)
+    entry = SimpleNamespace(data=cloud_entry_data(credentials), unique_id=unique_id)
+    first = HomeAssistant(str(tmp_path))
+    store = cloud_state_store(first, unique_id)
+    await store.async_save_auth_state(credentials, state)
+    renewed = replace(state, tokens=ApacTokens("renewed-access", "renewed-refresh", "synthetic-gw", "synthetic-bean"))
+    context = ssl.create_default_context()
+    context.set_ciphers("DEFAULT:@SECLEVEL=0")
+    _register_validated_context(context, TlsMode.APAC_ISSUED_MTLS)
+    material = ApacMaterial(EuBootstrapMaterial(b"fake-cert", b"c3ludGhldGljLWtleQ==", b"fake-ca"), "fake-key", "fake-secret")
+    calls = []
+
+    class Transport:
+        async def execute(self, request, **kwargs):
+            calls.append(request.operation)
+            if request.operation == "acquire_vehicles":
+                return _TransportResponse(401, {}, b'{}')
+            if request.operation == "refresh_token":
+                assert json.loads(request.body)["refreshToken"] == "synthetic-refresh"
+                return _TransportResponse(200, {}, b'{"code":"000000","data":{"accessToken":"renewed-access","refreshToken":"renewed-refresh"}}')
+            assert request.operation == "get_user_info"
+            assert request.headers["accessToken"] == "renewed-access"
+            return _TransportResponse(503, {}, b'{}')
+
+        async def aclose(self):
+            calls.append("closed")
+
+    actual_authenticator = auth_boundary.GwmCloudAuthenticator
+    monkeypatch.setattr(integration, "GwmCloudAuthenticator", lambda **kwargs: actual_authenticator(apac_material_loader=lambda: material))
+    monkeypatch.setattr(auth_boundary.AiohttpTransport, "create_owned", lambda **kwargs: Transport())
+    monkeypatch.setattr(restore, "create_apac_issued_context", lambda *args, **kwargs: context)
+    with pytest.raises(ConfigEntryNotReady):
+        await integration._async_load_cloud_bootstrap(first, entry, store)
+    restarted = cloud_state_store(HomeAssistant(str(tmp_path)), unique_id)
+    assert await restarted.async_load_auth_state(dict(entry.data)) == renewed
+    assert calls == ["acquire_vehicles", "refresh_token", "get_user_info", "closed"]

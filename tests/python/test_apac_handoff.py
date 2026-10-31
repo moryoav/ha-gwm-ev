@@ -14,7 +14,7 @@ from custom_components.gwm_ora.gwm_client.apac_material import ApacMaterial
 from custom_components.gwm_ora.gwm_client.apac_read import ApacReadClient, ApacReadSession
 from custom_components.gwm_ora.gwm_client.apac_restore import ApacRestored
 from custom_components.gwm_ora.gwm_client.apac_state import ApacAuthState
-from custom_components.gwm_ora.gwm_client.errors import GwmAuthenticationError, GwmConfigurationError
+from custom_components.gwm_ora.gwm_client.errors import GwmAuthenticationError, GwmConfigurationError, GwmNetworkError
 from custom_components.gwm_ora.gwm_client.eu_identity import EuBootstrapMaterial, EuIssuedIdentity
 
 
@@ -110,3 +110,41 @@ async def test_apac_runtime_discovers_and_maps_read_only_snapshot(monkeypatch):
         assert snapshot["vehicles"][0]["capabilities"]["climate_commands"] is False
     finally:
         await cloud.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure_operation", ["get_user_info", "acquire_vehicles"])
+async def test_runtime_retains_a_rotation_when_follow_up_validation_fails(monkeypatch, failure_operation):
+    """Keep memory and private storage on the new token pair after a read failure."""
+    credentials = GwmCloudCredentials(REGION_APAC, "PK", "person@example.invalid", "synthetic-password", "a" * 32)
+    state = replace(ApacAuthState.for_credentials(credentials.client_credentials()), tokens=ApacTokens("synthetic-access", "synthetic-refresh", "synthetic-gw", "synthetic-bean"), issued_identity=EuIssuedIdentity("c3ludGhldGlj", "c3ludGhldGlj"))
+    material = ApacMaterial(EuBootstrapMaterial(b"fake-cert", b"c3ludGhldGljLWtleQ==", b"fake-ca"), "fake-key", "fake-secret")
+    session = ApacReadSession("a" * 32, "synthetic-access", ssl.create_default_context(), "PK")
+    monkeypatch.setattr(runtime, "_is_validated_context", lambda *args: True)
+    bootstrap = runtime.GwmCloudBootstrap.from_authentication(credentials, ApacAuthenticated(state, session, material))
+    saved = []
+
+    class Store:
+        async def async_save_auth_state(self, supplied, replacement):
+            saved.append(replacement)
+
+    client = ApacReadClient(material=material, session=session, transport=None)
+    cloud = runtime.GwmCloudClient(REGION_APAC, client, credentials=credentials, bootstrap=bootstrap, state_store=Store())
+    replacement = replace(state, tokens=ApacTokens("renewed-access", "renewed-refresh", "synthetic-gw", "synthetic-bean"))
+    renewed_session = replace(session, access_token="renewed-access")
+
+    async def restore_then_fail(**kwargs):
+        """Publish the rotation and then fail the profile or discovery request."""
+        await kwargs["on_session_updated"](ApacRestored(replacement, renewed_session))
+        raise GwmNetworkError(operation=failure_operation)
+
+    async def expired_action():
+        """Require one token restoration before the requested read can proceed."""
+        raise GwmAuthenticationError(operation="get_last_status")
+
+    monkeypatch.setattr(runtime, "restore_apac_session", restore_then_fail)
+    with pytest.raises(GwmNetworkError):
+        await cloud._async_with_session_renewal(expired_action)
+    assert saved == [replacement]
+    assert cloud.reusable_bootstrap.state == replacement
+    assert client._session.access_token == "renewed-access"

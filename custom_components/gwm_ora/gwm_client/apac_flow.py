@@ -11,7 +11,7 @@ from .apac_auth import ApacCredentials
 from .apac_auth_client import ApacAuthClient
 from .apac_material import ApacMaterial
 from .apac_read import ApacReadClient, ApacReadSession
-from .apac_restore import restore_apac_session
+from .apac_restore import ApacSessionUpdated, restore_apac_session
 from .apac_state import ApacAuthState
 from .errors import GwmApiError, GwmAuthenticationError
 
@@ -46,6 +46,7 @@ async def authenticate_apac(
     transport: _AsyncTransport,
     verification_code: str | None = None,
     allow_password_login: bool = False,
+    on_session_updated: ApacSessionUpdated | None = None,
 ) -> ApacAuthenticated | ApacVerificationRequired:
     """Restore or explicitly sign in without hidden OTP requests or writes."""
     if (
@@ -60,6 +61,7 @@ async def authenticate_apac(
         try:
             result = await restore_apac_session(
                 credentials=credentials, material=material, state=candidate, h5_context=h5_context, transport=transport,
+                on_session_updated=on_session_updated,
             )
             return ApacAuthenticated(result.state, result.session, material)
         except GwmAuthenticationError:

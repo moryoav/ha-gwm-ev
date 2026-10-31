@@ -86,7 +86,7 @@ from .gwm_client.apac_flow import ApacAuthenticated
 from .gwm_client.apac_identity import _is_validated_context
 from .gwm_client.apac_material import ApacMaterial
 from .gwm_client.apac_read import ApacReadClient, ApacReadSession
-from .gwm_client.apac_restore import restore_apac_session
+from .gwm_client.apac_restore import ApacRestored, restore_apac_session
 from .gwm_client.apac_state import ApacAuthState
 from .gwm_client.commands import ChinaRemoteCommandAction
 from .gwm_client.regions import TlsMode
@@ -1053,15 +1053,10 @@ class GwmCloudClient:
             regional_credentials = credentials.client_credentials()
             if type(regional_credentials) is not ApacCredentials:
                 raise GwmAuthenticationError(operation=trigger.operation) from None
-            try:
-                h5_context = await asyncio.to_thread(ssl.create_default_context)
-                restored = await restore_apac_session(
-                    credentials=regional_credentials,
-                    material=bootstrap.apac_material,
-                    state=bootstrap.state,
-                    h5_context=h5_context,
-                    transport=client._transport,
-                )
+
+            async def accept_session_update(restored: ApacRestored) -> None:
+                """Install and retain rotated tokens before any follow-up read."""
+                current = self._bootstrap
                 replacement = GwmCloudBootstrap(
                     region=REGION_APAC,
                     account_binding=credentials.account_binding,
@@ -1071,9 +1066,21 @@ class GwmCloudClient:
                 )
                 client.replace_session(restored.session)
                 self._bootstrap = replacement
-                if restored.state != bootstrap.state:
+                if current is None or restored.state != current.state:
                     self._pending_auth_state = restored.state
                     await self._async_flush_pending_auth_state()
+
+            try:
+                h5_context = await asyncio.to_thread(ssl.create_default_context)
+                restored = await restore_apac_session(
+                    credentials=regional_credentials,
+                    material=bootstrap.apac_material,
+                    state=bootstrap.state,
+                    h5_context=h5_context,
+                    transport=client._transport,
+                    on_session_updated=accept_session_update,
+                )
+                await accept_session_update(restored)
                 try:
                     return await action()
                 except GwmApiError as retry_error:

@@ -66,6 +66,7 @@ from .gwm_client import (
 )
 from .gwm_client.apac_flow import ApacAuthenticated
 from .gwm_client.apac_material import load_apac_material
+from .gwm_client.apac_restore import ApacRestored
 
 
 @dataclass(slots=True)
@@ -320,6 +321,10 @@ async def _async_load_cloud_bootstrap(
             "GWM cloud private state is temporarily unavailable"
         ) from err
 
+    async def save_apac_session(result: ApacRestored) -> None:
+        """Persist a token rotation before any later restoration read can fail."""
+        await state_store.async_save_auth_state(credentials, result.state)
+
     try:
         authenticator = (
             GwmCloudAuthenticator(
@@ -335,6 +340,7 @@ async def _async_load_cloud_bootstrap(
             state=auth_state,
             allow_session_reclaim=False,
             allow_password_login=False,
+            **({"apac_session_updated": save_apac_session} if credentials.region == REGION_APAC else {}),
         )
         if isinstance(result, ChinaInitializationRequired):
             await state_store.async_save_auth_state(credentials, result.state)
