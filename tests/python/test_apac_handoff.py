@@ -1216,3 +1216,39 @@ async def test_apac_snapshot_only_advertises_controls_for_supported_platforms(mo
         assert capabilities["charging_control"] is False
     finally:
         await cloud.aclose()
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("rudder", "expected"), [("1", True), (2, True), (None, False), ({"bad": 2}, False)])
+async def test_apac_seat_capability_follows_discovery_through_entities(monkeypatch, rudder, expected):
+    """Keep seat entities unavailable when discovery cannot identify the driver side."""
+    import json
+    from types import SimpleNamespace
+
+    from custom_components.gwm_ora.gwm_client._protocol import _TransportResponse
+    from custom_components.gwm_ora.select import GwmApacSeatLevelSelect
+    from custom_components.gwm_ora.switch import GwmRemoteControlSwitch
+
+    class Transport(_RuntimeTransport):
+        """Supply optional steering metadata in otherwise normal discovery."""
+        async def execute(self, request, **kwargs):
+            """Keep sensor refresh working with missing or malformed steering data."""
+            if request.operation == "acquire_vehicles":
+                data = [{"vin": "SYNTHETIC-VEHICLE", "belongPlatform": "beantech", "rudder": rudder}]
+                return _TransportResponse(200, {}, json.dumps({"code": "000000", "data": data}).encode())
+            return await super().execute(request, **kwargs)
+
+    cloud, _, _ = _runtime_with_synthetic_transport(monkeypatch, Transport(), apac_remote_enabled=True)
+    try:
+        vehicle = (await cloud.async_get_vehicle_data())["vehicles"][0]
+        assert vehicle["capabilities"]["apac_remote_controls"] is True
+        assert vehicle["capabilities"]["apac_seat_controls"] is expected
+        assert vehicle["values"]["soc"] == 65
+        coordinator = SimpleNamespace(region="ap", last_update_success=True, vehicle=lambda vin: vehicle)
+        selector = GwmApacSeatLevelSelect(None, coordinator, vehicle["vin"], "front_driver_seat_heater_level", "seat_heating")
+        seat = GwmRemoteControlSwitch(None, coordinator, vehicle["vin"], turn_on_action="seat_heating_start", turn_off_action="seat_heating_stop", translation_key="driver_heating", state_key="front_driver_seat_heater_level")
+        steering = GwmRemoteControlSwitch(None, coordinator, vehicle["vin"], turn_on_action="steering_wheel_heating", turn_off_action="steering_wheel_heatless", translation_key="steering_heating", state_key="steering_wheel_heater_on")
+        assert selector.available is expected
+        assert seat.available is expected
+        assert steering.available
+    finally:
+        await cloud.aclose()

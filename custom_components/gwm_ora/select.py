@@ -105,8 +105,8 @@ class GwmApacSeatLevelSelect(GwmEntity, SelectEntity):
 
     @property
     def available(self) -> bool:
-        """Require the APAC remote-control opt-in."""
-        return super().available and ((self.vehicle or {}).get("capabilities") or {}).get("apac_remote_controls") is True
+        """Require explicit APAC consent and a recognized driver-side mapping."""
+        return super().available and ((self.vehicle or {}).get("capabilities") or {}).get("apac_seat_controls") is True
 
     @property
     def current_option(self) -> str | None:

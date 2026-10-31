@@ -702,6 +702,9 @@ class GwmCloudClient:
                     apac_supported = platform in {"beantech", "navinfo"}
                     capabilities["apac_remote_controls"] = self._apac_remote_enabled and apac_supported
                     capabilities["apac_direct_charging"] = self._apac_charging_enabled and apac_supported
+                    capabilities["apac_seat_controls"] = (
+                        self._apac_remote_enabled and platform == "beantech" and vehicle.rudder in {"1", "2"}
+                    )
                 capabilities["climate_commands"] = self._climate_commands_enabled and (
                     platform in {"beantech", "navinfo"} if self.region == REGION_APAC
                     else self.region != REGION_CHINA or china_supported

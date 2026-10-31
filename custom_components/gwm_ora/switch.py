@@ -347,7 +347,8 @@ class GwmRemoteControlSwitch(GwmEntity, SwitchEntity):
     def available(self) -> bool:
         if self.coordinator.region == "ap":
             capabilities = (self.vehicle or {}).get("capabilities") or {}
-            return super().available and capabilities.get("apac_remote_controls") is True
+            capability = "apac_seat_controls" if self._turn_on_action.startswith("seat_") else "apac_remote_controls"
+            return super().available and capabilities.get(capability) is True
         return (
             super().available
             and self.china_vehicle_commands_available
