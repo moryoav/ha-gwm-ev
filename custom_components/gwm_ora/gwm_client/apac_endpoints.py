@@ -1,8 +1,4 @@
-"""Allowlisted APAC authentication and vehicle-read request contracts.
-
-No transport or Home Assistant integration is connected yet. Command and
-charging operations are intentionally absent from this policy.
-"""
+"""Allowlisted APAC authentication, vehicle reads and climate requests."""
 
 from __future__ import annotations
 
@@ -33,12 +29,16 @@ _ENDPOINTS = MappingProxyType(
         "acquire_vehicles": ApacEndpoint("GET", GatewayRole.APP_V1, "globalapp/vehicle/acquireVehicles", True),
         "get_last_status": ApacEndpoint("GET", GatewayRole.APP_V1, "vehicle/getLastStatus", True),
         "get_vehicle_basics": ApacEndpoint("GET", GatewayRole.APP_V1, "vehicle/vehicleBasicsInfo", True),
+        "send_climate_command": ApacEndpoint("POST", GatewayRole.APP_V1, "vehicle/T5/sendCmd", True),
+        "send_apac_control": ApacEndpoint("POST", GatewayRole.APP_V1, "vehicle/T5/sendCmd", True),
+        "update_climate_defaults": ApacEndpoint("POST", GatewayRole.H5_V1, "vehicle/modifyVehicleRemoteCtlInfo", True),
+        "get_remote_command_result": ApacEndpoint("GET", GatewayRole.APP_V1, "vehicle/getRemoteCtrlResultT5", True),
     }
 )
 
 
 def apac_endpoint(operation: str) -> ApacEndpoint:
-    """Return a known read-only/authentication contract, or fail closed."""
+    """Return a known regional contract, or fail closed."""
     try:
         return _ENDPOINTS[operation]
     except (KeyError, TypeError):

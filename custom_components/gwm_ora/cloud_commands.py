@@ -6,7 +6,7 @@ import asyncio
 import hashlib
 import logging
 import secrets
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
@@ -33,6 +33,7 @@ from .gwm_client import (
     FrontDefrosterCommand,
     GwmClientError,
     Region,
+    RemoteCommandAcceptance,
     VehicleIdentifier,
     is_valid_operation_time,
     normalize_operation_time,
@@ -73,6 +74,9 @@ class GwmCommandApi:
         credentials: GwmCloudCredentials,
         *,
         enabled: bool,
+        apac_climate_enabled: bool = False,
+        apac_remote_enabled: bool = False,
+        apac_charging_enabled: bool = False,
         charging_enabled: bool = False,
         security_pin: str | None,
         clock: Callable[[], datetime] | None = None,
@@ -82,6 +86,9 @@ class GwmCommandApi:
             or type(credentials) is not GwmCloudCredentials
             or getattr(cloud, "region", None) != credentials.region
             or type(enabled) is not bool
+            or type(apac_climate_enabled) is not bool
+            or type(apac_remote_enabled) is not bool
+            or type(apac_charging_enabled) is not bool
             or type(charging_enabled) is not bool
             or (security_pin is not None and not isinstance(security_pin, str))
             or (clock is not None and not callable(clock))
@@ -92,6 +99,9 @@ class GwmCommandApi:
         self._state_store = state_store
         self._credentials = credentials
         self._enabled = enabled
+        self._apac_climate_enabled = apac_climate_enabled
+        self._apac_remote_enabled = apac_remote_enabled
+        self._apac_charging_enabled = apac_charging_enabled
         self._charging_enabled = charging_enabled
         self._security_pin = security_pin.strip() if security_pin else ""
         self._clock = clock or (lambda: datetime.now(UTC))
@@ -135,7 +145,11 @@ class GwmCommandApi:
     ) -> dict[str, object]:
         """Validate, resolve, send, and journal one climate request."""
 
-        self._ensure_available()
+        if self._cloud.region == REGION_APAC:
+            if not getattr(self, "_apac_climate_enabled", False) or not self._enabled or not self._security_pin:
+                raise GwmCommandForbidden("GWM climate control requires opt-in and a security PIN")
+        else:
+            self._ensure_available()
         if not isinstance(vin, str):
             raise GwmCommandError("A/C command requires a valid vehicle")
         try:
@@ -249,6 +263,11 @@ class GwmCommandApi:
             operation_time_minutes=effective_operation_time,
             currently_on=currently_on,
         )
+        if self._cloud.region == REGION_APAC:
+            return await self._async_submit_apac(
+                identifier, command_name,
+                lambda: self._cloud.async_send_climate_command(command, security_password_hash=_security_password_hash(self._security_pin)),
+            )
         if self._cloud.region == "cn":
             acceptance = await self._cloud.async_send_climate_command(command)  # type: ignore[call-arg]
         else:
@@ -304,6 +323,11 @@ class GwmCommandApi:
             raise GwmCommandError("Door lock action must be 'lock' or 'unlock'")
         command_name = "Door lock" if normalized_action == "lock" else "Door unlock"
         command = DoorLockCommand(identifier, normalized_action == "lock")
+        if self._cloud.region == REGION_APAC:
+            return await self._async_submit_apac(
+                identifier, command_name,
+                lambda: self._cloud.async_send_lock_command(command, security_password_hash=_security_password_hash(self._security_pin)),
+            )
         if self._cloud.region == "cn":
             acceptance = await self._cloud.async_send_lock_command(command)  # type: ignore[call-arg]
         else:
@@ -315,12 +339,46 @@ class GwmCommandApi:
             identifier, command_name, acceptance.command_id
         )
 
+    async def async_apac_control(self, vin: str, action: str) -> dict[str, object]:
+        """Validate, send and journal an explicitly approved APAC operation."""
+        names = {
+            "tailgate_open": "Tailgate open", "tailgate_close": "Tailgate close",
+            "charge_now": "Start charging", "charge_off": "Stop charging",
+            "steering_wheel_heating": "Steering heating on", "steering_wheel_heatless": "Steering heating off",
+            "horn": "Horn", "flash_lights": "Flash lights", "horn_and_lights": "Horn and lights",
+            "remote_start": "Remote start", "remote_stop": "Remote stop",
+            "sunroof_close": "Sunroof close", "defrost_back_start": "Rear defrost on", "defrost_back_stop": "Rear defrost off",
+            "seat_heating_start": "Driver seat heating on", "seat_heating_stop": "Driver seat heating off",
+            "seat_heating_start_passenger": "Passenger seat heating on", "seat_heating_stop_passenger": "Passenger seat heating off",
+            "seat_ventilation_start": "Driver seat ventilation on", "seat_ventilation_stop": "Driver seat ventilation off",
+            "seat_ventilation_start_passenger": "Passenger seat ventilation on", "seat_ventilation_stop_passenger": "Passenger seat ventilation off",
+        }
+        names.update({
+            f"seat_{kind}{passenger}_level_{level}": f"{'Passenger' if passenger else 'Driver'} seat {kind} level {level}"
+            for kind in ("heating", "ventilation") for passenger in ("", "_passenger") for level in (1, 2, 3)
+        })
+        if self._cloud.region != REGION_APAC or not isinstance(action, str) or action not in names or not self._security_pin:
+            raise GwmCommandForbidden("GWM vehicle control is unavailable")
+        allowed = self._apac_charging_enabled if action in {"charge_now", "charge_off"} else self._apac_remote_enabled
+        if not allowed:
+            raise GwmCommandForbidden("GWM vehicle control requires explicit opt-in")
+        identifier = _vehicle_identifier(vin, command_name=names[action])
+        return await self._async_submit_apac(
+            identifier, names[action],
+            lambda: self._cloud.async_send_apac_control(identifier, action, security_password_hash=_security_password_hash(self._security_pin)),
+        )
+
     async def async_close_windows(self, vin: str) -> dict[str, object]:
         """Validate, send, and journal one close-all-windows request."""
 
         self._ensure_available()
         identifier = _vehicle_identifier(vin, command_name="Window close")
         command = CloseWindowsCommand(identifier)
+        if self._cloud.region == REGION_APAC:
+            return await self._async_submit_apac(
+                identifier, "Window close",
+                lambda: self._cloud.async_send_close_windows_command(command, security_password_hash=_security_password_hash(self._security_pin)),
+            )
         if self._cloud.region == "cn":
             acceptance = await self._cloud.async_send_close_windows_command(command)  # type: ignore[call-arg]
         else:
@@ -344,6 +402,11 @@ class GwmCommandApi:
         identifier = _vehicle_identifier(vin, command_name="Front defroster")
         if type(enabled) is not bool:
             raise GwmCommandError("Front defroster command requires an on or off state")
+        if self._cloud.region == REGION_APAC:
+            return await self._async_submit_apac(
+                identifier, "Front defroster",
+                lambda: self._cloud.async_send_front_defroster_command(FrontDefrosterCommand(identifier, enabled), security_password_hash=_security_password_hash(self._security_pin)),
+            )
         acceptance = await self._cloud.async_send_front_defroster_command(
             FrontDefrosterCommand(identifier, enabled),
             security_password_hash=_security_password_hash(self._security_pin),
@@ -359,6 +422,11 @@ class GwmCommandApi:
 
         self._ensure_overseas_comfort_commands_available()
         identifier = _vehicle_identifier(vin, command_name="Air circulation")
+        if self._cloud.region == REGION_APAC:
+            return await self._async_submit_apac(
+                identifier, "Air circulation",
+                lambda: self._cloud.async_send_cabin_clean_command(CabinCleanCommand(identifier), security_password_hash=_security_password_hash(self._security_pin)),
+            )
         acceptance = await self._cloud.async_send_cabin_clean_command(
             CabinCleanCommand(identifier),
             security_password_hash=_security_password_hash(self._security_pin),
@@ -482,7 +550,17 @@ class GwmCommandApi:
                 )
         except GwmClientError:
             raise
-        region = None if self._cloud.region == "cn" else Region(self._cloud.region)
+        if self._cloud.region == REGION_APAC:
+            matching = sum(
+                item.command_id is not None and item.command_id.casefold() == entry.cloud_command_id.casefold()
+                for item in results
+            )
+            missing = sum(item.command_id is None or not item.command_id for item in results)
+            _LOGGER.debug(
+                "APAC command result candidates=%d matching_id=%d missing_id=%d different_id=%d",
+                len(results), matching, missing, len(results) - matching - missing,
+            )
+        region = None if self._cloud.region in {"cn", REGION_APAC} else Region(self._cloud.region)
         result = select_remote_command_result(
             results,
             command_id=entry.cloud_command_id,
@@ -510,6 +588,39 @@ class GwmCommandApi:
             entry,
             status=f"{entry.command_name}: {status_word} - {details} [{code}]",
         )
+
+    async def _async_submit_apac(
+        self, identifier: VehicleIdentifier, name: str,
+        send: Callable[[], Awaitable[RemoteCommandAcceptance]],
+    ) -> dict[str, object]:
+        """Finish an initiated APAC send and its journal before propagating cancellation."""
+        async def send_and_record() -> dict[str, object]:
+            """Send only once and durably record a successful acceptance."""
+            acceptance = await send()
+            return await self._record_acceptance(identifier, name, acceptance.command_id)
+
+        task = asyncio.create_task(send_and_record())
+        cancelled = False
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                if task.cancelled():
+                    raise
+                cancelled = True
+            except Exception as error:
+                if cancelled:
+                    raise GwmCommandError("Command outcome is uncertain; check the vehicle before retrying") from error
+                raise
+        try:
+            result = task.result()
+        except Exception as error:
+            if cancelled:
+                raise GwmCommandError("Command outcome is uncertain; check the vehicle before retrying") from error
+            raise
+        if cancelled:
+            raise asyncio.CancelledError
+        return result
 
     async def _record_acceptance(
         self,
@@ -636,7 +747,9 @@ class GwmCommandApi:
     def _ensure_available(self) -> None:
         """Require remote-command consent and a writable regional backend."""
         if self._cloud.region == REGION_APAC:
-            raise GwmCommandForbidden("GWM APAC is read-only")
+            if not getattr(self, "_apac_remote_enabled", False) or not self._security_pin:
+                raise GwmCommandForbidden("GWM vehicle controls require opt-in and a security PIN")
+            return
         if not self._enabled:
             raise GwmCommandForbidden("GWM cloud remote commands are disabled")
         if self._cloud.region != "cn" and not self._security_pin:
@@ -794,7 +907,7 @@ class GwmCommandApi:
     def _ensure_charging_available(self) -> None:
         """Require charging consent and a writable regional backend."""
         if self._cloud.region == REGION_APAC:
-            raise GwmCommandForbidden("GWM APAC is read-only")
+            raise GwmCommandForbidden("Charging schedules are not supported for this region")
         if not self._charging_enabled:
             raise GwmCommandForbidden("GWM cloud charging control is disabled")
 

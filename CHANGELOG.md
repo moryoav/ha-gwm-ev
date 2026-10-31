@@ -10,7 +10,9 @@ This project follows semantic versioning. HACS uses the latest GitHub release ta
 
 ### Added
 
-- Added APAC read-only setup, private session storage, refresh, discovery and status for Pakistan, Thailand, Malaysia and Indonesia. Vehicle commands and charging writes remain disabled.
+- Added experimental APAC climate and vehicle commands under Vehicle controls, with a separate Charging control opt-in for direct start/stop. This implementation requires live validation; APAC charging schedules remain unavailable.
+
+- Added APAC read-only setup, private session storage, refresh, discovery and status for Pakistan, Thailand, Malaysia and Indonesia. Vehicle commands and charging writes are disabled by default.
 
 ## [0.17.12] - 2026-10-19
 

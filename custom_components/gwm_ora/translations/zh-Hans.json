@@ -100,6 +100,8 @@
         "data": {
           "poll_interval_seconds": "轮询间隔",
           "enable_remote_commands": "启用远程命令",
+          "enable_apac_remote": "车辆控制",
+          "enable_apac_charging": "充电控制",
           "enable_charging_control": "启用充电控制",
           "security_pin": "车辆安全 PIN",
           "log_level": "日志级别"
@@ -107,6 +109,8 @@
         "data_description": {
           "poll_interval_seconds": "账号级云轮询之间的秒数（30–3600）。",
           "enable_remote_commands": "明确选择启用支持的远程命令控制。",
+          "enable_apac_remote": "允许使用支持的空调、车锁、车窗、座椅及其他车辆控制。需要车辆安全 PIN。",
+          "enable_apac_charging": "允许开始和停止充电。不支持充电计划。需要车辆安全 PIN。",
           "enable_charging_control": "定时充电的独立明确开关。",
           "security_pin": "中国大陆以外的远程命令需要此 PIN。已存储的值会显示在带掩码的密码字段中，并在诊断信息中保持隐藏。",
           "log_level": "此集成的诊断日志详细程度。"
@@ -297,6 +301,10 @@
       "charge_soc_limit": { "name": "充电上限" }
     },
     "select": {
+      "front_driver_seat_heater_level": { "name": "主驾驶座椅加热档位" },
+      "front_passenger_seat_heater_level": { "name": "副驾驶座椅加热档位" },
+      "front_driver_seat_vent_level": { "name": "主驾驶座椅通风档位" },
+      "front_passenger_seat_vent_level": { "name": "副驾驶座椅通风档位" },
       "charge_window_start": { "name": "充电开始时间" },
       "charge_window_end": { "name": "充电结束时间" },
       "battery_appointment_time": { "name": "电池预约加热出发时间" },
@@ -315,6 +323,12 @@
       "horn_and_lights": { "name": "鸣笛并闪灯" },
       "open_tailgate": { "name": "打开尾门" },
       "close_tailgate": { "name": "关闭尾门" },
+      "apac_steering_on": { "name": "开启方向盘加热" },
+      "apac_steering_off": { "name": "关闭方向盘加热" },
+      "apac_charge_start": { "name": "开始充电" },
+      "apac_charge_stop": { "name": "停止充电" },
+      "apac_rear_defrost_on": { "name": "开启后窗除霜" },
+      "apac_rear_defrost_off": { "name": "关闭后窗除霜" },
       "close_sunroof": { "name": "关闭天窗" },
       "tilt_sunroof": { "name": "天窗翘起" },
       "half_open_sunroof": { "name": "天窗半开" },

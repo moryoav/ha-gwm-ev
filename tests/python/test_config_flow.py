@@ -1094,14 +1094,53 @@ async def test_apac_setup_verification_creates_read_only_entry(monkeypatch: pyte
     assert consume_cloud_bootstrap(flow.hass, flow.context["unique_id"]) is not None
 
 
-def test_apac_options_hide_control_and_charging_fields() -> None:
-    """Even stale enabled options must not make APAC writes configurable."""
+def test_apac_options_offer_vehicle_and_charging_controls() -> None:
+    """Offer one vehicle-controls toggle and a separate charging toggle."""
     entry = _entry(data={CONF_CONNECTION_TYPE: CONNECTION_TYPE_CLOUD, CONF_REGION: "ap", CONF_COUNTRY: "PK", CONF_ACCOUNT: "account@example.invalid", CONF_PASSWORD: "password"}, options={CONF_ENABLE_REMOTE_COMMANDS: True, CONF_ENABLE_CHARGING_CONTROL: True})
     fields = {marker.schema for marker in config_flow._cloud_options_schema(entry).schema}
     assert CONF_POLL_INTERVAL_SECONDS in fields
     assert CONF_ENABLE_REMOTE_COMMANDS not in fields
     assert CONF_ENABLE_CHARGING_CONTROL not in fields
-    assert CONF_SECURITY_PIN not in fields
+    assert CONF_SECURITY_PIN in fields
+    assert "enable_apac_climate" not in fields
+    assert "enable_apac_remote" in fields
+    assert "enable_apac_charging" in fields
+
+
+@pytest.mark.asyncio
+async def test_apac_vehicle_opt_in_requires_pin_and_keeps_charging_disabled() -> None:
+    """Require vehicle-control consent and a PIN, without enabling charging."""
+    entry = _entry(data={CONF_CONNECTION_TYPE: CONNECTION_TYPE_CLOUD, CONF_REGION: "ap", CONF_COUNTRY: "PK", CONF_ACCOUNT: "account@example.invalid", CONF_PASSWORD: "password"})
+    flow = config_flow.GwmOptionsFlow()
+    flow.hass = _Hass(entry)  # type: ignore[assignment]
+    flow.handler = entry.entry_id
+    values = {CONF_POLL_INTERVAL_SECONDS: 120, CONF_LOG_LEVEL: "debug", "enable_apac_remote": True}
+    rejected = await flow.async_step_init(values)
+    assert rejected["type"] is FlowResultType.FORM
+    assert rejected["errors"][CONF_SECURITY_PIN] == "security_pin_required"
+    accepted = await flow.async_step_init({**values, CONF_SECURITY_PIN: "1234", CONF_ENABLE_CHARGING_CONTROL: True})
+    assert accepted["type"] is FlowResultType.CREATE_ENTRY
+    assert accepted["data"]["enable_apac_remote"] is True
+    assert CONF_ENABLE_CHARGING_CONTROL not in accepted["data"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("option", ["enable_apac_remote", "enable_apac_charging"])
+async def test_apac_extra_controls_require_pin_and_stay_separate(option) -> None:
+    """Each APAC control family requires explicit consent and a PIN."""
+    entry = _entry(data={CONF_CONNECTION_TYPE: CONNECTION_TYPE_CLOUD, CONF_REGION: "ap", CONF_COUNTRY: "PK", CONF_ACCOUNT: "account@example.invalid", CONF_PASSWORD: "password"})
+    flow = config_flow.GwmOptionsFlow()
+    flow.hass = _Hass(entry)  # type: ignore[assignment]
+    flow.handler = entry.entry_id
+    values = {CONF_POLL_INTERVAL_SECONDS: 120, CONF_LOG_LEVEL: "debug", option: True}
+    rejected = await flow.async_step_init(values)
+    assert rejected["errors"][CONF_SECURITY_PIN] == "security_pin_required"
+    accepted = await flow.async_step_init({**values, CONF_SECURITY_PIN: "1234"})
+    assert accepted["type"] is FlowResultType.CREATE_ENTRY
+    assert accepted["data"][option] is True
+    assert not accepted["data"].get("enable_apac_climate", False)
+    other = "enable_apac_charging" if option == "enable_apac_remote" else "enable_apac_remote"
+    assert not accepted["data"].get(other, False)
 
 
 @pytest.mark.asyncio

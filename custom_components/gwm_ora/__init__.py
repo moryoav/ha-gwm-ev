@@ -38,6 +38,8 @@ from .const import (
     ATTR_START_TIME,
     ATTR_VIN,
     CONF_CONNECTION_TYPE,
+    CONF_ENABLE_APAC_CHARGING,
+    CONF_ENABLE_APAC_REMOTE,
     CONF_ENABLE_CHARGING_CONTROL,
     CONF_ENABLE_REMOTE_COMMANDS,
     CONF_POLL_INTERVAL_SECONDS,
@@ -216,9 +218,16 @@ async def _async_setup_cloud_entry(
     bootstrap = await _async_load_cloud_bootstrap(hass, entry, state_store)
 
     try:
-        command_enabled = entry.options.get(CONF_ENABLE_REMOTE_COMMANDS) is True
+        command_enabled = (
+            entry.options.get(CONF_ENABLE_APAC_REMOTE) is True
+            if entry.data.get(CONF_REGION) == REGION_APAC
+            else entry.options.get(CONF_ENABLE_REMOTE_COMMANDS) is True
+        )
         charging_enabled = entry.options.get(CONF_ENABLE_CHARGING_CONTROL) is True
         security_pin = entry.options.get(CONF_SECURITY_PIN)
+        apac_pin = isinstance(security_pin, str) and bool(security_pin.strip())
+        apac_remote = entry.data.get(CONF_REGION) == REGION_APAC and apac_pin and entry.options.get(CONF_ENABLE_APAC_REMOTE) is True
+        apac_charging = entry.data.get(CONF_REGION) == REGION_APAC and apac_pin and entry.options.get(CONF_ENABLE_APAC_CHARGING) is True
         commands_available = command_enabled and (
             entry.data.get(CONF_REGION) == REGION_CHINA
             or isinstance(security_pin, str)
@@ -230,6 +239,9 @@ async def _async_setup_cloud_entry(
             bootstrap,
             state_store=state_store,
             climate_commands_enabled=commands_available,
+            apac_climate_enabled=commands_available if entry.data.get(CONF_REGION) == REGION_APAC else False,
+            apac_remote_enabled=apac_remote,
+            apac_charging_enabled=apac_charging,
             lock_window_commands_enabled=commands_available,
             charging_control_enabled=charging_enabled,
         )
@@ -245,6 +257,9 @@ async def _async_setup_cloud_entry(
             state_store,
             credentials,
             enabled=command_enabled,
+            apac_climate_enabled=command_enabled if entry.data.get(CONF_REGION) == REGION_APAC else False,
+            apac_remote_enabled=apac_remote,
+            apac_charging_enabled=apac_charging,
             charging_enabled=charging_enabled,
             security_pin=security_pin if isinstance(security_pin, str) else None,
         )
