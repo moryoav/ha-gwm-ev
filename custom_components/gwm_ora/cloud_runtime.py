@@ -24,6 +24,7 @@ from .cloud_auth import (
     GwmCloudCredentials,
     cloud_unique_id,
 )
+from .cloud_storage import async_finish_apac_state_save
 from .const import (
     CONF_ACCOUNT,
     CONF_AUTHENTICATION_METHOD,
@@ -1167,31 +1168,26 @@ class GwmCloudClient:
         credentials = self._credentials
         if credentials is None:
             raise GwmNetworkError(operation="refresh_token")
-        if self._state_store is None:
+        state_store = self._state_store
+        if state_store is None:
             self._pending_auth_state = None
             return
-        cancelled = False
+
+        async def save_state() -> None:
+            """Clear the pending revision only after its private save completes."""
+            await state_store.async_save_auth_state(credentials, state)
+            if self._pending_auth_state is state:
+                self._pending_auth_state = None
+
         try:
             if self.region == REGION_APAC:
-                save_task = asyncio.create_task(self._state_store.async_save_auth_state(credentials, state))
-                while not save_task.done():
-                    try:
-                        await asyncio.shield(save_task)
-                    except asyncio.CancelledError:
-                        if save_task.cancelled():
-                            raise
-                        cancelled = True
-                save_task.result()
+                await async_finish_apac_state_save(save_state())
             else:
-                await self._state_store.async_save_auth_state(credentials, state)
+                await save_state()
         except asyncio.CancelledError:
             raise
         except Exception:
             raise GwmNetworkError(operation="refresh_token") from None
-        if self._pending_auth_state is state:
-            self._pending_auth_state = None
-        if cancelled:
-            raise asyncio.CancelledError
 
     def _current_overseas_auth_state(
         self,

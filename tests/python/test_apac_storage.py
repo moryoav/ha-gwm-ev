@@ -1,5 +1,6 @@
 """Private APAC storage contracts and cross-account rejection."""
 
+import asyncio
 import logging
 from dataclasses import replace
 from pathlib import Path
@@ -222,3 +223,76 @@ async def test_startup_rotation_survives_a_follow_up_failure_and_process_restart
     restarted = cloud_state_store(HomeAssistant(str(tmp_path)), unique_id)
     assert await restarted.async_load_auth_state(dict(entry.data)) == renewed
     assert calls == ["acquire_vehicles", "refresh_token", "get_user_info", "closed"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("boundary", ["startup", "config_flow"])
+async def test_cancelled_apac_setup_finishes_rotated_token_persistence(tmp_path, monkeypatch, boundary):
+    """Finish a rotated-state save despite repeated cancellation during setup."""
+    import ssl
+    from types import SimpleNamespace
+
+    import custom_components.gwm_ora as integration
+    from custom_components.gwm_ora.config_flow import GwmConfigFlow
+    from custom_components.gwm_ora.gwm_client.apac_read import ApacReadSession
+    from custom_components.gwm_ora.gwm_client.apac_restore import ApacRestored
+
+    credentials = _credentials()
+    state = replace(
+        ApacAuthState.for_credentials(credentials.client_credentials()),
+        tokens=ApacTokens("synthetic-access", "synthetic-refresh", "synthetic-gw", "synthetic-bean"),
+        issued_identity=EuIssuedIdentity("c3ludGhldGlj", "c3ludGhldGlj"),
+    )
+    replacement = replace(
+        state, tokens=ApacTokens("renewed-access", "renewed-refresh", "synthetic-gw", "synthetic-bean")
+    )
+    session = ApacReadSession(credentials.device_id, "renewed-access", ssl.create_default_context(), "PK")
+    unique_id = cloud_unique_id(credentials)
+    hass = HomeAssistant(str(tmp_path))
+    store = cloud_state_store(hass, unique_id)
+    await store.async_save_auth_state(credentials, state)
+    save_started = asyncio.Event()
+
+    async def hold_store_and_publish(callback):
+        """Hold the real store lock while the caller publishes a rotation."""
+        await store._lock.acquire()
+        save_started.set()
+        await callback(ApacRestored(replacement, session))
+        pytest.fail("Setup cancellation must propagate after the save finishes")
+
+    class Authenticator:
+        def __init__(self, **kwargs):
+            """Accept the private material loader without opening a connection."""
+
+        async def async_authenticate(self, supplied, **kwargs):
+            """Publish the synthetic rotation through the real startup callback."""
+            assert kwargs["allow_password_login"] is False
+            assert kwargs["state"] == state
+            await hold_store_and_publish(kwargs["apac_session_updated"])
+
+    if boundary == "startup":
+        monkeypatch.setattr(integration, "GwmCloudAuthenticator", Authenticator)
+        entry = SimpleNamespace(data=cloud_entry_data(credentials), unique_id=unique_id)
+        setup = integration._async_load_cloud_bootstrap(hass, entry, store)
+    else:
+        flow = GwmConfigFlow()
+        flow.hass = hass
+        flow._cloud_credentials = credentials
+        flow._auth_state = state
+        setup = hold_store_and_publish(flow._async_apac_session_updated)
+    task = asyncio.create_task(setup)
+    try:
+        await asyncio.wait_for(save_started.wait(), timeout=5)
+        for _ in range(2):
+            task.cancel()
+            await asyncio.sleep(0)
+            assert not task.done()
+        store._lock.release()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    finally:
+        if store._lock.locked():
+            store._lock.release()
+        await asyncio.gather(task, return_exceptions=True)
+    restarted = cloud_state_store(HomeAssistant(str(tmp_path)), unique_id)
+    assert await restarted.async_load_auth_state(cloud_entry_data(credentials)) == replacement

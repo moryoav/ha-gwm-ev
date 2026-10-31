@@ -27,6 +27,7 @@ from .cloud_runtime import (
 )
 from .cloud_storage import (
     GwmCloudStateStore,
+    async_finish_apac_state_save,
     async_remove_cloud_state,
     cloud_state_store,
     credentials_for_auth_state,
@@ -323,7 +324,7 @@ async def _async_load_cloud_bootstrap(
 
     async def save_apac_session(result: ApacRestored) -> None:
         """Persist a token rotation before any later restoration read can fail."""
-        await state_store.async_save_auth_state(credentials, result.state)
+        await async_finish_apac_state_save(state_store.async_save_auth_state(credentials, result.state))
 
     try:
         authenticator = (

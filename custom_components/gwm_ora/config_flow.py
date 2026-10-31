@@ -27,6 +27,7 @@ from .cloud_runtime import (
     stage_cloud_bootstrap,
 )
 from .cloud_storage import (
+    async_finish_apac_state_save,
     async_remove_cloud_state,
     cloud_state_store,
     credentials_for_auth_state,
@@ -646,7 +647,7 @@ class GwmConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def _async_apac_session_updated(self, restored: ApacRestored) -> None:
         """Retain and persist refreshed APAC state before subsequent requests."""
         self._auth_state = restored.state
-        await self._async_persist_auth_state(restored.state)
+        await async_finish_apac_state_save(self._async_persist_auth_state(restored.state))
 
     async def _async_route_authentication(
         self,

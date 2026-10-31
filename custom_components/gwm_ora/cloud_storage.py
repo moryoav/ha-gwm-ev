@@ -7,6 +7,7 @@ import hashlib
 import logging
 import re
 import secrets
+from collections.abc import Coroutine
 from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -505,6 +506,22 @@ class GwmCloudStateStore:
         await self._store.async_save(_encode_record(record))
         self._record = record
         self._invalid_loaded_data = False
+
+
+async def async_finish_apac_state_save(save: Coroutine[Any, Any, None]) -> None:
+    """Finish an APAC state publication before propagating caller cancellation."""
+    task = asyncio.create_task(save)
+    cancelled = False
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            if task.cancelled():
+                raise
+            cancelled = True
+    task.result()
+    if cancelled:
+        raise asyncio.CancelledError
 
 
 def cloud_state_store(
