@@ -15,6 +15,7 @@ from .apac_material import ApacMaterial
 from .apac_read import ApacReadClient, ApacReadSession
 from .apac_state import ApacAuthState
 from .errors import GwmApiError, GwmAuthenticationError, is_overseas_refresh_rejected, is_overseas_session_expired
+from .models import CloudVehicle
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,6 +24,7 @@ class ApacRestored:
 
     state: ApacAuthState = field(repr=False)
     session: ApacReadSession = field(repr=False)
+    vehicles: tuple[CloudVehicle, ...] | None = field(default=None, repr=False)
 
 
 type ApacSessionUpdated = Callable[[ApacRestored], Awaitable[None]]
@@ -77,7 +79,7 @@ async def restore_apac_session(
     auth = ApacAuthClient(material=material, credentials=credentials, h5_context=h5_context, transport=transport)
     if not force_refresh:
         try:
-            await reader.acquire_vehicles()
+            vehicles = await reader.acquire_vehicles()
             profile = await auth.get_user_info(state.tokens.access_token)
         except (GwmAuthenticationError, GwmApiError) as error:
             if not is_overseas_session_expired(error):
@@ -85,7 +87,7 @@ async def restore_apac_session(
         else:
             if profile != (state.tokens.gw_id, state.tokens.bean_id):
                 raise GwmAuthenticationError(operation="get_user_info")
-            return ApacRestored(state, session)
+            return ApacRestored(state, session, vehicles)
     try:
         tokens = await auth.refresh(state.tokens)
     except GwmApiError as error:
@@ -100,9 +102,9 @@ async def restore_apac_session(
         profile = await auth.get_user_info(tokens.access_token)
         if profile != (state.tokens.gw_id, state.tokens.bean_id):
             raise GwmAuthenticationError(operation="get_user_info")
-        await ApacReadClient(material=material, session=session, transport=transport).acquire_vehicles()
+        vehicles = await ApacReadClient(material=material, session=session, transport=transport).acquire_vehicles()
     except GwmApiError as error:
         if is_overseas_session_expired(error):
             raise GwmAuthenticationError(operation=error.operation, api_code=error.api_code) from None
         raise
-    return restored
+    return replace(restored, vehicles=vehicles)

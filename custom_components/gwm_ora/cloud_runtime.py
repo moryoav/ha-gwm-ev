@@ -802,6 +802,7 @@ class GwmCloudClient:
                 await self._async_apac_write_once(
                     "update_climate_defaults",
                     lambda: self._client.update_climate_defaults(identifier, temperature=temperature, operation_time_minutes=operation_time_minutes),
+                    identifier=identifier,
                 )
             return
         if self.region == REGION_CHINA:
@@ -859,6 +860,7 @@ class GwmCloudClient:
                 return await self._async_apac_write_once(
                     "send_climate_command",
                     lambda: self._client.send_climate_command(command, security_password_hash=security_password_hash),
+                    identifier=command.identifier,
                 )
         if self.region == REGION_CHINA:
             return await self._async_with_session_renewal(
@@ -886,19 +888,22 @@ class GwmCloudClient:
             or identifier.value not in self._vehicles or type(self._client) is not ApacReadClient
         ):
             raise GwmRoutePolicyError(operation="send_apac_control")
-        vehicle = self._apac_control_vehicle(
-            identifier, operation="send_apac_control",
-            bean_tech_only=action.startswith(("seat_", "steering_wheel_")),
-        )
-        driver_right = None
-        if action.startswith(("seat_heating_", "seat_ventilation_")):
-            if vehicle.rudder not in {"1", "2"}:
-                raise GwmRoutePolicyError(operation="send_apac_control")
-            driver_right = vehicle.rudder == "2"
+        async def send_control() -> RemoteCommandAcceptance:
+            """Build the command with metadata from the completed account validation."""
+            vehicle = self._apac_control_vehicle(
+                identifier, operation="send_apac_control",
+                bean_tech_only=action.startswith(("seat_", "steering_wheel_")),
+            )
+            driver_right = None
+            if action.startswith(("seat_heating_", "seat_ventilation_")):
+                if vehicle.rudder not in {"1", "2"}:
+                    raise GwmRoutePolicyError(operation="send_apac_control")
+                driver_right = vehicle.rudder == "2"
+            return await self._client.send_apac_control(identifier, action, security_password_hash=security_password_hash, driver_right=driver_right)
+
         async with self._session_renewal_lock:
             return await self._async_apac_write_once(
-                "send_apac_control",
-                lambda: self._client.send_apac_control(identifier, action, security_password_hash=security_password_hash, driver_right=driver_right),
+                "send_apac_control", send_control, identifier=identifier,
             )
 
     def _apac_control_vehicle(
@@ -911,7 +916,9 @@ class GwmCloudClient:
             raise GwmRoutePolicyError(operation=operation)
         return vehicle
 
-    async def _async_apac_write_once[T](self, operation: str, action: Callable[[], Awaitable[T]]) -> T:
+    async def _async_apac_write_once[T](
+        self, operation: str, action: Callable[[], Awaitable[T]], *, identifier: VehicleIdentifier,
+    ) -> T:
         """Validate account state and retire rejected sessions, without replaying writes.
 
         The caller holds the APAC session lock, which also lets shutdown drain the operation.
@@ -924,6 +931,7 @@ class GwmCloudClient:
                 await self._async_validate_apac_session(force_refresh=False)
             elif self._apac_validation_pending:
                 raise GwmAuthenticationError(operation=operation)
+            self._apac_control_vehicle(identifier, operation=operation)
             return await action()
         except GwmApiError as error:
             if not is_overseas_session_expired(error):
@@ -1244,6 +1252,8 @@ class GwmCloudClient:
             force_refresh=force_refresh,
         )
         await retain_session_update(restored)
+        if restored.vehicles is not None:
+            self._vehicles = {vehicle.identifier.value: vehicle for vehicle in restored.vehicles}
         self._apac_validation_pending = False
 
     async def _async_renew_overseas_session(

@@ -1252,3 +1252,56 @@ async def test_apac_seat_capability_follows_discovery_through_entities(monkeypat
         assert steering.available
     finally:
         await cloud.aclose()
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["removed", "unsupported_platform", "driver_side"])
+async def test_apac_write_uses_freshly_validated_vehicle_metadata(monkeypatch, change):
+    """Do not send with revoked membership, an unsupported platform or stale steering."""
+    import json
+
+    from custom_components.gwm_ora.gwm_client._protocol import _TransportResponse
+    from custom_components.gwm_ora.gwm_client.errors import GwmRoutePolicyError
+    from custom_components.gwm_ora.gwm_client.models import VehicleIdentifier
+
+    class Transport(_RuntimeTransport):
+        """Change account discovery between the last poll and the write preflight."""
+        def __init__(self):
+            """Keep initial discovery valid until the test changes server metadata."""
+            super().__init__()
+            self.changed = False
+            self.writes = []
+
+        async def execute(self, request, **kwargs):
+            """Return the current server membership and capture synthetic writes."""
+            if request.operation == "acquire_vehicles":
+                data = [{"vin": "SYNTHETIC-VEHICLE", "belongPlatform": "beantech", "rudder": "1"}]
+                if self.changed:
+                    if change == "removed":
+                        data = []
+                    elif change == "unsupported_platform":
+                        data[0]["belongPlatform"] = "unknown"
+                    else:
+                        data[0]["rudder"] = "2"
+                return _TransportResponse(200, {}, json.dumps({"code": "000000", "data": data}).encode())
+            if request.operation == "send_apac_control":
+                self.writes.append(json.loads(request.body))
+                return _TransportResponse(200, {}, b'{"code":"000000","data":{}}')
+            return await super().execute(request, **kwargs)
+
+    transport = Transport()
+    cloud, _, _ = _runtime_with_synthetic_transport(monkeypatch, transport, apac_remote_enabled=True)
+    try:
+        await cloud.async_get_vehicle_data()
+        transport.changed = True
+        identifier = VehicleIdentifier("SYNTHETIC-VEHICLE")
+        if change == "driver_side":
+            await cloud.async_send_apac_control(identifier, "seat_heating_start", security_password_hash="a" * 32)
+            seat = transport.writes[0]["instructions"]["0x0A"]["seat"]
+            assert seat["rightFront"] == "3"
+            assert "leftFront" not in seat
+        else:
+            with pytest.raises(GwmRoutePolicyError):
+                await cloud.async_send_apac_control(identifier, "lock", security_password_hash="a" * 32)
+            assert transport.writes == []
+    finally:
+        await cloud.aclose()
