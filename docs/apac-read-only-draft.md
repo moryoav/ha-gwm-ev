@@ -6,6 +6,8 @@ In the integration settings, **Vehicle controls** enables supported climate, loc
 
 ## Private local material
 
+This directory is a temporary development requirement. Before release, APAC installation and authentication must use the normal integration setup, matching the other regions, without asking users to prepare these files.
+
 APAC setup loads private material from `.storage/gwm_apac_material/` inside Home Assistant's configuration directory, using `hass.config.path`. For example, if the configuration directory is `/config`, the full path is `/config/.storage/gwm_apac_material/`. Use the actual configuration directory for your installation. It must contain:
 
 - `bootstrap.cer`: the separately supplied bootstrap certificate.
@@ -35,4 +37,4 @@ Live testing of token expiry and refresh is still needed before release.
 
 Latest contributor-reported testing status on the Pakistan Haval H6 PHEV: **No issues found so far.**
 
-The consolidated settings in the next build still need live verification. Thailand, Malaysia and Indonesia have not been validated on a vehicle.
+The consolidated settings and review fixes still need live verification on the feature branch.
