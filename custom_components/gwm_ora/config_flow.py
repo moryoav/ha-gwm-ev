@@ -155,9 +155,17 @@ def _region_schema(default: str = REGION_EU) -> vol.Schema:
     )
 
 
-def _apac_read_only_options(options: Mapping[str, Any]) -> dict[str, Any]:
-    """Remove write consent and PINs when an entry becomes read-only APAC."""
-    blocked = {CONF_ENABLE_REMOTE_COMMANDS, CONF_ENABLE_CHARGING_CONTROL, CONF_ENABLE_APAC_CLIMATE, CONF_ENABLE_APAC_REMOTE, CONF_ENABLE_APAC_CHARGING, CONF_SECURITY_PIN}
+def _apac_options_after_authentication(
+    options: Mapping[str, Any], *, preserve_consent: bool,
+) -> dict[str, Any]:
+    """Retain explicit APAC consent only when reconnecting the same account."""
+    blocked = {CONF_ENABLE_REMOTE_COMMANDS, CONF_ENABLE_CHARGING_CONTROL, CONF_ENABLE_APAC_CLIMATE}
+    pin = options.get(CONF_SECURITY_PIN)
+    if (
+        not preserve_consent or not isinstance(pin, str) or not pin.strip()
+        or not any(options.get(key) is True for key in (CONF_ENABLE_APAC_REMOTE, CONF_ENABLE_APAC_CHARGING))
+    ):
+        blocked.update({CONF_ENABLE_APAC_REMOTE, CONF_ENABLE_APAC_CHARGING, CONF_SECURITY_PIN})
     return {key: value for key, value in options.items() if key not in blocked}
 
 
@@ -791,7 +799,7 @@ class GwmConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 entry,
                 data={**entry.data, **data},
                 title=title,
-                **({"options": _apac_read_only_options(entry.options)} if credentials.region == REGION_APAC else {}),
+                **({"options": _apac_options_after_authentication(entry.options, preserve_consent=True)} if credentials.region == REGION_APAC else {}),
             )
 
         if self._cloud_mode == "reconfigure":
@@ -813,7 +821,10 @@ class GwmConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 unique_id=unique_id,
                 title=title,
                 data=data,
-                **({"options": _apac_read_only_options(entry.options)} if credentials.region == REGION_APAC else {}),
+                **({"options": _apac_options_after_authentication(
+                    entry.options,
+                    preserve_consent=entry.data.get(CONF_REGION) == REGION_APAC and previous_unique_id == unique_id,
+                )} if credentials.region == REGION_APAC else {}),
             )
             if previous_unique_id != unique_id:
                 await async_remove_cloud_state(self.hass, previous_unique_id)
