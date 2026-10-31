@@ -1,5 +1,6 @@
 """APAC account-bound configuration handoff tests."""
 
+import asyncio
 import ssl
 from dataclasses import replace
 
@@ -235,3 +236,79 @@ async def test_runtime_retains_a_rotation_when_follow_up_validation_fails(monkey
     assert saved == [replacement]
     assert cloud.reusable_bootstrap.state == replacement
     assert client._session.access_token == "renewed-access"
+
+
+@pytest.mark.asyncio
+async def test_runtime_finishes_rotated_token_save_before_propagating_cancellation(tmp_path, monkeypatch):
+    """Persist a rotated pair across restart even when shutdown cancels polling twice."""
+    from homeassistant.core import HomeAssistant
+
+    from custom_components.gwm_ora.cloud_auth import cloud_entry_data, cloud_unique_id
+    from custom_components.gwm_ora.cloud_storage import cloud_state_store
+
+    credentials = GwmCloudCredentials(REGION_APAC, "PK", "person@example.invalid", "synthetic-password", "a" * 32)
+    state = replace(
+        ApacAuthState.for_credentials(credentials.client_credentials()),
+        tokens=ApacTokens("synthetic-access", "synthetic-refresh", "synthetic-gw", "synthetic-bean"),
+        issued_identity=EuIssuedIdentity("c3ludGhldGlj", "c3ludGhldGlj"),
+    )
+    material = ApacMaterial(
+        EuBootstrapMaterial(b"fake-cert", b"c3ludGhldGljLWtleQ==", b"fake-ca"), "fake-key", "fake-secret"
+    )
+    session = ApacReadSession("a" * 32, "synthetic-access", ssl.create_default_context(), "PK")
+    monkeypatch.setattr(runtime, "_is_validated_context", lambda *args: True)
+    bootstrap = runtime.GwmCloudBootstrap.from_authentication(credentials, ApacAuthenticated(state, session, material))
+    unique_id = cloud_unique_id(credentials)
+    store = cloud_state_store(HomeAssistant(str(tmp_path)), unique_id)
+    await store.async_save_auth_state(credentials, state)
+    replacement = replace(
+        state, tokens=ApacTokens("renewed-access", "renewed-refresh", "synthetic-gw", "synthetic-bean")
+    )
+    renewed_session = replace(session, access_token="renewed-access")
+    save_started = asyncio.Event()
+    release_save = asyncio.Event()
+    save_cancelled = asyncio.Event()
+
+    class DelayedStore:
+        async def async_save_auth_state(self, supplied, updated):
+            """Pause the real private save at the cancellation boundary."""
+            save_started.set()
+            try:
+                await release_save.wait()
+                await store.async_save_auth_state(supplied, updated)
+            except asyncio.CancelledError:
+                save_cancelled.set()
+                raise
+
+    async def rotate_session(**kwargs):
+        """Publish a replacement pair before any subsequent profile validation."""
+        await kwargs["on_session_updated"](ApacRestored(replacement, renewed_session))
+        pytest.fail("Cancellation must stop the read after its private save completes")
+
+    async def expired_action():
+        """Require runtime token recovery without sending a vehicle request."""
+        raise GwmAuthenticationError(operation="get_last_status")
+
+    monkeypatch.setattr(runtime, "restore_apac_session", rotate_session)
+    client = ApacReadClient(material=material, session=session, transport=None)
+    cloud = runtime.GwmCloudClient(
+        REGION_APAC, client, credentials=credentials, bootstrap=bootstrap, state_store=DelayedStore()
+    )
+    polling = asyncio.create_task(cloud._async_with_session_renewal(expired_action))
+    try:
+        await asyncio.wait_for(save_started.wait(), timeout=5)
+        for _ in range(2):
+            polling.cancel()
+            await asyncio.sleep(0)
+            assert not save_cancelled.is_set()
+            assert not polling.done()
+        release_save.set()
+        with pytest.raises(asyncio.CancelledError):
+            await polling
+    finally:
+        release_save.set()
+        await asyncio.gather(polling, return_exceptions=True)
+    restarted = cloud_state_store(HomeAssistant(str(tmp_path)), unique_id)
+    assert await restarted.async_load_auth_state(cloud_entry_data(credentials)) == replacement
+    assert cloud.reusable_bootstrap.state == replacement
+    assert cloud._pending_auth_state is None

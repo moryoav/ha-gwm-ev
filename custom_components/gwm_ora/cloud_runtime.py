@@ -1160,6 +1160,7 @@ class GwmCloudClient:
         await self._async_flush_pending_auth_state()
 
     async def _async_flush_pending_auth_state(self) -> None:
+        """Save pending tokens, finishing APAC persistence before cancellation."""
         state = self._pending_auth_state
         if state is None:
             return
@@ -1169,14 +1170,28 @@ class GwmCloudClient:
         if self._state_store is None:
             self._pending_auth_state = None
             return
+        cancelled = False
         try:
-            await self._state_store.async_save_auth_state(credentials, state)
+            if self.region == REGION_APAC:
+                save_task = asyncio.create_task(self._state_store.async_save_auth_state(credentials, state))
+                while not save_task.done():
+                    try:
+                        await asyncio.shield(save_task)
+                    except asyncio.CancelledError:
+                        if save_task.cancelled():
+                            raise
+                        cancelled = True
+                save_task.result()
+            else:
+                await self._state_store.async_save_auth_state(credentials, state)
         except asyncio.CancelledError:
             raise
         except Exception:
             raise GwmNetworkError(operation="refresh_token") from None
         if self._pending_auth_state is state:
             self._pending_auth_state = None
+        if cancelled:
+            raise asyncio.CancelledError
 
     def _current_overseas_auth_state(
         self,
