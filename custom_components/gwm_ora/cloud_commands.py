@@ -41,6 +41,7 @@ from .gwm_client import (
     select_remote_command_result,
     valid_temperature,
 )
+from .gwm_client.apac_controls import control_remote_type
 from .gwm_client.apac_dispatch import ApacCommandDispatch, track_apac_dispatch
 from .gwm_client.commands import (
     BEANTECH_BATTERY_HEAT_ACTIONS,
@@ -59,6 +60,23 @@ _BEANTECH_RESULT_ACTIONS: dict[str, ChinaRemoteCommandAction] = {
     _CHARGE_SOC_COMMAND_NAME: "charge_soc",
     _BATTERY_APPOINTMENT_COMMAND_NAME: "battery_appointment",
 }
+
+_APAC_CONTROL_NAMES = {
+    "tailgate_open": "Tailgate open", "tailgate_close": "Tailgate close",
+    "charge_now": "Start charging", "charge_off": "Stop charging",
+    "steering_wheel_heating": "Steering heating on", "steering_wheel_heatless": "Steering heating off",
+    "horn": "Horn", "flash_lights": "Flash lights", "horn_and_lights": "Horn and lights",
+    "remote_start": "Remote start", "remote_stop": "Remote stop",
+    "sunroof_close": "Sunroof close", "defrost_back_start": "Rear defrost on", "defrost_back_stop": "Rear defrost off",
+    "seat_heating_start": "Driver seat heating on", "seat_heating_stop": "Driver seat heating off",
+    "seat_heating_start_passenger": "Passenger seat heating on", "seat_heating_stop_passenger": "Passenger seat heating off",
+    "seat_ventilation_start": "Driver seat ventilation on", "seat_ventilation_stop": "Driver seat ventilation off",
+    "seat_ventilation_start_passenger": "Passenger seat ventilation on", "seat_ventilation_stop_passenger": "Passenger seat ventilation off",
+}
+_APAC_CONTROL_NAMES.update({
+    f"seat_{kind}{passenger}_level_{level}": f"{'Passenger' if passenger else 'Driver'} seat {kind} level {level}"
+    for kind in ("heating", "ventilation") for passenger in ("", "_passenger") for level in (1, 2, 3)
+})
 
 _DEFAULT_RESULT_TIMEOUT = timedelta(seconds=90)
 _RUSSIA_RESULT_TIMEOUT = timedelta(seconds=300)
@@ -342,22 +360,7 @@ class GwmCommandApi:
 
     async def async_apac_control(self, vin: str, action: str) -> dict[str, object]:
         """Validate, send and journal an explicitly approved APAC operation."""
-        names = {
-            "tailgate_open": "Tailgate open", "tailgate_close": "Tailgate close",
-            "charge_now": "Start charging", "charge_off": "Stop charging",
-            "steering_wheel_heating": "Steering heating on", "steering_wheel_heatless": "Steering heating off",
-            "horn": "Horn", "flash_lights": "Flash lights", "horn_and_lights": "Horn and lights",
-            "remote_start": "Remote start", "remote_stop": "Remote stop",
-            "sunroof_close": "Sunroof close", "defrost_back_start": "Rear defrost on", "defrost_back_stop": "Rear defrost off",
-            "seat_heating_start": "Driver seat heating on", "seat_heating_stop": "Driver seat heating off",
-            "seat_heating_start_passenger": "Passenger seat heating on", "seat_heating_stop_passenger": "Passenger seat heating off",
-            "seat_ventilation_start": "Driver seat ventilation on", "seat_ventilation_stop": "Driver seat ventilation off",
-            "seat_ventilation_start_passenger": "Passenger seat ventilation on", "seat_ventilation_stop_passenger": "Passenger seat ventilation off",
-        }
-        names.update({
-            f"seat_{kind}{passenger}_level_{level}": f"{'Passenger' if passenger else 'Driver'} seat {kind} level {level}"
-            for kind in ("heating", "ventilation") for passenger in ("", "_passenger") for level in (1, 2, 3)
-        })
+        names = _APAC_CONTROL_NAMES
         if self._cloud.region != REGION_APAC or not isinstance(action, str) or action not in names or not self._security_pin:
             raise GwmCommandForbidden("GWM vehicle control is unavailable")
         allowed = self._apac_charging_enabled if action in {"charge_now", "charge_off"} else self._apac_remote_enabled
@@ -566,7 +569,7 @@ class GwmCommandApi:
             results,
             command_id=entry.cloud_command_id,
             region=region,
-            expected_remote_type=_expected_remote_type(entry.command_name),
+            expected_remote_type=_expected_remote_type(entry.command_name, region=self._cloud.region),
         )
         now = self._now()
         if result is None or result.state == "pending":
@@ -1134,7 +1137,12 @@ def _vehicle_identifier(vin: object, *, command_name: str) -> VehicleIdentifier:
         ) from None
 
 
-def _expected_remote_type(command_name: str) -> str:
+def _expected_remote_type(command_name: str, *, region: str | None = None) -> str:
+    """Resolve APAC command families separately from existing regional journals."""
+    if region == REGION_APAC:
+        action = next((action for action, name in _APAC_CONTROL_NAMES.items() if name == command_name), None)
+        if action is not None:
+            return control_remote_type(action)
     if command_name in {_SMART_CHARGE_COMMAND_NAME, _CHARGE_WINDOW_COMMAND_NAME}:
         return "charge"
     if command_name in {_CHARGE_SOC_COMMAND_NAME, _BATTERY_APPOINTMENT_COMMAND_NAME}:

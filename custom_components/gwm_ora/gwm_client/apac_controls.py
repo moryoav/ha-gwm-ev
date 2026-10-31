@@ -37,6 +37,13 @@ _SEAT_ACTIONS = frozenset({
 } | {f"seat_{kind}{passenger}_level_{level}" for kind in ("heating", "ventilation") for passenger in ("", "_passenger") for level in (1, 2, 3)})
 
 
+def control_remote_type(action: str) -> str:
+    """Return the instruction family used by an allowlisted APAC action."""
+    if not isinstance(action, str) or action not in _ACTIONS and action not in _SEAT_ACTIONS:
+        raise ValueError("apac_control_invalid")
+    return "0x0A" if action in _SEAT_ACTIONS else _ACTIONS[action][0]
+
+
 def control_payload(
     identifier: VehicleIdentifier, action: str, *, security_password_hash: str, sequence_number: str,
     driver_right: bool | None = None,

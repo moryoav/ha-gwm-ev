@@ -1367,3 +1367,55 @@ async def test_beantech_charging_api_rejects_ambiguous_on_off_values(tmp_path, m
     api, _, _ = await _china_api(tmp_path, _Cloud(), _Clock(), charging_enabled=True)
     with pytest.raises(GwmCommandError):
         await getattr(api, method)(_VIN, enable=enable)
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("action", "remote_type"), [
+    ("horn", "0x06"), ("horn_and_lights", "0x06"), ("flash_lights", "0x06"),
+    ("tailgate_open", "0x09"), ("tailgate_close", "0x09"),
+    ("charge_now", "0x01"), ("charge_off", "0x01"),
+    ("steering_wheel_heating", "0x19"), ("steering_wheel_heatless", "0x19"),
+    ("remote_start", "0x04"), ("remote_stop", "0x04"),
+    ("sunroof_close", "0x08"), ("defrost_back_start", "0x0B"), ("defrost_back_stop", "0x0B"),
+] + [
+    (f"seat_{kind}_{operation}{passenger}", "0x0A")
+    for kind in ("heating", "ventilation") for operation in ("start", "stop")
+    for passenger in ("", "_passenger")
+] + [
+    (f"seat_{kind}{passenger}_level_{level}", "0x0A")
+    for kind in ("heating", "ventilation") for passenger in ("", "_passenger") for level in (1, 2, 3)
+])
+async def test_apac_control_results_survive_restart(tmp_path, action, remote_type):
+    """Recover every APAC control family from disk and finish without resending."""
+    from custom_components.gwm_ora.gwm_client.apac_auth_client import ApacTokens
+    from custom_components.gwm_ora.gwm_client.apac_state import ApacAuthState
+
+    credentials = GwmCloudCredentials("ap", "PK", "synthetic@example.invalid", "synthetic-password", _DEVICE_ID)
+    state = replace(
+        ApacAuthState.for_credentials(credentials.client_credentials()),
+        tokens=ApacTokens("synthetic-access", "synthetic-refresh", "synthetic-gw", "synthetic-bean"),
+        issued_identity=EuIssuedIdentity("c3ludGhldGlj", "c3ludGhldGlj"),
+    )
+    store = cloud_state_store(HomeAssistant(str(tmp_path)), cloud_unique_id(credentials))
+    await store.async_save_auth_state(credentials, state)
+    cloud = _Cloud()
+    cloud.region = "ap"
+    provider_id = "b" * 32 + "1234"
+    cloud.async_send_apac_control = AsyncMock(return_value=RemoteCommandAcceptance(provider_id))
+    cloud.async_get_remote_command_results = AsyncMock(
+        return_value=(RemoteCommandResultItem(provider_id, remote_type, "0", "Success"),)
+    )
+
+    def make_api(store):
+        """Create an opted-in APAC adapter with an independent in-memory journal."""
+        return GwmCommandApi(cloud, store, credentials, enabled=True,
+                             apac_remote_enabled=True, apac_charging_enabled=True,
+                             security_pin="1234", clock=_Clock())
+
+    accepted = await make_api(store).async_apac_control(_VIN, action)
+    restarted_store = cloud_state_store(HomeAssistant(str(tmp_path)), cloud_unique_id(credentials))
+    restarted = make_api(restarted_store)
+    await restarted.async_restore(cloud_entry_data(credentials))
+    result = await restarted.async_get_command(accepted["id"])
+    assert result["state"] == "completed"
+    assert (await restarted_store.async_get_command_journal(cloud_entry_data(credentials)))[0].state == "completed"
+    cloud.async_send_apac_control.assert_awaited_once()
