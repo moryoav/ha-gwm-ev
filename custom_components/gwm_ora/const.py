@@ -16,6 +16,7 @@ CONF_AUTHENTICATION_METHOD = "authentication_method"
 CONF_VERIFICATION_CODE = "verification_code"
 CONF_ALLOW_SESSION_RECLAIM = "allow_session_reclaim"
 CONF_ENABLE_REMOTE_COMMANDS = "enable_remote_commands"
+# Retired test-build option, retained only to discard stale consent.
 CONF_ENABLE_APAC_CLIMATE = "enable_apac_climate"
 CONF_ENABLE_APAC_REMOTE = "enable_apac_remote"
 CONF_ENABLE_APAC_CHARGING = "enable_apac_charging"

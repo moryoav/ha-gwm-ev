@@ -147,7 +147,7 @@ class GwmCommandApi:
 
         if self._cloud.region == REGION_APAC:
             if not getattr(self, "_apac_climate_enabled", False) or not self._enabled or not self._security_pin:
-                raise GwmCommandForbidden("GWM APAC climate control requires opt-in and a security PIN")
+                raise GwmCommandForbidden("GWM climate control requires opt-in and a security PIN")
         else:
             self._ensure_available()
         if not isinstance(vin, str):
@@ -358,10 +358,10 @@ class GwmCommandApi:
             for kind in ("heating", "ventilation") for passenger in ("", "_passenger") for level in (1, 2, 3)
         })
         if self._cloud.region != REGION_APAC or not isinstance(action, str) or action not in names or not self._security_pin:
-            raise GwmCommandForbidden("GWM APAC control is unavailable")
+            raise GwmCommandForbidden("GWM vehicle control is unavailable")
         allowed = self._apac_charging_enabled if action in {"charge_now", "charge_off"} else self._apac_remote_enabled
         if not allowed:
-            raise GwmCommandForbidden("GWM APAC control requires explicit opt-in")
+            raise GwmCommandForbidden("GWM vehicle control requires explicit opt-in")
         identifier = _vehicle_identifier(vin, command_name=names[action])
         return await self._async_submit_apac(
             identifier, names[action],
@@ -610,13 +610,13 @@ class GwmCommandApi:
                 cancelled = True
             except Exception as error:
                 if cancelled:
-                    raise GwmCommandError("APAC command outcome is uncertain; check the vehicle before retrying") from error
+                    raise GwmCommandError("Command outcome is uncertain; check the vehicle before retrying") from error
                 raise
         try:
             result = task.result()
         except Exception as error:
             if cancelled:
-                raise GwmCommandError("APAC command outcome is uncertain; check the vehicle before retrying") from error
+                raise GwmCommandError("Command outcome is uncertain; check the vehicle before retrying") from error
             raise
         if cancelled:
             raise asyncio.CancelledError
@@ -748,7 +748,7 @@ class GwmCommandApi:
         """Require remote-command consent and a writable regional backend."""
         if self._cloud.region == REGION_APAC:
             if not getattr(self, "_apac_remote_enabled", False) or not self._security_pin:
-                raise GwmCommandForbidden("GWM APAC vehicle controls require opt-in and a security PIN")
+                raise GwmCommandForbidden("GWM vehicle controls require opt-in and a security PIN")
             return
         if not self._enabled:
             raise GwmCommandForbidden("GWM cloud remote commands are disabled")
@@ -907,7 +907,7 @@ class GwmCommandApi:
     def _ensure_charging_available(self) -> None:
         """Require charging consent and a writable regional backend."""
         if self._cloud.region == REGION_APAC:
-            raise GwmCommandForbidden("GWM APAC is read-only")
+            raise GwmCommandForbidden("Charging schedules are not supported for this region")
         if not self._charging_enabled:
             raise GwmCommandForbidden("GWM cloud charging control is disabled")
 

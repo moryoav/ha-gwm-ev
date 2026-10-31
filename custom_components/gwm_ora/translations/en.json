@@ -100,9 +100,8 @@
         "data": {
           "poll_interval_seconds": "Polling interval",
           "enable_remote_commands": "Enable remote commands",
-          "enable_apac_climate": "Enable APAC climate control",
-          "enable_apac_remote": "Enable APAC vehicle controls",
-          "enable_apac_charging": "Enable APAC direct charging controls",
+          "enable_apac_remote": "Vehicle controls",
+          "enable_apac_charging": "Charging control",
           "enable_charging_control": "Enable charging control",
           "security_pin": "Vehicle security PIN",
           "log_level": "Log level"
@@ -110,9 +109,8 @@
         "data_description": {
           "poll_interval_seconds": "Seconds between account-level cloud polls (30-3600).",
           "enable_remote_commands": "Explicit opt-in for supported remote command controls.",
-          "enable_apac_climate": "Explicitly enable experimental APAC climate commands.",
-          "enable_apac_remote": "Explicitly enable experimental APAC locks, windows, comfort and vehicle commands.",
-          "enable_apac_charging": "Explicitly enable experimental APAC start and stop charging commands.",
+          "enable_apac_remote": "Allow supported climate, locks, windows, seats and other vehicle controls. Requires a vehicle security PIN.",
+          "enable_apac_charging": "Allow starting and stopping charging. Charging schedules are not supported. Requires a vehicle security PIN.",
           "enable_charging_control": "Independent explicit opt-in for charging schedules.",
           "security_pin": "Required for remote commands outside mainland China. The stored value is shown in a masked password field and remains redacted from diagnostics.",
           "log_level": "Integration-specific diagnostic verbosity."

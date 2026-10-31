@@ -39,7 +39,6 @@ from .const import (
     ATTR_VIN,
     CONF_CONNECTION_TYPE,
     CONF_ENABLE_APAC_CHARGING,
-    CONF_ENABLE_APAC_CLIMATE,
     CONF_ENABLE_APAC_REMOTE,
     CONF_ENABLE_CHARGING_CONTROL,
     CONF_ENABLE_REMOTE_COMMANDS,
@@ -220,7 +219,7 @@ async def _async_setup_cloud_entry(
 
     try:
         command_enabled = (
-            entry.options.get(CONF_ENABLE_APAC_CLIMATE) is True
+            entry.options.get(CONF_ENABLE_APAC_REMOTE) is True
             if entry.data.get(CONF_REGION) == REGION_APAC
             else entry.options.get(CONF_ENABLE_REMOTE_COMMANDS) is True
         )

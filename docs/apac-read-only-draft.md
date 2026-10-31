@@ -1,8 +1,8 @@
-# APAC read-only development setup
+# APAC development setup
 
-This development branch adds a shared APAC read-only Home Assistant setup for Pakistan (`PK`), Thailand (`TH`), Malaysia (`MY`) and Indonesia (`ID`), the countries listed in My GWM (`com.gwm.tha`). All four countries use the same regional implementation.
+This development branch adds a shared APAC Home Assistant setup with read-only access by default for Pakistan (`PK`), Thailand (`TH`), Malaysia (`MY`) and Indonesia (`ID`), the countries listed in My GWM (`com.gwm.tha`). All four countries use the same regional implementation.
 
-APAC climate, vehicle controls, and direct start/stop charging each require their own explicit opt-in and a vehicle security PIN. These implementations use the earlier prototype's APAC command formats and still require live testing on this branch. Scheduled charging remains unavailable. The seat-stop request in the earlier implementation contains zeroes for both front and rear seats and may stop more than one seat; test with this behavior in mind. Other regions retain their existing policies. Authentication and vehicle requests use distinct, strictly validated TLS contexts.
+In the integration settings, **Vehicle controls** enables supported climate, locks, windows, seats and other vehicle commands. **Charging control** separately enables direct start/stop charging. Both toggles default to off and require a vehicle security PIN. The former climate-only toggle is no longer used; users of that test package must explicitly enable Vehicle controls. These implementations use the earlier prototype's APAC command formats and require validation of each command on the submitted branch. Scheduled charging remains unavailable. The seat-stop request in the earlier implementation contains zeroes for both front and rear seats and may stop more than one seat; test with this behavior in mind. Other regions retain their existing policies. Authentication and vehicle requests use distinct, strictly validated TLS contexts.
 
 ## Private local material
 
@@ -30,3 +30,9 @@ Synthetic tests cover setup continuation, account/device binding, private state 
 The contributor's live test with a Pakistan account and a 2026 Haval H6 PHEV covered setup, vehicle discovery, readings, subsequent updates, and reconnection after a Home Assistant restart.
 
 Live testing of token expiry and refresh is still needed before release.
+
+## Remote-control testing limits
+
+The contributor reports that controls operated on the Pakistan Haval H6 PHEV with test package `a5db85f`, but command delays and result timeouts remain unresolved. Driver seat ventilation at level 1 switched on and off physically, yet a further timeout activity appeared after it was off. Vehicle connectivity is a hypothesis, not a confirmed cause. A timeout does not prove that a command failed or that the vehicle did nothing. Do not resend an uncertain command without checking the vehicle.
+
+The consolidated settings in the next build still need live verification. Thailand, Malaysia and Indonesia have not been validated on a vehicle.

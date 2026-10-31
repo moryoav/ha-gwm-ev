@@ -2,7 +2,7 @@
 
 This custom integration connects Home Assistant directly to supported GWM cloud regions. It does not require the retired Docker add-on.
 
-The setup flow supports Europe, Australia and New Zealand, Russia, and mainland China. Mainland-China accounts use their registered phone number and SMS verification. The APAC development branch also offers setup for Pakistan, Thailand, Malaysia and Indonesia. It requires separately supplied private material and defaults to read-only access; experimental climate, vehicle and direct charging commands require separate opt-ins.
+The setup flow supports Europe, Australia and New Zealand, Russia, and mainland China. Mainland-China accounts use their registered phone number and SMS verification. The APAC development branch also offers setup for Pakistan, Thailand, Malaysia and Indonesia. It requires separately supplied private material and defaults to read-only access; experimental climate and vehicle commands use the Vehicle controls opt-in, while direct start/stop charging uses a separate Charging control opt-in.
 
 ## Setup
 

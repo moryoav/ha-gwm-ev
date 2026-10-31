@@ -970,3 +970,53 @@ async def test_failed_startup_retirement_publication_retries_before_requesting_r
         assert await restarted.async_load_auth_state(cloud_entry_data(credentials)) is None
     finally:
         await cloud.aclose()
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("options", "vehicle", "charging"), [
+    ({}, False, False),
+    ({"enable_apac_climate": True}, False, False),
+    ({"enable_apac_remote": True}, True, False),
+    ({"enable_apac_charging": True}, False, True),
+    ({"enable_apac_remote": True, "enable_apac_charging": True}, True, True),
+])
+async def test_setup_unifies_vehicle_consent_and_keeps_charging_separate(
+    tmp_path, monkeypatch, options, vehicle, charging
+):
+    """Route one vehicle opt-in to climate and remote gates without widening old consent."""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from homeassistant.core import HomeAssistant
+
+    import custom_components.gwm_ora as integration
+    from custom_components.gwm_ora.cloud_auth import cloud_entry_data, cloud_unique_id
+
+    cloud, credentials, _ = _runtime_with_synthetic_transport(monkeypatch, _RuntimeTransport())
+    entry = SimpleNamespace(
+        unique_id=cloud_unique_id(credentials), data=cloud_entry_data(credentials),
+        options={**options, "security_pin": "synthetic-pin"},
+    )
+    hass = HomeAssistant(str(tmp_path))
+    hass.config_entries = SimpleNamespace(async_forward_entry_setups=AsyncMock())
+    monkeypatch.setattr(integration, "_async_load_cloud_bootstrap", AsyncMock(return_value=cloud.reusable_bootstrap))
+    supplied = {}
+
+    def build(*args, **kwargs):
+        """Capture the runtime consent supplied by actual Home Assistant setup."""
+        supplied.update(kwargs)
+        return cloud
+
+    monkeypatch.setattr(integration.GwmCloudClient, "from_entry_data", build)
+    coordinator = SimpleNamespace(async_config_entry_first_refresh=AsyncMock())
+    monkeypatch.setattr(integration, "GwmDataUpdateCoordinator", lambda *args, **kwargs: coordinator)
+    monkeypatch.setattr(integration, "_async_register_services", lambda hass: None)
+    try:
+        assert await integration._async_setup_cloud_entry(hass, entry)
+        assert supplied["apac_climate_enabled"] is vehicle
+        assert supplied["apac_remote_enabled"] is vehicle
+        assert supplied["apac_charging_enabled"] is charging
+        assert entry.runtime_data.api._apac_climate_enabled is vehicle
+        assert entry.runtime_data.api._apac_remote_enabled is vehicle
+        assert entry.runtime_data.api._apac_charging_enabled is charging
+    finally:
+        await cloud.aclose()
