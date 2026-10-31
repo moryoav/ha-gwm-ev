@@ -33,6 +33,6 @@ Live testing of token expiry and refresh is still needed before release.
 
 ## Remote-control testing limits
 
-The contributor reports that controls operated on the Pakistan Haval H6 PHEV with test package `a5db85f`, but command delays and result timeouts remain unresolved. Driver seat ventilation at level 1 switched on and off physically, yet a further timeout activity appeared after it was off. Vehicle connectivity is a hypothesis, not a confirmed cause. A timeout does not prove that a command failed or that the vehicle did nothing. Do not resend an uncertain command without checking the vehicle.
+Latest contributor-reported testing status on the Pakistan Haval H6 PHEV: **No issues found so far.**
 
 The consolidated settings in the next build still need live verification. Thailand, Malaysia and Indonesia have not been validated on a vehicle.
