@@ -24,7 +24,7 @@ from custom_components.gwm_ora.gwm_client.apac_identity import _register_validat
 from custom_components.gwm_ora.gwm_client.apac_material import ApacMaterial
 from custom_components.gwm_ora.gwm_client.apac_read import ApacReadClient, ApacReadSession
 from custom_components.gwm_ora.gwm_client.commands import ClimateCommand, RemoteCommandResultItem
-from custom_components.gwm_ora.gwm_client.errors import GwmDeadlineExceededError, GwmRoutePolicyError
+from custom_components.gwm_ora.gwm_client.errors import GwmDeadlineExceededError, GwmRoutePolicyError, GwmSchemaError
 from custom_components.gwm_ora.gwm_client.eu_identity import EuBootstrapMaterial
 from custom_components.gwm_ora.gwm_client.models import CloudVehicle, VehicleIdentifier
 from custom_components.gwm_ora.gwm_client.regions import TlsMode
@@ -109,13 +109,24 @@ async def test_apac_result_uses_legacy_fallback_when_id_does_not_match(monkeypat
 
 
 @pytest.mark.asyncio
-async def test_climate_client_sends_one_request_and_reads_its_result():
-    """Use synthetic transport to verify command path, headers, body and response."""
+@pytest.mark.parametrize(("response_data", "expected"), [
+    ([], ()),
+    ([{"hwCommandId": "synthetic-provider", "remoteType": "0x04", "resultCode": "0", "resultMsg": "Success"}],
+     (RemoteCommandResultItem("synthetic-provider", "0x04", "0", "Success"),)),
+    ([{"hwCommandId": 123, "remoteType": 4, "resultCode": 0, "resultMsg": 456}],
+     (RemoteCommandResultItem("123", "4", "0", "456"),)),
+    ([{}], (RemoteCommandResultItem(None, None, None, None),)),
+    ({}, None), ([None], None),
+    ([{"hwCommandId": {"unexpected": "value"}}], None),
+    ([{"remoteType": True}], None), ([{"resultCode": []}], None),
+])
+async def test_climate_client_sends_one_request_and_reads_its_result(response_data, expected):
+    """Decode populated or empty results and reject malformed APAC response fields."""
     class Transport:
         def __init__(self): self.requests = []
         async def execute(self, request, **kwargs):
             self.requests.append(request)
-            data = [] if request.method == "GET" else None
+            data = response_data if request.method == "GET" else None
             return _TransportResponse(200, {}, json.dumps({"code": "000000", "data": data}).encode())
     context = ssl.create_default_context()
     context.set_ciphers("DEFAULT:@SECLEVEL=0")
@@ -130,7 +141,11 @@ async def test_climate_client_sends_one_request_and_reads_its_result():
     assert request.method == "POST" and request.url.endswith("/vehicle/T5/sendCmd")
     assert request.headers["vin"] == identifier.value
     assert json.loads(request.body)["seqNo"] == result.command_id
-    assert await client.get_remote_command_results(identifier, result.command_id) == ()
+    if expected is None:
+        with pytest.raises(GwmSchemaError):
+            await client.get_remote_command_results(identifier, result.command_id)
+    else:
+        assert await client.get_remote_command_results(identifier, result.command_id) == expected
     assert transport.requests[1].url.endswith("?seqNo=" + result.command_id)
     assert transport.requests[1].headers["vin"] == identifier.value
 
