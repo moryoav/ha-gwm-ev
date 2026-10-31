@@ -792,12 +792,10 @@ class GwmCloudClient:
             if not self._climate_commands_enabled or type(identifier) is not VehicleIdentifier or identifier.value not in self._vehicles or type(self._client) is not ApacReadClient:
                 raise GwmRoutePolicyError(operation="update_climate_defaults")
             async with self._session_renewal_lock:
-                if self._apac_closing or self._apac_closed or self._apac_validation_pending:
-                    raise GwmRoutePolicyError(operation="update_climate_defaults")
-                await self._async_flush_pending_auth_state()
-                if self._credentials is not None:
-                    await self._async_validate_apac_session(force_refresh=False)
-                await self._client.update_climate_defaults(identifier, temperature=temperature, operation_time_minutes=operation_time_minutes)
+                await self._async_apac_write_once(
+                    "update_climate_defaults",
+                    lambda: self._client.update_climate_defaults(identifier, temperature=temperature, operation_time_minutes=operation_time_minutes),
+                )
             return
         if self.region == REGION_CHINA:
             vehicle = self._vehicles.get(identifier.value)
@@ -850,12 +848,10 @@ class GwmCloudClient:
             ):
                 raise GwmRoutePolicyError(operation="send_climate_command")
             async with self._session_renewal_lock:
-                if self._apac_closing or self._apac_closed or self._apac_validation_pending:
-                    raise GwmRoutePolicyError(operation="send_climate_command")
-                await self._async_flush_pending_auth_state()
-                if self._credentials is not None:
-                    await self._async_validate_apac_session(force_refresh=False)
-                return await self._client.send_climate_command(command, security_password_hash=security_password_hash)
+                return await self._async_apac_write_once(
+                    "send_climate_command",
+                    lambda: self._client.send_climate_command(command, security_password_hash=security_password_hash),
+                )
         if self.region == REGION_CHINA:
             return await self._async_with_session_renewal(
                 lambda: cast(_ChinaReadClient, self._client).send_climate_command(command)
@@ -887,12 +883,31 @@ class GwmCloudClient:
                 raise GwmRoutePolicyError(operation="send_apac_control")
             driver_right = vehicle.rudder == "2"
         async with self._session_renewal_lock:
-            if self._apac_closing or self._apac_closed or self._apac_validation_pending:
-                raise GwmRoutePolicyError(operation="send_apac_control")
-            await self._async_flush_pending_auth_state()
+            return await self._async_apac_write_once(
+                "send_apac_control",
+                lambda: self._client.send_apac_control(identifier, action, security_password_hash=security_password_hash, driver_right=driver_right),
+            )
+
+    async def _async_apac_write_once[T](self, operation: str, action: Callable[[], Awaitable[T]]) -> T:
+        """Validate account state and retire rejected sessions, without replaying writes.
+
+        The caller holds the APAC session lock, which also lets shutdown drain the operation.
+        """
+        if self._apac_closing or self._apac_closed:
+            raise GwmRoutePolicyError(operation=operation)
+        await self._async_flush_pending_auth_state()
+        try:
             if self._credentials is not None:
                 await self._async_validate_apac_session(force_refresh=False)
-            return await self._client.send_apac_control(identifier, action, security_password_hash=security_password_hash, driver_right=driver_right)
+            elif self._apac_validation_pending:
+                raise GwmAuthenticationError(operation=operation)
+            return await action()
+        except GwmApiError as error:
+            if not is_overseas_session_expired(error):
+                raise
+            with suppress(Exception):
+                await self.async_authentication_rejected()
+            raise GwmAuthenticationError(operation=error.operation, api_code=error.api_code) from None
 
     async def async_send_lock_command(
         self,

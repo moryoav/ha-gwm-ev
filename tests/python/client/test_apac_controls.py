@@ -1,5 +1,6 @@
 """Synthetic APAC tailgate, steering and charging request contracts."""
 
+import asyncio
 import json
 import ssl
 from types import SimpleNamespace
@@ -161,6 +162,40 @@ async def test_direct_charging_timeout_does_not_resend():
     with pytest.raises(GwmDeadlineExceededError):
         await cloud.async_send_apac_control(vehicle, "charge_now", security_password_hash="a" * 32)
     assert transport.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_shutdown_waits_for_active_apac_control():
+    """Do not close the transport while an accepted write is still in flight."""
+    class Transport:
+        def __init__(self):
+            self.started = asyncio.Event()
+            self.release = asyncio.Event()
+            self.closed = False
+        async def execute(self, request, **kwargs):
+            self.started.set()
+            await self.release.wait()
+            assert not self.closed
+            return _TransportResponse(200, {}, b'{"code":"000000","data":{}}')
+        async def aclose(self): self.closed = True
+    context = ssl.create_default_context()
+    context.set_ciphers("DEFAULT:@SECLEVEL=0")
+    _register_validated_context(context, TlsMode.APAC_ISSUED_MTLS)
+    material = ApacMaterial(EuBootstrapMaterial(b"fake", b"fake", b"fake"), "fake-key", "fake-secret")
+    transport = Transport()
+    client = ApacReadClient(material=material, session=ApacReadSession("a" * 32, "fake-token", context, "PK"), transport=transport, owns_transport=True)
+    vehicle = VehicleIdentifier("SYNTHETIC-VEHICLE")
+    cloud = GwmCloudClient(REGION_APAC, client, apac_charging_enabled=True)
+    cloud._vehicles[vehicle.value] = CloudVehicle(vehicle)
+    write = asyncio.create_task(cloud.async_send_apac_control(vehicle, "charge_now", security_password_hash="a" * 32))
+    await transport.started.wait()
+    shutdown = asyncio.create_task(cloud.aclose())
+    await asyncio.sleep(0)
+    assert not shutdown.done() and not transport.closed
+    transport.release.set()
+    assert (await write).command_id
+    await shutdown
+    assert transport.closed
 
 
 @pytest.mark.asyncio

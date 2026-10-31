@@ -1,5 +1,6 @@
 """Offline APAC climate contract tests with deliberately synthetic values."""
 
+import asyncio
 import json
 import logging
 import ssl
@@ -176,6 +177,9 @@ async def test_runtime_does_not_send_if_session_validation_fails(monkeypatch):
     cloud = GwmCloudClient(REGION_APAC, client, apac_climate_enabled=True)
     cloud._vehicles[identifier.value] = object()
     cloud._credentials = object()
+    retired = []
+    async def retire(): retired.append(True)
+    monkeypatch.setattr(cloud, "async_authentication_rejected", retire)
     async def reject(*, force_refresh):
         assert force_refresh is False
         raise GwmAuthenticationError(operation="get_user_info")
@@ -183,6 +187,35 @@ async def test_runtime_does_not_send_if_session_validation_fails(monkeypatch):
     with pytest.raises(GwmAuthenticationError):
         await cloud.async_send_climate_command(ClimateCommand(identifier, "auto", 22, 15), security_password_hash="a" * 32)
     assert transport.calls == 0
+    assert retired == [True]
+
+
+@pytest.mark.asyncio
+async def test_rejected_write_session_is_retired_without_retry(monkeypatch):
+    """An expiry response to a write is not resent and invalidates the session."""
+    from custom_components.gwm_ora.gwm_client.errors import GwmApiError, GwmAuthenticationError
+
+    class Transport:
+        def __init__(self): self.calls = 0
+        async def execute(self, request, **kwargs):
+            self.calls += 1
+            raise GwmApiError(operation="send_climate_command", api_code="551004")
+    context = ssl.create_default_context()
+    context.set_ciphers("DEFAULT:@SECLEVEL=0")
+    _register_validated_context(context, TlsMode.APAC_ISSUED_MTLS)
+    material = ApacMaterial(EuBootstrapMaterial(b"fake", b"fake", b"fake"), "fake-key", "fake-secret")
+    transport = Transport()
+    client = ApacReadClient(material=material, session=ApacReadSession("a" * 32, "fake-token", context, "PK"), transport=transport)
+    identifier = VehicleIdentifier("SYNTHETIC-VEHICLE")
+    cloud = GwmCloudClient(REGION_APAC, client, apac_climate_enabled=True)
+    cloud._vehicles[identifier.value] = object()
+    retired = []
+    async def retire(): retired.append(True)
+    monkeypatch.setattr(cloud, "async_authentication_rejected", retire)
+    with pytest.raises(GwmAuthenticationError):
+        await cloud.async_send_climate_command(ClimateCommand(identifier, "auto", 22, 15), security_password_hash="a" * 32)
+    assert transport.calls == 1
+    assert retired == [True]
 
 
 @pytest.mark.asyncio
@@ -214,3 +247,34 @@ async def test_climate_api_dispatches_only_after_consent(monkeypatch):
     result = await api.async_set_climate(identifier.value, mode="auto", temperature=22)
     assert result["name"] == "A/C"
     assert transport.operations == ["get_vehicle_basics", "update_climate_defaults", "send_climate_command"]
+
+
+@pytest.mark.asyncio
+async def test_cancelled_apac_command_finishes_recording_accepted_result(monkeypatch):
+    """Cancellation waits for the single send and acceptance journal to finish."""
+    from custom_components.gwm_ora.gwm_client.commands import RemoteCommandAcceptance
+
+    api = object.__new__(GwmCommandApi)
+    started = asyncio.Event()
+    release = asyncio.Event()
+    recorded = []
+    async def send():
+        started.set()
+        await release.wait()
+        return RemoteCommandAcceptance("synthetic-command")
+    async def record(identifier, name, command_id):
+        recorded.append((name, command_id))
+        return {"state": "in_progress"}
+    monkeypatch.setattr(api, "_record_acceptance", record)
+    task = asyncio.create_task(api._async_submit_apac(VehicleIdentifier("SYNTHETIC-VEHICLE"), "A/C", send))
+    await started.wait()
+    task.cancel()
+    await asyncio.sleep(0)
+    assert not task.done()
+    task.cancel()
+    await asyncio.sleep(0)
+    assert not task.done()
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert recorded == [("A/C", "synthetic-command")]

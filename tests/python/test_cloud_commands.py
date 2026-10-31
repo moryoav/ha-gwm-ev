@@ -1011,6 +1011,44 @@ async def test_cancellation_after_provider_acceptance_finishes_recovery_journal(
 
 
 @pytest.mark.asyncio
+async def test_cancelled_apac_dispatch_persists_accepted_command(tmp_path: Path) -> None:
+    """Finish an APAC send and save its real private journal before cancellation."""
+    from custom_components.gwm_ora.gwm_client.apac_auth_client import ApacTokens
+    from custom_components.gwm_ora.gwm_client.apac_state import ApacAuthState
+
+    credentials = GwmCloudCredentials("ap", "PK", "synthetic@example.invalid", "synthetic-password", _DEVICE_ID)
+    state = replace(
+        ApacAuthState.for_credentials(credentials.client_credentials()),
+        tokens=ApacTokens("synthetic-access", "synthetic-refresh", "synthetic-gw", "synthetic-bean"),
+        issued_identity=EuIssuedIdentity("c3ludGhldGlj", "c3ludGhldGlj"),
+    )
+    hass = HomeAssistant(str(tmp_path))
+    store = cloud_state_store(hass, cloud_unique_id(credentials))
+    await store.async_save_auth_state(credentials, state)
+    cloud = _Cloud()
+    cloud.region = "ap"
+    api = GwmCommandApi(cloud, store, credentials, enabled=False, security_pin=None, clock=_Clock())
+    started = asyncio.Event()
+    release = asyncio.Event()
+    async def send():
+        started.set()
+        await release.wait()
+        return RemoteCommandAcceptance("synthetic-command")
+    task = asyncio.create_task(api._async_submit_apac(VehicleIdentifier(_VIN), "A/C", send))
+    await started.wait()
+    task.cancel()
+    await asyncio.sleep(0)
+    task.cancel()
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    journal = await store.async_get_command_journal(cloud_entry_data(credentials))
+    assert len(journal) == 1
+    assert journal[0].cloud_command_id == "synthetic-command"
+    assert journal[0].state == "accepted"
+
+
+@pytest.mark.asyncio
 async def test_cancellation_after_terminal_result_finishes_journal_transition(
     tmp_path: Path,
 ) -> None:

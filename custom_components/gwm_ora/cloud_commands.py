@@ -6,7 +6,7 @@ import asyncio
 import hashlib
 import logging
 import secrets
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
@@ -33,6 +33,7 @@ from .gwm_client import (
     FrontDefrosterCommand,
     GwmClientError,
     Region,
+    RemoteCommandAcceptance,
     VehicleIdentifier,
     is_valid_operation_time,
     normalize_operation_time,
@@ -262,6 +263,11 @@ class GwmCommandApi:
             operation_time_minutes=effective_operation_time,
             currently_on=currently_on,
         )
+        if self._cloud.region == REGION_APAC:
+            return await self._async_submit_apac(
+                identifier, command_name,
+                lambda: self._cloud.async_send_climate_command(command, security_password_hash=_security_password_hash(self._security_pin)),
+            )
         if self._cloud.region == "cn":
             acceptance = await self._cloud.async_send_climate_command(command)  # type: ignore[call-arg]
         else:
@@ -317,6 +323,11 @@ class GwmCommandApi:
             raise GwmCommandError("Door lock action must be 'lock' or 'unlock'")
         command_name = "Door lock" if normalized_action == "lock" else "Door unlock"
         command = DoorLockCommand(identifier, normalized_action == "lock")
+        if self._cloud.region == REGION_APAC:
+            return await self._async_submit_apac(
+                identifier, command_name,
+                lambda: self._cloud.async_send_lock_command(command, security_password_hash=_security_password_hash(self._security_pin)),
+            )
         if self._cloud.region == "cn":
             acceptance = await self._cloud.async_send_lock_command(command)  # type: ignore[call-arg]
         else:
@@ -352,10 +363,10 @@ class GwmCommandApi:
         if not allowed:
             raise GwmCommandForbidden("GWM APAC control requires explicit opt-in")
         identifier = _vehicle_identifier(vin, command_name=names[action])
-        acceptance = await self._cloud.async_send_apac_control(
-            identifier, action, security_password_hash=_security_password_hash(self._security_pin),
+        return await self._async_submit_apac(
+            identifier, names[action],
+            lambda: self._cloud.async_send_apac_control(identifier, action, security_password_hash=_security_password_hash(self._security_pin)),
         )
-        return await self._record_acceptance(identifier, names[action], acceptance.command_id)
 
     async def async_close_windows(self, vin: str) -> dict[str, object]:
         """Validate, send, and journal one close-all-windows request."""
@@ -363,6 +374,11 @@ class GwmCommandApi:
         self._ensure_available()
         identifier = _vehicle_identifier(vin, command_name="Window close")
         command = CloseWindowsCommand(identifier)
+        if self._cloud.region == REGION_APAC:
+            return await self._async_submit_apac(
+                identifier, "Window close",
+                lambda: self._cloud.async_send_close_windows_command(command, security_password_hash=_security_password_hash(self._security_pin)),
+            )
         if self._cloud.region == "cn":
             acceptance = await self._cloud.async_send_close_windows_command(command)  # type: ignore[call-arg]
         else:
@@ -386,6 +402,11 @@ class GwmCommandApi:
         identifier = _vehicle_identifier(vin, command_name="Front defroster")
         if type(enabled) is not bool:
             raise GwmCommandError("Front defroster command requires an on or off state")
+        if self._cloud.region == REGION_APAC:
+            return await self._async_submit_apac(
+                identifier, "Front defroster",
+                lambda: self._cloud.async_send_front_defroster_command(FrontDefrosterCommand(identifier, enabled), security_password_hash=_security_password_hash(self._security_pin)),
+            )
         acceptance = await self._cloud.async_send_front_defroster_command(
             FrontDefrosterCommand(identifier, enabled),
             security_password_hash=_security_password_hash(self._security_pin),
@@ -401,6 +422,11 @@ class GwmCommandApi:
 
         self._ensure_overseas_comfort_commands_available()
         identifier = _vehicle_identifier(vin, command_name="Air circulation")
+        if self._cloud.region == REGION_APAC:
+            return await self._async_submit_apac(
+                identifier, "Air circulation",
+                lambda: self._cloud.async_send_cabin_clean_command(CabinCleanCommand(identifier), security_password_hash=_security_password_hash(self._security_pin)),
+            )
         acceptance = await self._cloud.async_send_cabin_clean_command(
             CabinCleanCommand(identifier),
             security_password_hash=_security_password_hash(self._security_pin),
@@ -562,6 +588,39 @@ class GwmCommandApi:
             entry,
             status=f"{entry.command_name}: {status_word} - {details} [{code}]",
         )
+
+    async def _async_submit_apac(
+        self, identifier: VehicleIdentifier, name: str,
+        send: Callable[[], Awaitable[RemoteCommandAcceptance]],
+    ) -> dict[str, object]:
+        """Finish an initiated APAC send and its journal before propagating cancellation."""
+        async def send_and_record() -> dict[str, object]:
+            """Send only once and durably record a successful acceptance."""
+            acceptance = await send()
+            return await self._record_acceptance(identifier, name, acceptance.command_id)
+
+        task = asyncio.create_task(send_and_record())
+        cancelled = False
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                if task.cancelled():
+                    raise
+                cancelled = True
+            except Exception as error:
+                if cancelled:
+                    raise GwmCommandError("APAC command outcome is uncertain; check the vehicle before retrying") from error
+                raise
+        try:
+            result = task.result()
+        except Exception as error:
+            if cancelled:
+                raise GwmCommandError("APAC command outcome is uncertain; check the vehicle before retrying") from error
+            raise
+        if cancelled:
+            raise asyncio.CancelledError
+        return result
 
     async def _record_acceptance(
         self,
