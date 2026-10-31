@@ -300,7 +300,7 @@ async def test_runtime_retains_a_rotation_when_follow_up_validation_fails(monkey
     with pytest.raises(GwmNetworkError):
         await cloud._async_with_session_renewal(expired_action)
     assert saved == [replacement]
-    assert cloud.reusable_bootstrap.state == replacement
+    assert cloud.reusable_bootstrap is None
     assert client._session.access_token == "renewed-access"
 
 
@@ -376,7 +376,7 @@ async def test_runtime_finishes_rotated_token_save_before_propagating_cancellati
         await asyncio.gather(polling, return_exceptions=True)
     restarted = cloud_state_store(HomeAssistant(str(tmp_path)), unique_id)
     assert await restarted.async_load_auth_state(cloud_entry_data(credentials)) == replacement
-    assert cloud.reusable_bootstrap.state == replacement
+    assert cloud.reusable_bootstrap is None
     assert cloud._pending_auth_state is None
 
 
@@ -507,5 +507,92 @@ async def test_post_refresh_rejection_requires_reauthentication(
         assert transport.operations == operations
         if boundary == "runtime":
             assert cloud.reusable_bootstrap is None
+    finally:
+        await cloud.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("matching_profile", [False, True])
+async def test_pending_profile_validation_precedes_snapshots_and_reusable_handoffs(
+    tmp_path, monkeypatch, matching_profile
+):
+    """Retain a rotated pair without accepting data until its account check succeeds."""
+    from homeassistant.core import HomeAssistant
+
+    from custom_components.gwm_ora.cloud_auth import cloud_entry_data, cloud_unique_id
+    from custom_components.gwm_ora.cloud_storage import cloud_state_store
+    from custom_components.gwm_ora.gwm_client._protocol import _TransportResponse
+
+    class Transport(_RuntimeTransport):
+        async def execute(self, request, **kwargs):
+            """Fail one profile read, then return either this account or another one."""
+            if request.operation == "get_user_info":
+                attempts = self.operations.count("get_user_info")
+                if attempts == 0:
+                    self.operations.append(request.operation)
+                    raise GwmNetworkError(operation="get_user_info")
+                if not matching_profile:
+                    self.operations.append(request.operation)
+                    return _TransportResponse(
+                        200, {}, b'{"code":"000000","data":{"gwId":"different-account","beanId":"synthetic-bean"}}'
+                    )
+            return await super().execute(request, **kwargs)
+
+    transport = Transport()
+    cloud, credentials, state = _runtime_with_synthetic_transport(monkeypatch, transport)
+    unique_id = cloud_unique_id(credentials)
+    store = cloud_state_store(HomeAssistant(str(tmp_path)), unique_id)
+    await store.async_save_auth_state(credentials, state)
+    cloud._state_store = store
+    try:
+        with pytest.raises(GwmNetworkError):
+            await cloud.async_get_vehicle_data()
+        retained = await store.async_load_auth_state(cloud_entry_data(credentials))
+        assert retained.tokens.refresh_token == "renewed-refresh"
+        assert cloud.reusable_bootstrap is None
+        assert "get_last_status" not in transport.operations
+        if matching_profile:
+            snapshot = await cloud.async_get_vehicle_data()
+            assert snapshot["vehicles"][0]["values"]["soc"] == 65.0
+            assert cloud.reusable_bootstrap.state == retained
+            second_profile = [i for i, operation in enumerate(transport.operations) if operation == "get_user_info"][1]
+            assert second_profile < transport.operations.index("get_last_status")
+            await cloud.async_get_vehicle_data()
+        else:
+            with pytest.raises(GwmAuthenticationError):
+                await cloud.async_get_vehicle_data()
+            assert await store.async_load_auth_state(cloud_entry_data(credentials)) is None
+            assert cloud.reusable_bootstrap is None
+            assert "get_last_status" not in transport.operations
+        assert transport.operations.count("get_user_info") == 2
+        assert transport.operations.count("refresh_token") == 1
+    finally:
+        await cloud.aclose()
+
+
+@pytest.mark.asyncio
+async def test_refresh_failure_before_rotation_can_retry_without_skipping_refresh(monkeypatch):
+    """Retry a failed refresh exchange without treating old tokens as a new session."""
+    attempts = []
+
+    class Transport(_RuntimeTransport):
+        async def execute(self, request, **kwargs):
+            """Fail the first refresh before the server returns replacement tokens."""
+            if request.operation == "refresh_token":
+                attempts.append("refresh")
+                if len(attempts) == 1:
+                    raise GwmNetworkError(operation="refresh_token")
+            return await super().execute(request, **kwargs)
+
+    transport = Transport()
+    cloud, _credentials, state = _runtime_with_synthetic_transport(monkeypatch, transport)
+    try:
+        with pytest.raises(GwmNetworkError):
+            await cloud.async_get_vehicle_data()
+        assert cloud.reusable_bootstrap.state == state
+        snapshot = await cloud.async_get_vehicle_data()
+        assert snapshot["vehicles"][0]["values"]["soc"] == 65.0
+        assert len(attempts) == 2
+        assert cloud.reusable_bootstrap.state.tokens.refresh_token == "renewed-refresh"
     finally:
         await cloud.aclose()

@@ -500,6 +500,7 @@ class GwmCloudClient:
         self._apac_close_lock = asyncio.Lock()
         self._apac_closing = False
         self._apac_closed = False
+        self._apac_validation_pending = False
         self._pending_auth_state: CloudAuthState | None = None
         if credentials is not None and (
             type(credentials) is not GwmCloudCredentials
@@ -624,7 +625,12 @@ class GwmCloudClient:
     def reusable_bootstrap(self) -> GwmCloudBootstrap | None:
         """Return the current in-process handoff if authentication still holds."""
 
-        if self.region == REGION_APAC and (self._apac_closing or self._apac_closed):
+        if self.region == REGION_APAC and (
+            self._apac_closing
+            or self._apac_closed
+            or self._apac_validation_pending
+            or self._session_renewal_lock.locked()
+        ):
             return None
         return self._bootstrap if self._client.authenticated else None
 
@@ -1052,55 +1058,15 @@ class GwmCloudClient:
             if self._credentials is not None and self._bootstrap is None:
                 raise GwmAuthenticationError(operation="request")
             await self._async_flush_pending_auth_state()
+            validation_pending = self._apac_validation_pending
+            if not validation_pending:
+                try:
+                    return await action()
+                except (GwmAuthenticationError, GwmApiError) as error:
+                    if not is_overseas_session_expired(error):
+                        raise
             try:
-                return await action()
-            except (GwmAuthenticationError, GwmApiError) as error:
-                if not is_overseas_session_expired(error):
-                    raise
-                trigger = error
-            bootstrap = self._bootstrap
-            credentials = self._credentials
-            client = self._client
-            if (
-                bootstrap is None
-                or type(bootstrap.state) is not ApacAuthState
-                or type(bootstrap.apac_material) is not ApacMaterial
-                or credentials is None
-                or type(client) is not ApacReadClient
-            ):
-                raise GwmAuthenticationError(operation=trigger.operation) from None
-            regional_credentials = credentials.client_credentials()
-            if type(regional_credentials) is not ApacCredentials:
-                raise GwmAuthenticationError(operation=trigger.operation) from None
-
-            async def accept_session_update(restored: ApacRestored) -> None:
-                """Install and retain rotated tokens before any follow-up read."""
-                current = self._bootstrap
-                replacement = GwmCloudBootstrap(
-                    region=REGION_APAC,
-                    account_binding=credentials.account_binding,
-                    state=restored.state,
-                    session=restored.session,
-                    apac_material=bootstrap.apac_material,
-                )
-                client.replace_session(restored.session)
-                self._bootstrap = replacement
-                if current is None or restored.state != current.state:
-                    self._pending_auth_state = restored.state
-                    await self._async_flush_pending_auth_state()
-
-            try:
-                h5_context = await asyncio.to_thread(ssl.create_default_context)
-                restored = await restore_apac_session(
-                    credentials=regional_credentials,
-                    material=bootstrap.apac_material,
-                    state=bootstrap.state,
-                    h5_context=h5_context,
-                    transport=client._transport,
-                    on_session_updated=accept_session_update,
-                    force_refresh=True,
-                )
-                await accept_session_update(restored)
+                await self._async_validate_apac_session(force_refresh=not validation_pending)
                 try:
                     return await action()
                 except GwmApiError as retry_error:
@@ -1113,6 +1079,53 @@ class GwmCloudClient:
                 with suppress(Exception):
                     await self.async_authentication_rejected()
                 raise
+
+    async def _async_validate_apac_session(self, *, force_refresh: bool) -> None:
+        """Retain replacement tokens privately until profile and discovery validate."""
+        bootstrap = self._bootstrap
+        credentials = self._credentials
+        client = self._client
+        if (
+            bootstrap is None
+            or type(bootstrap.state) is not ApacAuthState
+            or type(bootstrap.apac_material) is not ApacMaterial
+            or credentials is None
+            or type(client) is not ApacReadClient
+        ):
+            raise GwmAuthenticationError(operation="refresh_token")
+        regional_credentials = credentials.client_credentials()
+        if type(regional_credentials) is not ApacCredentials:
+            raise GwmAuthenticationError(operation="refresh_token")
+
+        async def retain_session_update(restored: ApacRestored) -> None:
+            """Retain rotated tokens without exporting an unverified handoff."""
+            self._apac_validation_pending = True
+            current = self._bootstrap
+            replacement = GwmCloudBootstrap(
+                region=REGION_APAC,
+                account_binding=credentials.account_binding,
+                state=restored.state,
+                session=restored.session,
+                apac_material=bootstrap.apac_material,
+            )
+            client.replace_session(restored.session)
+            self._bootstrap = replacement
+            if current is None or restored.state != current.state:
+                self._pending_auth_state = restored.state
+                await self._async_flush_pending_auth_state()
+
+        h5_context = await asyncio.to_thread(ssl.create_default_context)
+        restored = await restore_apac_session(
+            credentials=regional_credentials,
+            material=bootstrap.apac_material,
+            state=bootstrap.state,
+            h5_context=h5_context,
+            transport=client._transport,
+            on_session_updated=retain_session_update,
+            force_refresh=force_refresh,
+        )
+        await retain_session_update(restored)
+        self._apac_validation_pending = False
 
     async def _async_renew_overseas_session(
         self,
@@ -1240,6 +1253,8 @@ class GwmCloudClient:
 
         self._bootstrap = None
         self._pending_auth_state = None
+        if self.region == REGION_APAC:
+            self._apac_validation_pending = False
         if self._state_store is not None:
             await self._state_store.async_clear_auth_state(self._entry_data)
 
