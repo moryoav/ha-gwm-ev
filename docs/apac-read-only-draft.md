@@ -1,6 +1,6 @@
 # APAC read-only development setup
 
-This development branch adds a read-only Home Assistant setup for Pakistan (`PK`), Thailand (`TH`), Malaysia (`MY`) and Indonesia (`ID`), the countries listed in My GWM (`com.gwm.tha`). A contributor live-tested this branch with a Pakistan account and a 2026 Haval H6 PHEV: setup, discovery, readings, subsequent updates and reconnection after restart worked. Thailand, Malaysia and Indonesia have not been validated live. Live testing of token expiry and refresh is still needed. A release and redistribution decision remains with the maintainer.
+This development branch adds a read-only Home Assistant setup for Pakistan (`PK`), Thailand (`TH`), Malaysia (`MY`) and Indonesia (`ID`), the countries listed in My GWM (`com.gwm.tha`). A contributor live-tested this branch with a Pakistan account and a 2026 Haval H6 PHEV: setup, discovery, readings, subsequent updates and reconnection after restart worked. Thailand, Malaysia and Indonesia have not been validated live. Live testing of token expiry and refresh is still needed.
 
 Remote controls and charging writes are disabled for APAC, including when stale enabled options exist or a direct service call is attempted. Existing region policies remain separate. Authentication and vehicle requests use distinct, strictly validated TLS contexts.
 
@@ -25,4 +25,8 @@ After supplying authorized material, add the GWM integration, choose **Asia-Paci
 
 ## Validation limits
 
-Synthetic tests cover setup continuation, account/device binding, private state round trips, read-only service guards, response mapping, expiry/refresh and existing regional behavior. They do not prove real account or vehicle compatibility. Verify the exact branch against the official app and a locally registered account before considering a release. Missing or invalid private material must fail closed; never share the material, tokens, raw captures, identifiers or precise locations in tests, logs or GitHub.
+Synthetic tests cover setup continuation, account/device binding, private state storage, read-only safeguards, response mapping, token expiry and refresh, and existing regional behavior.
+
+Live testing with a Pakistan account and a 2026 Haval H6 PHEV confirmed setup, vehicle discovery, readings, subsequent updates, and reconnection after a Home Assistant restart.
+
+Token expiry and refresh have not yet been confirmed live. Thailand, Malaysia and Indonesia still need testing with local accounts and vehicles. Further validation is needed before release.
