@@ -2,18 +2,21 @@
 
 import json
 import ssl
+from dataclasses import replace
+from datetime import UTC, datetime
 
 import pytest
 
 from custom_components.gwm_ora.cloud_commands import GwmCommandApi
 from custom_components.gwm_ora.cloud_runtime import GwmCloudClient
+from custom_components.gwm_ora.cloud_storage import GwmCommandJournalEntry
 from custom_components.gwm_ora.const import REGION_APAC
 from custom_components.gwm_ora.gwm_client._protocol import _TransportResponse
 from custom_components.gwm_ora.gwm_client.apac_climate import climate_payload, validate_climate_payload
 from custom_components.gwm_ora.gwm_client.apac_identity import _register_validated_context
 from custom_components.gwm_ora.gwm_client.apac_material import ApacMaterial
 from custom_components.gwm_ora.gwm_client.apac_read import ApacReadClient, ApacReadSession
-from custom_components.gwm_ora.gwm_client.commands import ClimateCommand
+from custom_components.gwm_ora.gwm_client.commands import ClimateCommand, RemoteCommandResultItem
 from custom_components.gwm_ora.gwm_client.errors import GwmDeadlineExceededError, GwmRoutePolicyError
 from custom_components.gwm_ora.gwm_client.eu_identity import EuBootstrapMaterial
 from custom_components.gwm_ora.gwm_client.models import VehicleIdentifier
@@ -52,6 +55,31 @@ def test_climate_request_rejects_other_vehicle_instructions():
     payload["instructions"]["0x05"] = {"switchOrder": "1"}
     with pytest.raises(ValueError, match="apac_climate_command_invalid"):
         validate_climate_payload(payload, command.identifier.value)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider_id", [None, "different-provider-id"])
+async def test_apac_result_uses_legacy_fallback_when_id_does_not_match(monkeypatch, provider_id):
+    """Verify the test build accepts the first result returned for the queried command."""
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+    entry = GwmCommandJournalEntry("a" * 32, "SYNTHETIC-VEHICLE", "A/C", "b" * 32 + "1234", "polling", now, now)
+    class Cloud:
+        region = REGION_APAC
+        async def async_get_remote_command_results(self, identifier, command_id):
+            assert command_id == entry.cloud_command_id
+            return (RemoteCommandResultItem(provider_id, "0x04", "0", "Success"),)
+    api = object.__new__(GwmCommandApi)
+    api._cloud = Cloud()
+    api._commands = {entry.journal_id: entry}
+    api._timeout_ids = set()
+    api._clock = lambda: now
+    async def update(current, **changes):
+        updated = replace(current, **changes)
+        api._commands[updated.journal_id] = updated
+        return updated
+    monkeypatch.setattr(api, "_durably_update_command", update)
+    result = await api.async_get_command(entry.journal_id)
+    assert result["state"] == "completed"
 
 
 @pytest.mark.asyncio

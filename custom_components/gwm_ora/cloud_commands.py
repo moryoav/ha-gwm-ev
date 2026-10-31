@@ -489,11 +489,6 @@ class GwmCommandApi:
                 )
         except GwmClientError:
             raise
-        if self._cloud.region == REGION_APAC:
-            results = tuple(
-                result for result in results
-                if result.command_id is not None and result.command_id.casefold() == entry.cloud_command_id.casefold()
-            )
         region = None if self._cloud.region in {"cn", REGION_APAC} else Region(self._cloud.region)
         result = select_remote_command_result(
             results,
