@@ -662,3 +662,52 @@ async def test_startup_retries_failed_rotation_save_before_reusing_credentials(t
             assert await store.async_load_auth_state(entry.data) is None
     finally:
         await cloud.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("close_save_fails_once", [False, True])
+async def test_shutdown_flushes_failed_apac_rotation_before_disposing_transport(
+    tmp_path, monkeypatch, close_save_fails_once
+):
+    """Finish a pending publication during cleanup or leave shutdown retryable."""
+    from homeassistant.core import HomeAssistant
+
+    from custom_components.gwm_ora.cloud_auth import cloud_entry_data, cloud_unique_id
+    from custom_components.gwm_ora.cloud_storage import cloud_state_store
+
+    transport = _RuntimeTransport()
+    cloud, credentials, state = _runtime_with_synthetic_transport(monkeypatch, transport)
+    unique_id = cloud_unique_id(credentials)
+    store = cloud_state_store(HomeAssistant(str(tmp_path)), unique_id)
+    await store.async_save_auth_state(credentials, state)
+    cloud._state_store = store
+    original_save = store._store.async_save
+    attempts = []
+
+    async def fail_then_publish(data):
+        """Fail the poll save and optionally the first cleanup retry before recovery."""
+        attempts.append("save")
+        if len(attempts) <= (2 if close_save_fails_once else 1):
+            raise OSError("synthetic temporary storage failure")
+        assert not transport.closed
+        await original_save(data)
+
+    monkeypatch.setattr(store._store, "async_save", fail_then_publish)
+    try:
+        with pytest.raises(GwmNetworkError):
+            await cloud.async_get_vehicle_data()
+        assert cloud.reusable_bootstrap is None
+        if close_save_fails_once:
+            with pytest.raises(GwmNetworkError):
+                await cloud.aclose()
+            assert not transport.closed
+        await cloud.aclose()
+        assert len(attempts) == (3 if close_save_fails_once else 2)
+        assert transport.closed
+        assert cloud.reusable_bootstrap is None
+        assert transport.operations == ["acquire_vehicles", "refresh_token"]
+        restarted = cloud_state_store(HomeAssistant(str(tmp_path)), unique_id)
+        restored = await restarted.async_load_auth_state(cloud_entry_data(credentials))
+        assert restored.tokens.refresh_token == "renewed-refresh"
+    finally:
+        await cloud.aclose()

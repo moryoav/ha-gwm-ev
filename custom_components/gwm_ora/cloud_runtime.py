@@ -1241,6 +1241,7 @@ class GwmCloudClient:
             self._apac_closing = True
             try:
                 async with self._session_renewal_lock:
+                    await self._async_flush_pending_auth_state()
                     await self._client.aclose()
                     self._apac_closed = True
             except BaseException:
