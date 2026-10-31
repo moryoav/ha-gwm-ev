@@ -59,6 +59,7 @@ async def async_setup_entry(
     """Set up GWM buttons."""
 
     def entities_for_vehicle(vehicle):
+        """Build vehicle buttons for the supported regional platform."""
         vin = vehicle["vin"]
         entities = [
             GwmCloseWindowsButton(
@@ -308,6 +309,7 @@ class GwmClimatePresetButton(GwmEntity, ButtonEntity):
 
     @property
     def available(self) -> bool:
+        """Require the regional climate capability and a supported BeanTech vehicle."""
         return (
             super().available
             and self.climate_commands_available

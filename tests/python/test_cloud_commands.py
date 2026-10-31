@@ -1032,6 +1032,7 @@ async def test_cancelled_apac_dispatch_persists_accepted_command(tmp_path: Path)
     started = asyncio.Event()
     release = asyncio.Event()
     async def send():
+        """Mark a dispatched fake write and wait for synthetic provider acceptance."""
         mark_apac_dispatch_started()
         started.set()
         await release.wait()

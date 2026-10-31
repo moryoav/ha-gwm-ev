@@ -101,6 +101,7 @@ class GwmCommandApi:
         security_pin: str | None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
+        """Bind regional consent, the private journal and per-entry command ownership."""
         if (
             type(state_store) is not GwmCloudStateStore
             or type(credentials) is not GwmCloudCredentials

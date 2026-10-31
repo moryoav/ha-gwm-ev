@@ -84,6 +84,7 @@ async def test_apac_result_uses_legacy_fallback_when_id_does_not_match(monkeypat
     class Cloud:
         region = REGION_APAC
         async def async_get_remote_command_results(self, identifier, command_id):
+            """Return an intentionally missing or different provider command identifier."""
             assert command_id == entry.cloud_command_id
             return (RemoteCommandResultItem(provider_id, "0x04", "0", "Success"),)
     api = object.__new__(GwmCommandApi)
@@ -94,6 +95,7 @@ async def test_apac_result_uses_legacy_fallback_when_id_does_not_match(monkeypat
     api._timeout_ids = set()
     api._clock = lambda: now
     async def update(current, **changes):
+        """Record the terminal transition without real storage in this selection test."""
         updated = replace(current, **changes)
         api._commands[updated.journal_id] = updated
         return updated
@@ -123,8 +125,11 @@ async def test_apac_result_uses_legacy_fallback_when_id_does_not_match(monkeypat
 async def test_climate_client_sends_one_request_and_reads_its_result(response_data, expected):
     """Decode populated or empty results and reject malformed APAC response fields."""
     class Transport:
-        def __init__(self): self.requests = []
+        def __init__(self):
+            """Initialize synthetic transport observations for the request contract."""
+            self.requests = []
         async def execute(self, request, **kwargs):
+            """Record the request and return a synthetic regional response."""
             self.requests.append(request)
             data = response_data if request.method == "GET" else None
             return _TransportResponse(200, {}, json.dumps({"code": "000000", "data": data}).encode())
@@ -154,8 +159,11 @@ async def test_climate_client_sends_one_request_and_reads_its_result(response_da
 async def test_runtime_requires_explicit_apac_consent_and_never_replays_timeout():
     """A write with an uncertain outcome is sent only once and is not retried."""
     class Transport:
-        def __init__(self): self.calls = 0
+        def __init__(self):
+            """Initialize synthetic transport observations for the request contract."""
+            self.calls = 0
         async def execute(self, request, **kwargs):
+            """Simulate an uncertain transport failure without contacting a vehicle."""
             self.calls += 1
             raise TimeoutError
     context = ssl.create_default_context()
@@ -184,8 +192,12 @@ async def test_runtime_does_not_send_if_session_validation_fails(monkeypatch):
     from custom_components.gwm_ora.gwm_client.errors import GwmAuthenticationError
 
     class Transport:
-        def __init__(self): self.calls = 0
-        async def execute(self, request, **kwargs): self.calls += 1
+        def __init__(self):
+            """Initialize synthetic transport observations for the request contract."""
+            self.calls = 0
+        async def execute(self, request, **kwargs):
+            """Record any request that incorrectly passes failed session validation."""
+            self.calls += 1
     context = ssl.create_default_context()
     material = ApacMaterial(EuBootstrapMaterial(b"fake", b"fake", b"fake"), "fake-key", "fake-secret")
     transport = Transport()
@@ -195,9 +207,12 @@ async def test_runtime_does_not_send_if_session_validation_fails(monkeypatch):
     cloud._vehicles[identifier.value] = CloudVehicle(identifier, platform="beantech")
     cloud._credentials = object()
     retired = []
-    async def retire(): retired.append(True)
+    async def retire():
+        """Record retirement of the rejected account session."""
+        retired.append(True)
     monkeypatch.setattr(cloud, "async_authentication_rejected", retire)
     async def reject(*, force_refresh):
+        """Reject account validation before any physical command is dispatched."""
         assert force_refresh is False
         raise GwmAuthenticationError(operation="get_user_info")
     monkeypatch.setattr(cloud, "_async_validate_apac_session", reject)
@@ -213,8 +228,11 @@ async def test_rejected_write_session_is_retired_without_retry(monkeypatch):
     from custom_components.gwm_ora.gwm_client.errors import GwmApiError, GwmAuthenticationError
 
     class Transport:
-        def __init__(self): self.calls = 0
+        def __init__(self):
+            """Initialize synthetic transport observations for the request contract."""
+            self.calls = 0
         async def execute(self, request, **kwargs):
+            """Reject the one synthetic write with an expired-session response."""
             self.calls += 1
             raise GwmApiError(operation="send_climate_command", api_code="551004")
     context = ssl.create_default_context()
@@ -227,7 +245,9 @@ async def test_rejected_write_session_is_retired_without_retry(monkeypatch):
     cloud = GwmCloudClient(REGION_APAC, client, apac_climate_enabled=True)
     cloud._vehicles[identifier.value] = CloudVehicle(identifier, platform="beantech")
     retired = []
-    async def retire(): retired.append(True)
+    async def retire():
+        """Record retirement of the rejected account session."""
+        retired.append(True)
     monkeypatch.setattr(cloud, "async_authentication_rejected", retire)
     with pytest.raises(GwmAuthenticationError):
         await cloud.async_send_climate_command(ClimateCommand(identifier, "auto", 22, 15), security_password_hash="a" * 32)
@@ -239,8 +259,11 @@ async def test_rejected_write_session_is_retired_without_retry(monkeypatch):
 async def test_climate_api_dispatches_only_after_consent(monkeypatch):
     """Exercise the Home Assistant command adapter through a synthetic transport."""
     class Transport:
-        def __init__(self): self.operations = []
+        def __init__(self):
+            """Initialize synthetic transport observations for the request contract."""
+            self.operations = []
         async def execute(self, request, **kwargs):
+            """Record the request and return a synthetic regional response."""
             self.operations.append(request.operation)
             return _TransportResponse(200, {}, json.dumps({"code": "000000", "data": {}}).encode())
     context = ssl.create_default_context()
@@ -261,6 +284,7 @@ async def test_climate_api_dispatches_only_after_consent(monkeypatch):
     api._security_pin = "1234"
     api._climate_defaults = {}
     async def record(identifier, name, command_id):
+        """Observe the accepted command at the journal boundary."""
         return {"name": name, "command_id": command_id}
     monkeypatch.setattr(api, "_record_acceptance", record)
     result = await api.async_set_climate(identifier.value, mode="auto", temperature=22)
@@ -281,11 +305,13 @@ async def test_cancelled_apac_command_finishes_recording_accepted_result(monkeyp
     release = asyncio.Event()
     recorded = []
     async def send():
+        """Mark a dispatched fake write and wait for synthetic provider acceptance."""
         mark_apac_dispatch_started()
         started.set()
         await release.wait()
         return RemoteCommandAcceptance("synthetic-command")
     async def record(identifier, name, command_id):
+        """Observe the accepted command at the journal boundary."""
         recorded.append((name, command_id))
         return {"state": "in_progress"}
     monkeypatch.setattr(api, "_record_acceptance", record)

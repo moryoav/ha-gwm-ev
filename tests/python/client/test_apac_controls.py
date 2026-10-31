@@ -101,8 +101,11 @@ def test_driver_side_is_only_parsed_when_apac_requests_it():
 async def test_charging_and_remote_opt_ins_are_independent():
     """Charging consent must not grant tailgate access, or vice versa."""
     class Transport:
-        def __init__(self): self.requests = []
+        def __init__(self):
+            """Initialize synthetic transport observations for the request contract."""
+            self.requests = []
         async def execute(self, request, **kwargs):
+            """Record the request and return a synthetic regional response."""
             self.requests.append(request)
             return _TransportResponse(200, {}, json.dumps({"code": "000000", "data": {}}).encode())
     context = ssl.create_default_context()
@@ -126,8 +129,12 @@ async def test_charging_and_remote_opt_ins_are_independent():
 async def test_seat_command_rejects_unknown_driver_side_without_sending():
     """Never guess the physical seat when discovery omits steering position."""
     class Transport:
-        def __init__(self): self.requests = []
-        async def execute(self, request, **kwargs): self.requests.append(request)
+        def __init__(self):
+            """Initialize synthetic transport observations for the request contract."""
+            self.requests = []
+        async def execute(self, request, **kwargs):
+            """Record the request and return a synthetic regional response."""
+            self.requests.append(request)
     context = ssl.create_default_context()
     material = ApacMaterial(EuBootstrapMaterial(b"fake", b"fake", b"fake"), "fake-key", "fake-secret")
     transport = Transport()
@@ -146,8 +153,11 @@ async def test_direct_charging_timeout_does_not_resend():
     from custom_components.gwm_ora.gwm_client.errors import GwmDeadlineExceededError
 
     class Transport:
-        def __init__(self): self.calls = 0
+        def __init__(self):
+            """Initialize synthetic transport observations for the request contract."""
+            self.calls = 0
         async def execute(self, request, **kwargs):
+            """Simulate an uncertain transport failure without contacting a vehicle."""
             self.calls += 1
             raise TimeoutError
     context = ssl.create_default_context()
@@ -169,15 +179,19 @@ async def test_shutdown_waits_for_active_apac_control():
     """Do not close the transport while an accepted write is still in flight."""
     class Transport:
         def __init__(self):
+            """Initialize synthetic transport observations for the request contract."""
             self.started = asyncio.Event()
             self.release = asyncio.Event()
             self.closed = False
         async def execute(self, request, **kwargs):
+            """Pause an active synthetic write until the test permits completion."""
             self.started.set()
             await self.release.wait()
             assert not self.closed
             return _TransportResponse(200, {}, b'{"code":"000000","data":{}}')
-        async def aclose(self): self.closed = True
+        async def aclose(self):
+            """Record disposal of the owned synthetic transport."""
+            self.closed = True
     context = ssl.create_default_context()
     context.set_ciphers("DEFAULT:@SECLEVEL=0")
     _register_validated_context(context, TlsMode.APAC_ISSUED_MTLS)
