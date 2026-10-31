@@ -64,6 +64,7 @@ from .gwm_client import (
     FrontDefrosterCommand,
     GwmApiError,
     GwmAuthenticationError,
+    GwmClosedError,
     GwmClient,
     GwmClientConfig,
     GwmConfigurationError,
@@ -496,6 +497,9 @@ class GwmCloudClient:
         self._state_store = state_store
         self._entry_data = dict(entry_data or {})
         self._session_renewal_lock = asyncio.Lock()
+        self._apac_close_lock = asyncio.Lock()
+        self._apac_closing = False
+        self._apac_closed = False
         self._pending_auth_state: CloudAuthState | None = None
         if credentials is not None and (
             type(credentials) is not GwmCloudCredentials
@@ -620,6 +624,8 @@ class GwmCloudClient:
     def reusable_bootstrap(self) -> GwmCloudBootstrap | None:
         """Return the current in-process handoff if authentication still holds."""
 
+        if self.region == REGION_APAC and (self._apac_closing or self._apac_closed):
+            return None
         return self._bootstrap if self._client.authenticated else None
 
     async def async_get_vehicle_data(self) -> dict[str, object]:
@@ -1038,7 +1044,11 @@ class GwmCloudClient:
 
     async def _async_with_apac_session_renewal[T](self, action: Callable[[], Awaitable[T]]) -> T:
         """Serialize APAC reads and retry once after safe token restoration."""
+        if self._apac_closing or self._apac_closed:
+            raise GwmClosedError(operation="request")
         async with self._session_renewal_lock:
+            if self._apac_closing or self._apac_closed:
+                raise GwmClosedError(operation="request")
             await self._async_flush_pending_auth_state()
             try:
                 return await action()
@@ -1205,9 +1215,23 @@ class GwmCloudClient:
         return None
 
     async def aclose(self) -> None:
-        """Close the owned regional transport."""
+        """Drain APAC recovery before closing the owned regional transport."""
 
-        await self._client.aclose()
+        if self.region != REGION_APAC:
+            await self._client.aclose()
+            return
+        async with self._apac_close_lock:
+            if self._apac_closed:
+                return
+            self._apac_closing = True
+            try:
+                async with self._session_renewal_lock:
+                    await self._client.aclose()
+                    self._apac_closed = True
+            except BaseException:
+                self._apac_closing = False
+                raise
+            self._apac_closing = False
 
     async def async_authentication_rejected(self) -> None:
         """Retire a rejected durable revision without logging its contents."""
