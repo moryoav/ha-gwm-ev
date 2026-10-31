@@ -16,7 +16,7 @@ from .apac_material import ApacMaterial
 from .apac_policy import validate_apac_country
 from .apac_request import prepare_apac_request
 from .client import _decode_envelope
-from .errors import GwmDeadlineExceededError, GwmSchemaError
+from .errors import GwmClosedError, GwmDeadlineExceededError, GwmSchemaError
 from .models import (
     CloudVehicle,
     CloudVehicleBasics,
@@ -57,12 +57,14 @@ class ApacReadClient:
         self._transport = transport
         self._owns_transport = owns_transport
         self._closed = False
+        self._closing = False
         self._lock = asyncio.Lock()
+        self._close_lock = asyncio.Lock()
 
     @property
     def authenticated(self) -> bool:
         """Report whether this private read session is still usable locally."""
-        return not self._closed
+        return not self._closed and not self._closing
 
     def replace_session(self, session: ApacReadSession) -> None:
         """Accept a refreshed session only for the same country and device."""
@@ -70,17 +72,26 @@ class ApacReadClient:
             type(session) is not ApacReadSession
             or session.country != self._session.country
             or session.device_id != self._session.device_id
-            or self._closed
+            or self._closed or self._closing
         ):
             raise ValueError("apac_session_invalid")
         self._session = session
 
     async def aclose(self) -> None:
-        """Close an owned transport without closing caller-owned resources."""
-        if not self._closed:
-            self._closed = True
-            if self._owns_transport:
-                await self._transport.aclose()
+        """Drain active reads and close only owned resources, allowing retries."""
+        async with self._close_lock:
+            if self._closed:
+                return
+            self._closing = True
+            try:
+                async with self._lock:
+                    if self._owns_transport:
+                        await self._transport.aclose()
+                    self._closed = True
+            except BaseException:
+                self._closing = False
+                raise
+            self._closing = False
 
     async def _read(
         self,
@@ -90,12 +101,14 @@ class ApacReadClient:
         """Execute one allowlisted vehicle read with a bounded deadline."""
         if operation not in {"acquire_vehicles", "get_last_status", "get_vehicle_basics"}:
             raise ValueError("apac_operation_not_supported")
-        if self._closed:
-            raise ValueError("apac_session_invalid")
+        if self._closed or self._closing:
+            raise GwmClosedError(operation=operation)
         loop = asyncio.get_running_loop()
         deadline = _Deadline(loop.time() + 30.0)
         try:
             async with asyncio.timeout_at(deadline.expires_at), self._lock:
+                if self._closed or self._closing:
+                    raise GwmClosedError(operation=operation)
                 request = prepare_apac_request(
                     operation=operation,
                     material=self._material,

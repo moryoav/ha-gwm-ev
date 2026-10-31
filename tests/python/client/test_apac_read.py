@@ -11,7 +11,7 @@ from custom_components.gwm_ora.gwm_client._protocol import _TransportResponse
 from custom_components.gwm_ora.gwm_client.apac_identity import _register_validated_context
 from custom_components.gwm_ora.gwm_client.apac_material import ApacMaterial
 from custom_components.gwm_ora.gwm_client.apac_read import ApacReadClient, ApacReadSession
-from custom_components.gwm_ora.gwm_client.errors import GwmDeadlineExceededError, GwmSchemaError
+from custom_components.gwm_ora.gwm_client.errors import GwmClosedError, GwmDeadlineExceededError, GwmSchemaError
 from custom_components.gwm_ora.gwm_client.eu_identity import EuBootstrapMaterial
 from custom_components.gwm_ora.gwm_client.models import CloudVehicleBasics
 from custom_components.gwm_ora.gwm_client.regions import TlsMode
@@ -41,7 +41,7 @@ class FakeTransport:
         pass
 
 
-def _client(transport: FakeTransport, *, country: str = "PK") -> ApacReadClient:
+def _client(transport: FakeTransport, *, country: str = "PK", owns_transport: bool = False) -> ApacReadClient:
     """Create an isolated read client with a synthetic validated context."""
     material = ApacMaterial(
         EuBootstrapMaterial(b"synthetic-certificate", b"c3ludGhldGljLWtleQ==", b"synthetic-ca"),
@@ -52,7 +52,7 @@ def _client(transport: FakeTransport, *, country: str = "PK") -> ApacReadClient:
     context.set_ciphers("DEFAULT:@SECLEVEL=0")
     _register_validated_context(context, TlsMode.APAC_ISSUED_MTLS)
     session = ApacReadSession("a" * 32, "synthetic-token", context, country=country)
-    return ApacReadClient(material=material, session=session, transport=transport)
+    return ApacReadClient(material=material, session=session, transport=transport, owns_transport=owns_transport)
 
 
 @pytest.mark.asyncio
@@ -257,3 +257,64 @@ async def test_missing_status_items_remain_unknown(payload: object) -> None:
     assert status.items == ()
     assert snapshot.values.soc is None
     assert snapshot.values.range_km is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("owns_transport", [False, True])
+async def test_closing_drains_the_active_read_and_rejects_queued_requests(owns_transport: bool) -> None:
+    """No queued read may dispatch after shutdown starts, even on borrowed transports."""
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    close_calls = []
+
+    class Transport(FakeTransport):
+        async def execute(self, request, **kwargs):
+            """Hold one active request until shutdown is waiting."""
+            entered.set()
+            await release.wait()
+            return await super().execute(request, **kwargs)
+
+        async def aclose(self):
+            """Record ownership-sensitive disposal without network activity."""
+            close_calls.append("closed")
+
+    transport = Transport()
+    client = _client(transport, owns_transport=owns_transport)
+    active = asyncio.create_task(client.acquire_vehicles())
+    await entered.wait()
+    queued = asyncio.create_task(client.acquire_vehicles())
+    await asyncio.sleep(0)
+    closing = asyncio.create_task(client.aclose())
+    await asyncio.sleep(0)
+    assert not closing.done()
+    release.set()
+    await active
+    with pytest.raises(GwmClosedError):
+        await queued
+    await closing
+    await client.aclose()
+    with pytest.raises(GwmClosedError):
+        await client.acquire_vehicles()
+    assert transport.operations == ["acquire_vehicles"]
+    assert close_calls == (["closed"] if owns_transport else [])
+
+
+@pytest.mark.asyncio
+async def test_cancelled_transport_close_can_be_retried() -> None:
+    """Do not mark a transport closed when its cleanup was interrupted."""
+    calls = []
+
+    class Transport(FakeTransport):
+        async def aclose(self):
+            """Simulate one interrupted cleanup before a successful retry."""
+            calls.append("close")
+            if len(calls) == 1:
+                raise asyncio.CancelledError()
+
+    client = _client(Transport(), owns_transport=True)
+    with pytest.raises(asyncio.CancelledError):
+        await client.aclose()
+    assert client.authenticated
+    await client.aclose()
+    assert not client.authenticated
+    assert calls == ["close", "close"]
