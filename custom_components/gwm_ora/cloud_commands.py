@@ -74,6 +74,8 @@ class GwmCommandApi:
         *,
         enabled: bool,
         apac_climate_enabled: bool = False,
+        apac_remote_enabled: bool = False,
+        apac_charging_enabled: bool = False,
         charging_enabled: bool = False,
         security_pin: str | None,
         clock: Callable[[], datetime] | None = None,
@@ -84,6 +86,8 @@ class GwmCommandApi:
             or getattr(cloud, "region", None) != credentials.region
             or type(enabled) is not bool
             or type(apac_climate_enabled) is not bool
+            or type(apac_remote_enabled) is not bool
+            or type(apac_charging_enabled) is not bool
             or type(charging_enabled) is not bool
             or (security_pin is not None and not isinstance(security_pin, str))
             or (clock is not None and not callable(clock))
@@ -95,6 +99,8 @@ class GwmCommandApi:
         self._credentials = credentials
         self._enabled = enabled
         self._apac_climate_enabled = apac_climate_enabled
+        self._apac_remote_enabled = apac_remote_enabled
+        self._apac_charging_enabled = apac_charging_enabled
         self._charging_enabled = charging_enabled
         self._security_pin = security_pin.strip() if security_pin else ""
         self._clock = clock or (lambda: datetime.now(UTC))
@@ -321,6 +327,35 @@ class GwmCommandApi:
         return await self._record_acceptance(
             identifier, command_name, acceptance.command_id
         )
+
+    async def async_apac_control(self, vin: str, action: str) -> dict[str, object]:
+        """Validate, send and journal an explicitly approved APAC operation."""
+        names = {
+            "tailgate_open": "Tailgate open", "tailgate_close": "Tailgate close",
+            "charge_now": "Start charging", "charge_off": "Stop charging",
+            "steering_wheel_heating": "Steering heating on", "steering_wheel_heatless": "Steering heating off",
+            "horn": "Horn", "flash_lights": "Flash lights", "horn_and_lights": "Horn and lights",
+            "remote_start": "Remote start", "remote_stop": "Remote stop",
+            "sunroof_close": "Sunroof close", "defrost_back_start": "Rear defrost on", "defrost_back_stop": "Rear defrost off",
+            "seat_heating_start": "Driver seat heating on", "seat_heating_stop": "Driver seat heating off",
+            "seat_heating_start_passenger": "Passenger seat heating on", "seat_heating_stop_passenger": "Passenger seat heating off",
+            "seat_ventilation_start": "Driver seat ventilation on", "seat_ventilation_stop": "Driver seat ventilation off",
+            "seat_ventilation_start_passenger": "Passenger seat ventilation on", "seat_ventilation_stop_passenger": "Passenger seat ventilation off",
+        }
+        names.update({
+            f"seat_{kind}{passenger}_level_{level}": f"{'Passenger' if passenger else 'Driver'} seat {kind} level {level}"
+            for kind in ("heating", "ventilation") for passenger in ("", "_passenger") for level in (1, 2, 3)
+        })
+        if self._cloud.region != REGION_APAC or not isinstance(action, str) or action not in names or not self._security_pin:
+            raise GwmCommandForbidden("GWM APAC control is unavailable")
+        allowed = self._apac_charging_enabled if action in {"charge_now", "charge_off"} else self._apac_remote_enabled
+        if not allowed:
+            raise GwmCommandForbidden("GWM APAC control requires explicit opt-in")
+        identifier = _vehicle_identifier(vin, command_name=names[action])
+        acceptance = await self._cloud.async_send_apac_control(
+            identifier, action, security_password_hash=_security_password_hash(self._security_pin),
+        )
+        return await self._record_acceptance(identifier, names[action], acceptance.command_id)
 
     async def async_close_windows(self, vin: str) -> dict[str, object]:
         """Validate, send, and journal one close-all-windows request."""
@@ -653,7 +688,9 @@ class GwmCommandApi:
     def _ensure_available(self) -> None:
         """Require remote-command consent and a writable regional backend."""
         if self._cloud.region == REGION_APAC:
-            raise GwmCommandForbidden("GWM APAC is read-only")
+            if not getattr(self, "_apac_remote_enabled", False) or not self._security_pin:
+                raise GwmCommandForbidden("GWM APAC vehicle controls require opt-in and a security PIN")
+            return
         if not self._enabled:
             raise GwmCommandForbidden("GWM cloud remote commands are disabled")
         if self._cloud.region != "cn" and not self._security_pin:

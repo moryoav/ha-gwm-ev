@@ -9,7 +9,8 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from ._protocol import _AsyncTransport, _Deadline
-from .apac_climate import climate_payload
+from .apac_climate import climate_defaults_payload, climate_payload
+from .apac_controls import control_payload
 from .apac_material import ApacMaterial
 from .apac_policy import validate_apac_country
 from .apac_request import prepare_apac_request
@@ -137,7 +138,7 @@ class ApacReadClient:
         """Discover account vehicles without sending a control request."""
         data = await self._read("acquire_vehicles")
         try:
-            return parse_cloud_vehicles(data, allow_numbers_for_strings=True)
+            return parse_cloud_vehicles(data, allow_numbers_for_strings=True, include_rudder=True)
         except ValueError:
             raise GwmSchemaError(operation="acquire_vehicles") from None
 
@@ -150,6 +151,13 @@ class ApacReadClient:
         await self._climate_exchange("send_climate_command", command.identifier, body=payload)
         return RemoteCommandAcceptance(sequence)
 
+    async def update_climate_defaults(
+        self, identifier: VehicleIdentifier, *, temperature: int, operation_time_minutes: int,
+    ) -> None:
+        """Save the APAC climate defaults once without automatic replay."""
+        body = climate_defaults_payload(identifier, temperature, operation_time_minutes)
+        await self._climate_exchange("update_climate_defaults", identifier, body=body)
+
     async def get_remote_command_results(
         self, identifier: VehicleIdentifier, command_id: str
     ) -> tuple[RemoteCommandResultItem, ...]:
@@ -160,6 +168,15 @@ class ApacReadClient:
         except (TypeError, ValueError):
             raise GwmSchemaError(operation="get_remote_command_result") from None
 
+    async def send_apac_control(
+        self, identifier: VehicleIdentifier, action: str, *, security_password_hash: str, driver_right: bool | None = None,
+    ) -> RemoteCommandAcceptance:
+        """Send exactly one allowlisted control without automatic replay."""
+        sequence = uuid.uuid4().hex + "1234"
+        payload = control_payload(identifier, action, security_password_hash=security_password_hash, sequence_number=sequence, driver_right=driver_right)
+        await self._climate_exchange("send_apac_control", identifier, body=payload)
+        return RemoteCommandAcceptance(sequence)
+
     async def _climate_exchange(
         self, operation: str, identifier: VehicleIdentifier, *,
         body: dict[str, object] | None = None, command_id: str | None = None,
@@ -169,11 +186,12 @@ class ApacReadClient:
             raise GwmClosedError(operation=operation)
         deadline = _Deadline(asyncio.get_running_loop().time() + 30.0)
         try:
+            h5_context = await asyncio.to_thread(ssl.create_default_context) if operation == "update_climate_defaults" else None
             async with asyncio.timeout_at(deadline.expires_at), self._lock:
                 if self._closed or self._closing:
                     raise GwmClosedError(operation=operation)
                 request = prepare_apac_request(
-                    operation=operation, material=self._material, ssl_context=self._session.app_ssl_context,
+                    operation=operation, material=self._material, ssl_context=h5_context or self._session.app_ssl_context,
                     device_id=self._session.device_id, access_token=self._session.access_token,
                     country=self._session.country, vehicle_id=identifier.value, body=body, command_id=command_id,
                 )

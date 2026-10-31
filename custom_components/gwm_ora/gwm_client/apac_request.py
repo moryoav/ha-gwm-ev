@@ -8,7 +8,8 @@ from urllib.parse import quote
 
 from ._dotnet_json import encode_dotnet_json
 from ._protocol import _TransportRequest
-from .apac_climate import validate_climate_payload
+from .apac_climate import validate_climate_defaults_payload, validate_climate_payload
+from .apac_controls import validate_control_payload
 from .apac_endpoints import apac_endpoint
 from .apac_identity import _is_validated_context
 from .apac_material import ApacMaterial
@@ -104,7 +105,7 @@ def prepare_apac_request(
             query = (
                 "?vin=" + quote(vehicle_id, safe="") + ("&seqNo=" if operation == "get_last_status" else "&flag=true")
             )
-        elif operation in {"send_climate_command", "get_remote_command_result"}:
+        elif operation in {"send_climate_command", "send_apac_control", "update_climate_defaults", "get_remote_command_result"}:
             if not isinstance(vehicle_id, str) or not vehicle_id or len(vehicle_id) > 512:
                 raise ValueError("invalid")
             VehicleIdentifier(vehicle_id)
@@ -115,7 +116,12 @@ def prepare_apac_request(
             else:
                 if command_id is not None:
                     raise ValueError("invalid")
-                validate_climate_payload(body, vehicle_id)
+                if operation == "send_apac_control":
+                    validate_control_payload(body, vehicle_id)
+                elif operation == "update_climate_defaults":
+                    validate_climate_defaults_payload(body, vehicle_id)
+                else:
+                    validate_climate_payload(body, vehicle_id)
                 query = ""
         elif vehicle_id is None and command_id is None:
             query = ""
@@ -135,7 +141,7 @@ def prepare_apac_request(
         }
         if access_token is not None:
             headers["accessToken"] = access_token
-        if operation in {"send_climate_command", "get_remote_command_result"}:
+        if operation in {"send_climate_command", "send_apac_control", "update_climate_defaults", "get_remote_command_result"}:
             assert vehicle_id is not None
             headers["vin"] = vehicle_id
         if body_text is not None:

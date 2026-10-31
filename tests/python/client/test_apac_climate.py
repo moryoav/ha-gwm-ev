@@ -13,7 +13,12 @@ from custom_components.gwm_ora.cloud_runtime import GwmCloudClient
 from custom_components.gwm_ora.cloud_storage import GwmCommandJournalEntry
 from custom_components.gwm_ora.const import REGION_APAC
 from custom_components.gwm_ora.gwm_client._protocol import _TransportResponse
-from custom_components.gwm_ora.gwm_client.apac_climate import climate_payload, validate_climate_payload
+from custom_components.gwm_ora.gwm_client.apac_climate import (
+    climate_defaults_payload,
+    climate_payload,
+    validate_climate_defaults_payload,
+    validate_climate_payload,
+)
 from custom_components.gwm_ora.gwm_client.apac_identity import _register_validated_context
 from custom_components.gwm_ora.gwm_client.apac_material import ApacMaterial
 from custom_components.gwm_ora.gwm_client.apac_read import ApacReadClient, ApacReadSession
@@ -56,6 +61,17 @@ def test_climate_request_rejects_other_vehicle_instructions():
     payload["instructions"]["0x05"] = {"switchOrder": "1"}
     with pytest.raises(ValueError, match="apac_climate_command_invalid"):
         validate_climate_payload(payload, command.identifier.value)
+
+
+def test_climate_defaults_follow_previous_apac_seconds_format():
+    """Retain the previously used settings write and reject unrelated fields."""
+    vehicle = VehicleIdentifier("SYNTHETIC-VEHICLE")
+    body = climate_defaults_payload(vehicle, 22, 15)
+    assert body == {"airConditionerTemperature": "22", "airConditionerTime": "900", "vin": vehicle.value}
+    validate_climate_defaults_payload(body, vehicle.value)
+    body["unrelated"] = "synthetic"
+    with pytest.raises(ValueError):
+        validate_climate_defaults_payload(body, vehicle.value)
 
 
 @pytest.mark.asyncio
@@ -197,4 +213,4 @@ async def test_climate_api_dispatches_only_after_consent(monkeypatch):
     monkeypatch.setattr(api, "_record_acceptance", record)
     result = await api.async_set_climate(identifier.value, mode="auto", temperature=22)
     assert result["name"] == "A/C"
-    assert transport.operations == ["get_vehicle_basics", "send_climate_command"]
+    assert transport.operations == ["get_vehicle_basics", "update_climate_defaults", "send_climate_command"]

@@ -30,6 +30,8 @@ _ENDPOINTS = MappingProxyType(
         "get_last_status": ApacEndpoint("GET", GatewayRole.APP_V1, "vehicle/getLastStatus", True),
         "get_vehicle_basics": ApacEndpoint("GET", GatewayRole.APP_V1, "vehicle/vehicleBasicsInfo", True),
         "send_climate_command": ApacEndpoint("POST", GatewayRole.APP_V1, "vehicle/T5/sendCmd", True),
+        "send_apac_control": ApacEndpoint("POST", GatewayRole.APP_V1, "vehicle/T5/sendCmd", True),
+        "update_climate_defaults": ApacEndpoint("POST", GatewayRole.H5_V1, "vehicle/modifyVehicleRemoteCtlInfo", True),
         "get_remote_command_result": ApacEndpoint("GET", GatewayRole.APP_V1, "vehicle/getRemoteCtrlResultT5", True),
     }
 )

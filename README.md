@@ -42,7 +42,7 @@ The setup flow currently offers:
 - Australia and New Zealand.
 - Russia.
 - Mainland China, using the phone number registered in the official GWM app.
-- Asia-Pacific (development branch): Pakistan, Thailand, Malaysia and Indonesia. Read-only access is the default; experimental climate commands require a separate opt-in. See [APAC development setup](docs/apac-read-only-draft.md).
+- Asia-Pacific (development branch): Pakistan, Thailand, Malaysia and Indonesia. Read-only access is the default; experimental climate, vehicle and direct charging commands require separate opt-ins. See [APAC development setup](docs/apac-read-only-draft.md).
 
 The account region must match the region used by the official GWM app. It is not based on the vehicle's current location.
 

@@ -8,7 +8,7 @@ This project follows semantic versioning. HACS uses the latest GitHub release ta
 
 ## [Unreleased]
 
-- Added an experimental, separately opted-in APAC climate command path. Other APAC controls and charging writes remain disabled. This implementation requires live validation.
+- Added experimental APAC climate, vehicle and direct charging controls behind separate opt-ins. This implementation requires live validation; APAC charging schedules remain unavailable.
 
 ### Added
 

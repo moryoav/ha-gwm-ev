@@ -40,7 +40,9 @@ from .const import (
     CONF_AUTHENTICATION_METHOD,
     CONF_CONNECTION_TYPE,
     CONF_COUNTRY,
+    CONF_ENABLE_APAC_CHARGING,
     CONF_ENABLE_APAC_CLIMATE,
+    CONF_ENABLE_APAC_REMOTE,
     CONF_ENABLE_CHARGING_CONTROL,
     CONF_ENABLE_REMOTE_COMMANDS,
     CONF_LOG_LEVEL,
@@ -155,7 +157,7 @@ def _region_schema(default: str = REGION_EU) -> vol.Schema:
 
 def _apac_read_only_options(options: Mapping[str, Any]) -> dict[str, Any]:
     """Remove write consent and PINs when an entry becomes read-only APAC."""
-    blocked = {CONF_ENABLE_REMOTE_COMMANDS, CONF_ENABLE_CHARGING_CONTROL, CONF_ENABLE_APAC_CLIMATE, CONF_SECURITY_PIN}
+    blocked = {CONF_ENABLE_REMOTE_COMMANDS, CONF_ENABLE_CHARGING_CONTROL, CONF_ENABLE_APAC_CLIMATE, CONF_ENABLE_APAC_REMOTE, CONF_ENABLE_APAC_CHARGING, CONF_SECURITY_PIN}
     return {key: value for key, value in options.items() if key not in blocked}
 
 
@@ -241,6 +243,8 @@ def _cloud_options_schema(entry: ConfigEntry, defaults: dict[str, Any] | None = 
             if marker.schema not in {CONF_ENABLE_REMOTE_COMMANDS, CONF_ENABLE_CHARGING_CONTROL}
         }
         fields[vol.Required(CONF_ENABLE_APAC_CLIMATE, default=current.get(CONF_ENABLE_APAC_CLIMATE, False))] = bool
+        fields[vol.Required(CONF_ENABLE_APAC_REMOTE, default=current.get(CONF_ENABLE_APAC_REMOTE, False))] = bool
+        fields[vol.Required(CONF_ENABLE_APAC_CHARGING, default=current.get(CONF_ENABLE_APAC_CHARGING, False))] = bool
         fields[vol.Optional(CONF_SECURITY_PIN, default=current.get(CONF_SECURITY_PIN, ""))] = _password_selector(
             autocomplete="off"
         )
@@ -858,7 +862,7 @@ class GwmOptionsFlow(config_entries.OptionsFlowWithReload):
             existing_pin = entry.options.get(CONF_SECURITY_PIN)
             preserved_pin = existing_pin.strip() if isinstance(existing_pin, str) else ""
             selected_control = (
-                normalized.get(CONF_ENABLE_APAC_CLIMATE) is True
+                any(normalized.get(key) is True for key in (CONF_ENABLE_APAC_CLIMATE, CONF_ENABLE_APAC_REMOTE, CONF_ENABLE_APAC_CHARGING))
                 if entry.data.get(CONF_REGION) == REGION_APAC
                 else normalized.get(CONF_ENABLE_REMOTE_COMMANDS) is True
             )

@@ -2,7 +2,7 @@
 
 This development branch adds a shared APAC read-only Home Assistant setup for Pakistan (`PK`), Thailand (`TH`), Malaysia (`MY`) and Indonesia (`ID`), the countries listed in My GWM (`com.gwm.tha`). All four countries use the same regional implementation.
 
-Experimental climate commands require the separate APAC climate opt-in and vehicle security PIN. The new climate implementation has synthetic tests but has not yet been tested live on this branch. Lock, window, other vehicle controls and charging writes remain disabled for APAC, including when stale enabled options exist or a direct service call is attempted. Existing region policies remain separate. Authentication and vehicle requests use distinct, strictly validated TLS contexts.
+APAC climate, vehicle controls, and direct start/stop charging each require their own explicit opt-in and a vehicle security PIN. These implementations use the earlier prototype's APAC command formats and still require live testing on this branch. Scheduled charging remains unavailable. The seat-stop request in the earlier implementation contains zeroes for both front and rear seats and may stop more than one seat; test with this behavior in mind. Other regions retain their existing policies. Authentication and vehicle requests use distinct, strictly validated TLS contexts.
 
 ## Private local material
 

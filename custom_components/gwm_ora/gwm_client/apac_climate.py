@@ -59,3 +59,25 @@ def validate_climate_payload(body: object, vehicle_id: str) -> None:
             raise ValueError
     except (TypeError, ValueError, KeyError, OverflowError):
         raise ValueError("apac_climate_command_invalid") from None
+
+
+def climate_defaults_payload(identifier: VehicleIdentifier, temperature: int, operation_time_minutes: int) -> dict[str, object]:
+    """Build the prior APAC app's saved climate settings request."""
+    if (
+        type(identifier) is not VehicleIdentifier or type(temperature) is not int or not 16 <= temperature <= 32
+        or type(operation_time_minutes) is not int or not 5 <= operation_time_minutes <= 30
+    ):
+        raise ValueError("apac_climate_defaults_invalid")
+    return {"airConditionerTemperature": str(temperature), "airConditionerTime": str(operation_time_minutes * 60), "vin": identifier.value}
+
+
+def validate_climate_defaults_payload(body: object, vehicle_id: str) -> None:
+    """Reject malformed settings writes and mismatched vehicle identifiers."""
+    try:
+        if type(body) is not dict:
+            raise ValueError
+        seconds = int(body["airConditionerTime"])
+        if seconds % 60 or body != climate_defaults_payload(VehicleIdentifier(vehicle_id), int(body["airConditionerTemperature"]), seconds // 60):
+            raise ValueError
+    except (TypeError, ValueError, KeyError, OverflowError):
+        raise ValueError("apac_climate_defaults_invalid") from None
