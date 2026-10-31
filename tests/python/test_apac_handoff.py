@@ -1305,3 +1305,55 @@ async def test_apac_write_uses_freshly_validated_vehicle_metadata(monkeypatch, c
             assert transport.writes == []
     finally:
         await cloud.aclose()
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("context_kind", ["system_ca", "issued_identity"])
+async def test_credential_bound_control_times_out_stalled_tls_setup(monkeypatch, context_kind):
+    """Bound both preflight context loads before dispatch and release the session lock."""
+    from unittest.mock import AsyncMock
+
+    import custom_components.gwm_ora.gwm_client.apac_restore as restore
+    from custom_components.gwm_ora.cloud_commands import GwmCommandApi
+    from custom_components.gwm_ora.gwm_client.errors import GwmDeadlineExceededError
+
+    transport = _RuntimeTransport()
+    cloud, _, _ = _runtime_with_synthetic_transport(monkeypatch, transport, apac_remote_enabled=True)
+    await cloud.async_get_vehicle_data()
+    bootstrap = cloud.reusable_bootstrap
+    transport.operations.clear()
+    api = object.__new__(GwmCommandApi)
+    api._cloud = cloud
+    api._security_pin = "1234"
+    api._apac_remote_enabled = True
+    api._apac_charging_enabled = False
+    api._apac_closing = False
+    api._apac_submissions = {}
+    api._record_acceptance = AsyncMock()
+    original_to_thread = asyncio.to_thread
+    target = ssl.create_default_context if context_kind == "system_ca" else restore.create_apac_issued_context
+    started = asyncio.Event()
+
+    async def stall_selected_context(function, *args, **kwargs):
+        """Pause one context builder while retaining the normal behavior of the other."""
+        if function is target:
+            started.set()
+            await asyncio.Event().wait()
+        return await original_to_thread(function, *args, **kwargs)
+
+    monkeypatch.setattr(asyncio, "to_thread", stall_selected_context)
+    if context_kind == "system_ca":
+        monkeypatch.setattr(runtime, "_APAC_TLS_SETUP_TIMEOUT", 0.02)
+    else:
+        monkeypatch.setattr(restore, "_TLS_SETUP_TIMEOUT", 0.02)
+    try:
+        with pytest.raises(GwmDeadlineExceededError):
+            await asyncio.wait_for(api.async_apac_control("SYNTHETIC-VEHICLE", "tailgate_open"), 1.0)
+        assert started.is_set()
+        assert not cloud._session_renewal_lock.locked()
+        assert transport.operations == []
+        assert cloud.reusable_bootstrap == bootstrap
+        assert cloud._pending_auth_state is None
+        api._record_acceptance.assert_not_awaited()
+        assert (await cloud.async_get_vehicle_data())["vehicles"][0]["vin"] == "SYNTHETIC-VEHICLE"
+    finally:
+        await cloud.aclose()

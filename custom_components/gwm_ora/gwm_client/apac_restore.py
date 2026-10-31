@@ -14,8 +14,16 @@ from .apac_identity import create_apac_issued_context
 from .apac_material import ApacMaterial
 from .apac_read import ApacReadClient, ApacReadSession
 from .apac_state import ApacAuthState
-from .errors import GwmApiError, GwmAuthenticationError, is_overseas_refresh_rejected, is_overseas_session_expired
+from .errors import (
+    GwmApiError,
+    GwmAuthenticationError,
+    GwmDeadlineExceededError,
+    is_overseas_refresh_rejected,
+    is_overseas_session_expired,
+)
 from .models import CloudVehicle
+
+_TLS_SETUP_TIMEOUT = 30.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,9 +67,12 @@ async def restore_apac_session(
     ):
         raise GwmAuthenticationError(operation="login")
     try:
-        context = await asyncio.to_thread(
-            create_apac_issued_context, state.issued_identity, ca_bundle=material.bootstrap.ca_bundle
-        )
+        async with asyncio.timeout(_TLS_SETUP_TIMEOUT):
+            context = await asyncio.to_thread(
+                create_apac_issued_context, state.issued_identity, ca_bundle=material.bootstrap.ca_bundle
+            )
+    except TimeoutError:
+        raise GwmDeadlineExceededError(operation="refresh_token") from None
     except (TypeError, ValueError):
         raise GwmAuthenticationError(operation="login") from None
 

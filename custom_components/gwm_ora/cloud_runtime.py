@@ -68,6 +68,7 @@ from .gwm_client import (
     GwmClientConfig,
     GwmClosedError,
     GwmConfigurationError,
+    GwmDeadlineExceededError,
     GwmNetworkError,
     GwmOptionalEndpointError,
     GwmProtocolError,
@@ -97,6 +98,7 @@ from .gwm_client.transport import AiohttpTransport
 _HANDOFF_TTL_SECONDS = 5 * 60
 _HANDOFF_DATA_KEY = f"{DOMAIN}_cloud_handoffs"
 _ACCOUNT_BINDING = re.compile(r"[0-9a-f]{64}")
+_APAC_TLS_SETUP_TIMEOUT = 30.0
 
 
 class _OverseasReadClient(Protocol):
@@ -1241,7 +1243,11 @@ class GwmCloudClient:
                 self._pending_auth_state = restored.state
                 await self._async_flush_pending_auth_state()
 
-        h5_context = await asyncio.to_thread(ssl.create_default_context)
+        try:
+            async with asyncio.timeout(_APAC_TLS_SETUP_TIMEOUT):
+                h5_context = await asyncio.to_thread(ssl.create_default_context)
+        except TimeoutError:
+            raise GwmDeadlineExceededError(operation="refresh_token") from None
         restored = await restore_apac_session(
             credentials=regional_credentials,
             material=bootstrap.apac_material,
