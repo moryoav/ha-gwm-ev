@@ -1079,6 +1079,7 @@ class GwmCloudClient:
                     h5_context=h5_context,
                     transport=client._transport,
                     on_session_updated=accept_session_update,
+                    force_refresh=True,
                 )
                 await accept_session_update(restored)
                 try:

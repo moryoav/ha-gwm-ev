@@ -24,6 +24,7 @@ class ApacRestored:
     state: ApacAuthState = field(repr=False)
     session: ApacReadSession = field(repr=False)
 
+
 type ApacSessionUpdated = Callable[[ApacRestored], Awaitable[None]]
 
 
@@ -35,6 +36,7 @@ async def restore_apac_session(
     h5_context: ssl.SSLContext,
     transport: _AsyncTransport,
     on_session_updated: ApacSessionUpdated | None = None,
+    force_refresh: bool = False,
 ) -> ApacRestored:
     """Validate stored identity and test access, refreshing once if rejected.
 
@@ -49,6 +51,7 @@ async def restore_apac_session(
         or not state.matches(credentials)
         or state.tokens is None
         or state.issued_identity is None
+        or type(force_refresh) is not bool
     ):
         raise GwmAuthenticationError(operation="login")
     try:
@@ -61,23 +64,26 @@ async def restore_apac_session(
     def read_session(access_token: str) -> ApacReadSession:
         """Construct a read session from the already bound account state."""
         return ApacReadSession(
-            device_id=credentials.device_id, access_token=access_token,
-            app_ssl_context=context, country=credentials.country,
+            device_id=credentials.device_id,
+            access_token=access_token,
+            app_ssl_context=context,
+            country=credentials.country,
         )
 
     session = read_session(state.tokens.access_token)
     reader = ApacReadClient(material=material, session=session, transport=transport)
     auth = ApacAuthClient(material=material, credentials=credentials, h5_context=h5_context, transport=transport)
-    try:
-        await reader.acquire_vehicles()
-        profile = await auth.get_user_info(state.tokens.access_token)
-    except (GwmAuthenticationError, GwmApiError) as error:
-        if not is_overseas_session_expired(error):
-            raise
-    else:
-        if profile != (state.tokens.gw_id, state.tokens.bean_id):
-            raise GwmAuthenticationError(operation="get_user_info")
-        return ApacRestored(state, session)
+    if not force_refresh:
+        try:
+            await reader.acquire_vehicles()
+            profile = await auth.get_user_info(state.tokens.access_token)
+        except (GwmAuthenticationError, GwmApiError) as error:
+            if not is_overseas_session_expired(error):
+                raise
+        else:
+            if profile != (state.tokens.gw_id, state.tokens.bean_id):
+                raise GwmAuthenticationError(operation="get_user_info")
+            return ApacRestored(state, session)
     try:
         tokens = await auth.refresh(state.tokens)
     except GwmApiError as error:
