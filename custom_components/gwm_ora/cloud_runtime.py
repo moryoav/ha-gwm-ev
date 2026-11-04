@@ -992,7 +992,7 @@ class GwmCloudClient:
     ) -> None:
         credentials = self._credentials
         if (
-            (state.g_refresh_token if type(state) is ChinaAuthState else state.refresh_token) is None
+            (state.g_refresh_token if isinstance(state, ChinaAuthState) else state.refresh_token) is None
             or credentials is None
             or credentials.region != self.region
         ):
@@ -1002,6 +1002,7 @@ class GwmCloudClient:
             )
         regional_credentials = credentials.client_credentials()
         client = cast(_OverseasReadClient, self._client)
+        result: ChinaAuthenticated | EuAuthenticated | AnzAuthenticated | RussiaAuthenticated
         if self.region == REGION_CHINA and type(state) is ChinaAuthState:
             if type(regional_credentials) is not ChinaCredentials:
                 raise GwmAuthenticationError(operation=trigger.operation, api_code=trigger.api_code)
