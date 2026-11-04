@@ -596,10 +596,11 @@ class ChinaClient:
         ):
             raise GwmConfigurationError(operation="refresh_token")
 
-        async def refresh(deadline: _Deadline) -> tuple[ChinaAuthenticated, tuple[ChinaVehicle, ...]]:
+        async def refresh(deadline: _Deadline) -> tuple[ChinaAuthenticated, tuple[ChinaVehicle, ...], int]:
             if self._session is not None and self._session != state:
                 raise GwmConfigurationError(operation="refresh_token")
             self._revoke_session()
+            revision = self._session_revision
             refreshed = await self._refresh_g_app(credentials, state, deadline=deadline) if state.complete else state
             if on_state is not None:
                 await on_state(refreshed)
@@ -611,16 +612,16 @@ class ChinaClient:
             )
             complete = _apply_platform_results(refreshed, bean_result=bean_result, auto_result=auto_result)
             vehicles = await self._acquire_vehicles_for_state(complete, deadline=deadline)
-            return ChinaAuthenticated(complete), vehicles
+            return ChinaAuthenticated(complete), vehicles, revision
 
-        def install(result: tuple[ChinaAuthenticated, tuple[ChinaVehicle, ...]]) -> None:
+        def install(result: tuple[ChinaAuthenticated, tuple[ChinaVehicle, ...], int]) -> None:
             self._install_if_revision(
-                expected_revision=self._session_revision,
+                expected_revision=result[2],
                 state=result[0].state,
                 vehicles=result[1],
             )
 
-        result, _vehicles = await self._run_read(
+        result, _vehicles, _revision = await self._run_read(
             "refresh_token", timeout=timeout, action=refresh, commit=install,
         )
         return result
