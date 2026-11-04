@@ -558,6 +558,23 @@ async def test_auto_ai_rejection_during_explicit_refresh_is_authentication_failu
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("code", [[], {"code": "550004"}])
+async def test_explicit_refresh_rejects_malformed_auto_ai_error_code(code: object) -> None:
+    plans = _success_plans(login=False)
+    plans["refresh_token"] = [FIXTURE["responses"]["login"]]
+    plans["initialize_auto_ai"] = [{"header": {"c": code}}]
+    transport = _FakeTransport(**plans)
+    client = _client(transport)
+
+    with pytest.raises(GwmSchemaError) as raised:
+        await client.refresh_session(_credentials(), _complete_state())
+
+    assert raised.value.operation == "initialize_auto_ai"
+    assert not client.authenticated
+    assert not any(request.operation in {"login", "request_verification"} for request in transport.calls)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("code", ["1013", 1013])
 @pytest.mark.parametrize("operation", [
     "refresh_token", "initialize_bean_tech", "initialize_auto_ai", "acquire_vehicles",
