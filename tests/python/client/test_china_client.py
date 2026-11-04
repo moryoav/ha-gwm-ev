@@ -415,6 +415,51 @@ async def test_explicit_session_refresh_renews_platforms_without_sms_or_old_disc
 
 
 @pytest.mark.asyncio
+async def test_renewal_platform_logins_start_together_with_one_deadline() -> None:
+    bean_started = asyncio.Event()
+    auto_started = asyncio.Event()
+    deadlines: list[_Deadline] = []
+
+    class Transport(_FakeTransport):
+        async def execute(self, request: _ChinaTransportRequest, **kwargs: Any) -> _ChinaTransportResponse:
+            if request.operation in {"initialize_bean_tech", "initialize_auto_ai"}:
+                deadlines.append(kwargs["deadline"])
+                started, other = (bean_started, auto_started) if request.operation == "initialize_bean_tech" else (auto_started, bean_started)
+                started.set()
+                await other.wait()
+            return await super().execute(request, **kwargs)
+
+    plans = _success_plans(login=False)
+    plans["refresh_token"] = [FIXTURE["responses"]["login"]]
+    client = _client(Transport(**plans))
+
+    result = await asyncio.wait_for(client.refresh_session(_credentials(), _complete_state()), 5)
+
+    assert result.state.complete and client.authenticated
+    assert len(deadlines) == 2 and deadlines[0] is deadlines[1]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bean_code,auto_code,expected,code", [
+    ("7654321", "550004", GwmAuthenticationError, "550004"),
+    ("550004", "1013", GwmApiError, "1013"),
+])
+async def test_concurrent_renewal_preserves_authentication_and_risk_failures(
+    bean_code: str, auto_code: str, expected: type[GwmClientError], code: str,
+) -> None:
+    transport = _FakeTransport(
+        refresh_token=[FIXTURE["responses"]["login"]],
+        initialize_bean_tech=[{"code": bean_code}],
+        initialize_auto_ai=[{"header": {"c": auto_code}}],
+    )
+    client = _client(transport)
+    with pytest.raises(expected) as raised:
+        await client.refresh_session(_credentials(), _complete_state())
+    assert raised.value.api_code == code
+    assert not client.authenticated
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("code", ["550004", 550004])
 async def test_beantech_status_expiry_revokes_session_without_leaking_response(code: object) -> None:
     transport = _FakeTransport(
@@ -530,7 +575,7 @@ async def test_explicit_refresh_risk_control_stops_without_sms(operation: str, c
     assert raised.value.api_code == "1013"
     assert raised.value.operation == operation
     assert not client.authenticated
-    assert transport.calls[-1].operation == operation
+    assert Counter(request.operation for request in transport.calls)[operation] == 1
     assert Counter(request.operation for request in transport.calls)["refresh_token"] == 1
     assert not any(request.operation in {"login", "request_verification"} for request in transport.calls)
 

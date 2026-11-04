@@ -604,13 +604,24 @@ class ChinaClient:
             refreshed = await self._refresh_g_app(credentials, state, deadline=deadline) if state.complete else state
             if on_state is not None:
                 await on_state(refreshed)
-            bean_result = await self._initialize_service(
-                "bean_tech", credentials=credentials, partial=refreshed, deadline=deadline,
+            try:
+                async with asyncio.TaskGroup() as group:
+                    bean_task = group.create_task(self._initialize_service(
+                        "bean_tech", credentials=credentials, partial=refreshed, deadline=deadline,
+                    ))
+                    auto_task = group.create_task(self._initialize_service(
+                        "auto_ai", credentials=credentials, partial=refreshed, deadline=deadline,
+                    ))
+            except ExceptionGroup as group_error:
+                errors = _flatten_client_errors(group_error)
+                for error_type in (_ChinaRiskControlError, GwmAuthenticationError, GwmClientError):
+                    for error in errors:
+                        if isinstance(error, error_type):
+                            raise error from None
+                raise
+            complete = _apply_platform_results(
+                refreshed, bean_result=bean_task.result(), auto_result=auto_task.result(),
             )
-            auto_result = await self._initialize_service(
-                "auto_ai", credentials=credentials, partial=refreshed, deadline=deadline,
-            )
-            complete = _apply_platform_results(refreshed, bean_result=bean_result, auto_result=auto_result)
             vehicles = await self._acquire_vehicles_for_state(complete, deadline=deadline)
             return ChinaAuthenticated(complete), vehicles, revision
 
@@ -4301,7 +4312,7 @@ def _failure_label(prefix: str, error: GwmClientError) -> str:
     return label
 
 
-def _flatten_client_errors(group: BaseExceptionGroup[GwmClientError]) -> list[GwmClientError]:
+def _flatten_client_errors(group: BaseExceptionGroup[BaseException]) -> list[GwmClientError]:
     result: list[GwmClientError] = []
     for error in group.exceptions:
         if isinstance(error, BaseExceptionGroup):

@@ -952,7 +952,7 @@ async def test_waiting_poll_resumes_partial_china_renewal_after_failure_or_cance
         }}],
         initialize_bean_tech=([wait_for_cancellation] if cancelled else [GwmNetworkError(operation="initialize_bean_tech")] * 3)
         + [contracts["responses"]["bean_tech"]],
-        initialize_auto_ai=[contracts["responses"]["auto_ai"]],
+        initialize_auto_ai=[contracts["responses"]["auto_ai"]] * 2,
         get_last_status=[bean_contracts["response"]],
     )
     credentials = GwmCloudCredentials("cn", "CN", contracts["credentials"]["phone"], None, _DEVICE_ID)
