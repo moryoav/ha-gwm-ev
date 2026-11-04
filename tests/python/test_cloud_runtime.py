@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import ssl
+from collections import deque
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -39,6 +41,8 @@ from custom_components.gwm_ora.gwm_client import (
     ChargingPlanInfo,
     ChinaAuthenticated,
     ChinaAuthState,
+    ChinaClient,
+    ChinaClientConfig,
     ChinaVehicle,
     ChinaVehicleControlCommand,
     ClimateCommand,
@@ -65,6 +69,7 @@ from custom_components.gwm_ora.gwm_client import (
     RemoteCommandAcceptance,
     VehicleIdentifier,
 )
+from custom_components.gwm_ora.gwm_client.china_transport import _ChinaTransportRequest, _ChinaTransportResponse
 
 _DEVICE_ID = "0123456789abcdef0123456789abcdef"
 _REFRESHED_AT = datetime(2026, 8, 28, 12, 0, tzinfo=UTC)
@@ -815,6 +820,112 @@ async def test_china_status_expiry_renews_once_saves_and_retries_concurrent_read
     )
     assert restored.reusable_bootstrap.state is rotated
     await restored.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancelled", [False, True])
+async def test_waiting_poll_resumes_partial_china_renewal_after_failure_or_cancellation(
+    tmp_path: Path, cancelled: bool,
+) -> None:
+    from custom_components.gwm_ora.cloud_storage import cloud_state_store
+
+    fixture_dir = Path(__file__).parent / "client" / "fixtures"
+    contracts = json.loads((fixture_dir / "china_auth_contracts_v1.json").read_text(encoding="utf-8"))
+    bean_contracts = json.loads((fixture_dir / "china_beantech_status_v1.json").read_text(encoding="utf-8"))
+    clock = datetime.fromisoformat(contracts["clock"])
+
+    discovery_entered = asyncio.Event()
+    release_discovery = asyncio.Event()
+    initialization_entered = asyncio.Event()
+    second_poll_started = asyncio.Event()
+
+    async def wait_for_cancellation() -> None:
+        await asyncio.Event().wait()
+
+    class Transport:
+        def __init__(self, **plans: list[object]) -> None:
+            self.plans = {operation: deque(items) for operation, items in plans.items()}
+            self.calls: list[_ChinaTransportRequest] = []
+
+        async def execute(self, request: _ChinaTransportRequest, **_kwargs: object) -> _ChinaTransportResponse:
+            if request.operation == "acquire_vehicles" and not discovery_entered.is_set():
+                discovery_entered.set()
+                await release_discovery.wait()
+            if request.operation == "initialize_bean_tech":
+                initialization_entered.set()
+            self.calls.append(request)
+            item = self.plans[request.operation].popleft()
+            if callable(item):
+                item = await item()
+            if isinstance(item, BaseException):
+                raise item
+            return _ChinaTransportResponse(status=200, headers={}, body=json.dumps(item).encode())
+
+        async def aclose(self) -> None:
+            pass
+
+    class Runtime(GwmCloudClient):
+        started = 0
+
+        async def _async_get_vehicle_data_once(self) -> dict[str, object]:
+            self.started += 1
+            if self.started == 2:
+                second_poll_started.set()
+            return await super()._async_get_vehicle_data_once()
+
+    discovery = {"code": "000000", "data": {"acquireVehiclesList": [
+        vehicle for vehicle in contracts["responses"]["discovery"]["data"]["acquireVehiclesList"]
+        if vehicle.get("belongPlatform") == "beantech"
+    ]}}
+    transport = Transport(
+        acquire_vehicles=[{"code": "550004"}, discovery, discovery],
+        refresh_token=[{"code": "000000", "data": {
+            "token": "ROTATED-G-TOKEN", "refreshToken": "ROTATED-G-REFRESH",
+        }}],
+        initialize_bean_tech=([wait_for_cancellation] if cancelled else [GwmNetworkError(operation="initialize_bean_tech")] * 3)
+        + [contracts["responses"]["bean_tech"]],
+        initialize_auto_ai=[contracts["responses"]["auto_ai"]],
+        get_last_status=[bean_contracts["response"]],
+    )
+    credentials = GwmCloudCredentials("cn", "CN", contracts["credentials"]["phone"], None, _DEVICE_ID)
+    state = ChinaAuthState(
+        account_binding=credentials.account_binding, device_id=credentials.device_id,
+        **contracts["g_app_state"], **contracts["complete_state"],
+    )
+    client = ChinaClient(
+        ChinaClientConfig(), transport=transport, clock=lambda: clock,
+        salt_source=lambda: bytes.fromhex(contracts["salt_hex"]),
+        nonce_source=lambda: contracts["nonce"], authenticated_state=state,
+        sleeper=lambda _seconds: asyncio.sleep(0),
+    )
+    bootstrap = GwmCloudBootstrap.from_authentication(credentials, ChinaAuthenticated(state))
+    store = cloud_state_store(HomeAssistant(str(tmp_path)), cloud_unique_id(credentials))
+    await store.async_save_auth_state(credentials, state)
+    runtime = Runtime(
+        "cn", client, bootstrap=bootstrap, credentials=credentials,
+        state_store=store, entry_data=cloud_entry_data(credentials),
+    )
+
+    first = asyncio.create_task(runtime.async_get_vehicle_data())
+    await asyncio.wait_for(discovery_entered.wait(), 5)
+    second = asyncio.create_task(runtime.async_get_vehicle_data())
+    await asyncio.wait_for(second_poll_started.wait(), 5)
+    release_discovery.set()
+    await asyncio.wait_for(initialization_entered.wait(), 5)
+    if cancelled:
+        first.cancel()
+    results = await asyncio.wait_for(asyncio.gather(first, second, return_exceptions=True), 5)
+
+    assert isinstance(results[0], asyncio.CancelledError if cancelled else GwmNetworkError)
+    assert isinstance(results[1], dict) and results[1]["vehicles"]
+    assert runtime.reusable_bootstrap is not None
+    restarted = cloud_state_store(HomeAssistant(str(tmp_path)), cloud_unique_id(credentials))
+    saved = await restarted.async_load_auth_state(cloud_entry_data(credentials))
+    assert saved.complete and saved.g_refresh_token == "ROTATED-G-REFRESH"
+    assert sum(request.operation == "refresh_token" for request in transport.calls) == 1
+    assert not any(request.operation in {"login", "request_verification"} for request in transport.calls)
+    await runtime.aclose()
+
 
 
 @pytest.mark.asyncio
