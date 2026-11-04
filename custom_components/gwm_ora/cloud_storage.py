@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import logging
 import re
 import secrets
 from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, cast
 
 from homeassistant.core import HomeAssistant
@@ -187,6 +189,7 @@ class GwmCloudStateStore:
             raise ValueError("direct_cloud_store_invalid")
         digest = hashlib.sha256(unique_id.encode("utf-8")).hexdigest()
         self.unique_id = unique_id
+        self._hass = hass
         self._store = Store[dict[str, Any]](
             hass,
             _STORAGE_VERSION,
@@ -499,9 +502,22 @@ class GwmCloudStateStore:
         )
 
     async def _async_save(self, record: _GwmCloudRecord) -> None:
-        await self._store.async_save(_encode_record(record))
+        data = _encode_record(record)
+        await self._store.async_save(data)
+        # Store.async_save can log a writer failure and return normally.
+        if not await self._hass.async_add_executor_job(_stored_record_matches, self._store.path, data):
+            raise OSError("GWM cloud state write could not be confirmed")
         self._record = record
         self._invalid_loaded_data = False
+
+
+def _stored_record_matches(path: str, expected: dict[str, Any]) -> bool:
+    """Confirm the on-disk payload without trusting Home Assistant's cache."""
+    try:
+        stored = json.loads(Path(path).read_bytes())
+    except (OSError, ValueError):
+        return False
+    return isinstance(stored, dict) and stored.get("version") == _STORAGE_VERSION and stored.get("data") == expected
 
 
 def cloud_state_store(

@@ -85,6 +85,41 @@ async def test_auth_storage_failure_is_visible_without_logging_the_exception(
     assert "private-eu-access" not in caplog.text
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("region", ["eu", "aus", "rus", "cn"])
+async def test_swallowed_writer_failure_does_not_publish_state_and_can_be_retried(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, region: str,
+) -> None:
+    from homeassistant.helpers.storage import WriteError
+
+    credentials = _credentials(region)
+    unique_id = cloud_unique_id(credentials)
+    store = cloud_state_store(HomeAssistant(str(tmp_path)), unique_id)
+    initial = _state(credentials)
+    changes = {"g_token": "rotated-access", "g_refresh_token": "rotated-refresh"} if region == "cn" else {
+        "access_token": "rotated-access", "refresh_token": "rotated-refresh",
+    }
+    rotated = replace(initial, **changes)
+    await store.async_save_auth_state(credentials, initial)
+    write_data = store._store._write_data
+
+    def fail(_data: object) -> None:
+        raise WriteError("synthetic writer failure")
+
+    monkeypatch.setattr(store._store, "_write_data", fail)
+    with pytest.raises(OSError, match="write could not be confirmed"):
+        await store.async_save_auth_state(credentials, rotated)
+
+    assert await store.async_load_auth_state(cloud_entry_data(credentials)) == initial
+    failed_restart = cloud_state_store(HomeAssistant(str(tmp_path)), unique_id)
+    assert await failed_restart.async_load_auth_state(cloud_entry_data(credentials)) == initial
+
+    monkeypatch.setattr(store._store, "_write_data", write_data)
+    await store.async_save_auth_state(credentials, rotated)
+    successful_restart = cloud_state_store(HomeAssistant(str(tmp_path)), unique_id)
+    assert await successful_restart.async_load_auth_state(cloud_entry_data(credentials)) == rotated
+
+
 def test_auth_storage_logging_failure_is_nonfatal(monkeypatch: pytest.MonkeyPatch) -> None:
     from custom_components.gwm_ora import cloud_storage
 
