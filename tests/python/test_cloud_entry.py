@@ -486,6 +486,32 @@ async def test_china_restart_resumes_complete_state_and_enables_no_pin_commands(
 
 
 @pytest.mark.asyncio
+async def test_china_restart_retires_rejected_partial_state(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any,
+) -> None:
+    entry, credentials, bootstrap = _china_entry_and_bootstrap()
+    partial = replace(
+        bootstrap.state, sso_token="synthetic-sso-token",
+        bean_tech_access_token=None, auto_ai_token_id=None, auto_ai_user_id=None,
+    )
+    await cloud_state_store(HomeAssistant(str(tmp_path)), entry.unique_id or "").async_save_auth_state(credentials, partial)
+
+    class Authenticator:
+        async def async_authenticate(self, supplied: GwmCloudCredentials, **kwargs: Any) -> object:
+            assert supplied == credentials
+            assert kwargs["state"] == partial
+            assert kwargs["allow_password_login"] is False
+            raise GwmAuthenticationError(operation="initialize_auto_ai", api_code="550004")
+
+    monkeypatch.setattr(gwm_ora, "GwmCloudAuthenticator", Authenticator)
+    with pytest.raises(ConfigEntryAuthFailed):
+        await async_setup_entry(HomeAssistant(str(tmp_path)), entry)
+
+    restarted = cloud_state_store(HomeAssistant(str(tmp_path)), entry.unique_id or "")
+    assert await restarted.async_load_auth_state(dict(entry.data)) is None
+
+
+@pytest.mark.asyncio
 async def test_china_restart_preserves_rotated_partial_initialization_state(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Any,

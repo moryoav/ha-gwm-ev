@@ -1101,6 +1101,7 @@ class ChinaClient:
         auto_result: Mapping[str, object] | None = None
         failures: list[str] = []
         risk_control = False
+        authentication_error: GwmAuthenticationError | None = None
         try:
             async with asyncio.TaskGroup() as group:
                 bean_task = group.create_task(
@@ -1121,12 +1122,18 @@ class ChinaClient:
                 )
         except* _ChinaRiskControlError:
             risk_control = True
+        except* GwmAuthenticationError as group_error:
+            authentication_error = next(
+                error for error in _flatten_client_errors(group_error) if isinstance(error, GwmAuthenticationError)
+            )
         except* GwmClientError as group_error:
             failures.extend(_initialization_failure_labels(group_error))
         except* Exception:
             failures.append("initialization:network_error")
         if risk_control:
             return ChinaRiskControlRequired(state=partial), None
+        if authentication_error is not None:
+            raise authentication_error
         if failures:
             return ChinaInitializationRequired(
                 state=partial,
@@ -1140,6 +1147,8 @@ class ChinaClient:
                 bean_result=bean_result,
                 auto_result=auto_result,
             )
+        except GwmAuthenticationError:
+            raise
         except GwmClientError as error:
             return ChinaInitializationRequired(
                 state=partial,
@@ -1150,6 +1159,8 @@ class ChinaClient:
         except _ChinaRiskControlError:
             return ChinaRiskControlRequired(state=partial), None
         except asyncio.CancelledError:
+            raise
+        except GwmAuthenticationError:
             raise
         except GwmClientError as error:
             return ChinaInitializationRequired(

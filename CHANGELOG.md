@@ -13,6 +13,7 @@ This project follows semantic versioning. HACS uses the latest GitHub release ta
 - Recognized Mainland-China API code `550004` as session expiry. Renewed the G-App and platform sessions and retried the failed request once, matching EU, ANZ, and Russia recovery. Requested reauthentication when renewal or the retry rejects the session, without sending SMS automatically.
 - Preserved rotated G-App-only state when platform initialization is interrupted and resumed it on the next poll without another refresh or SMS login. Stopped automatic renewal on China risk-control code `1013` and requested reauthentication.
 - Prevented automatic command resubmission during session recovery across regions while retaining one retry for reads.
+- Requested reauthentication when saved China platform credentials are rejected during startup initialization.
 
 ## [0.17.12] - 2026-10-19
 

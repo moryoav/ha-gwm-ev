@@ -864,7 +864,6 @@ async def test_initialization_retries_only_network_and_selected_gateway_failures
         (GwmTlsError(operation="initialize_bean_tech"), "tls_error"),
         (GwmRateLimitError(operation="initialize_bean_tech"), "rate_limit_error"),
         (GwmSchemaError(operation="initialize_bean_tech"), "schema_error"),
-        (GwmAuthenticationError(operation="initialize_bean_tech"), "authentication_error"),
     ],
 )
 async def test_terminal_initialization_failures_are_not_retried_or_cascaded(
@@ -884,6 +883,24 @@ async def test_terminal_initialization_failures_are_not_retried_or_cascaded(
     assert any(category in label for label in result.failures)
     assert Counter(request.operation for request in transport.calls)["initialize_bean_tech"] == 1
     assert all(request.operation not in {"refresh_token", "login", "request_verification"} for request in transport.calls)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code", ["550004", 550004])
+@pytest.mark.parametrize("operation", ["initialize_bean_tech", "initialize_auto_ai", "acquire_vehicles"])
+async def test_saved_partial_state_rejection_propagates_authentication_failure(operation: str, code: object) -> None:
+    plans = _success_plans(login=False)
+    plans[operation] = [{"header": {"c": code}} if operation == "initialize_auto_ai" else {"code": code}]
+    transport = _FakeTransport(**plans)
+    client = _client(transport)
+
+    with pytest.raises(GwmAuthenticationError) as raised:
+        await client.authenticate(_credentials(), state=_partial_state(), allow_sms_login=False)
+
+    assert raised.value.api_code == "550004"
+    assert raised.value.operation == operation
+    assert not client.authenticated
+    assert not any(request.operation in {"refresh_token", "login", "request_verification"} for request in transport.calls)
 
 
 @pytest.mark.asyncio
