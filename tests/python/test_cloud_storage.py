@@ -6,6 +6,7 @@ import asyncio
 import base64
 import json
 import logging
+import threading
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -14,7 +15,7 @@ import pytest
 
 pytest.importorskip("homeassistant")
 
-from homeassistant.core import HomeAssistant
+from homeassistant.core import CoreState, HomeAssistant
 
 from custom_components.gwm_ora.cloud_auth import (
     CloudAuthState,
@@ -85,6 +86,89 @@ async def test_auth_storage_failure_is_visible_without_logging_the_exception(
     assert "private-eu-access" not in caplog.text
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("region", ["eu", "aus", "rus", "cn"])
+async def test_swallowed_writer_failure_does_not_publish_state_and_can_be_retried(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, region: str,
+) -> None:
+    from homeassistant.helpers.storage import WriteError
+
+    credentials = _credentials(region)
+    unique_id = cloud_unique_id(credentials)
+    store = cloud_state_store(HomeAssistant(str(tmp_path)), unique_id)
+    initial = _state(credentials)
+    changes = {"g_token": "rotated-access", "g_refresh_token": "rotated-refresh"} if region == "cn" else {
+        "access_token": "rotated-access", "refresh_token": "rotated-refresh",
+    }
+    rotated = replace(initial, **changes)
+    await store.async_save_auth_state(credentials, initial)
+    write_data = store._store._write_data
+
+    def fail(_data: object) -> None:
+        raise WriteError("synthetic writer failure")
+
+    monkeypatch.setattr(store._store, "_write_data", fail)
+    with pytest.raises(OSError, match="write could not be confirmed"):
+        await store.async_save_auth_state(credentials, rotated)
+
+    assert await store.async_load_auth_state(cloud_entry_data(credentials)) == initial
+    failed_restart = cloud_state_store(HomeAssistant(str(tmp_path)), unique_id)
+    assert await failed_restart.async_load_auth_state(cloud_entry_data(credentials)) == initial
+
+    monkeypatch.setattr(store._store, "_write_data", write_data)
+    await store.async_save_auth_state(credentials, rotated)
+    successful_restart = cloud_state_store(HomeAssistant(str(tmp_path)), unique_id)
+    assert await successful_restart.async_load_auth_state(cloud_entry_data(credentials)) == rotated
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["save", "clear", "journal"])
+@pytest.mark.parametrize("writer_failure", [False, True])
+async def test_shutdown_storage_confirms_auth_and_journal_writes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: str, writer_failure: bool,
+) -> None:
+    from homeassistant.helpers.storage import WriteError
+
+    credentials = _credentials("cn")
+    unique_id = cloud_unique_id(credentials)
+    hass = HomeAssistant(str(tmp_path))
+    store = cloud_state_store(hass, unique_id)
+    initial = _state(credentials)
+    rotated = replace(initial, g_token="rotated-shutdown-token")
+    await store.async_save_auth_state(credentials, initial)
+    hass.set_state(CoreState.stopping)
+
+    if writer_failure:
+        def fail(_data: object) -> None:
+            raise WriteError("synthetic shutdown write failure")
+
+        monkeypatch.setattr(store._store, "_write_data", fail)
+
+    async def save() -> None:
+        if operation == "save":
+            await store.async_save_auth_state(credentials, rotated)
+        elif operation == "clear":
+            await store.async_clear_auth_state(cloud_entry_data(credentials))
+        else:
+            await store.async_record_accepted_command(
+                credentials, vehicle_id="SYNTHETIC-VEHICLE", command_name="climate",
+                cloud_command_id="SYNTHETIC-COMMAND", accepted_at=_NOW,
+            )
+
+    if writer_failure:
+        with pytest.raises(OSError, match="write could not be confirmed"):
+            await save()
+    else:
+        await save()
+
+    expected = initial if writer_failure or operation == "journal" else rotated if operation == "save" else None
+    assert await store.async_load_auth_state(cloud_entry_data(credentials)) == expected
+    restarted = cloud_state_store(HomeAssistant(str(tmp_path)), unique_id)
+    assert await restarted.async_load_auth_state(cloud_entry_data(credentials)) == expected
+    journal = await restarted.async_get_command_journal(cloud_entry_data(credentials))
+    assert len(journal) == (1 if operation == "journal" and not writer_failure else 0)
+
+
 def test_auth_storage_logging_failure_is_nonfatal(monkeypatch: pytest.MonkeyPatch) -> None:
     from custom_components.gwm_ora import cloud_storage
 
@@ -93,6 +177,56 @@ def test_auth_storage_logging_failure_is_nonfatal(monkeypatch: pytest.MonkeyPatc
 
     monkeypatch.setattr(cloud_storage._LOGGER, "log", fail)
     _log_auth_state("save", "completed", _state(_credentials()))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("blocked_phase", ["write", "confirmation"])
+async def test_repeated_cancellation_joins_storage_before_a_newer_save(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, blocked_phase: str,
+) -> None:
+    from custom_components.gwm_ora import cloud_storage
+
+    credentials = _credentials("cn")
+    unique_id = cloud_unique_id(credentials)
+    store = cloud_state_store(HomeAssistant(str(tmp_path)), unique_id)
+    initial = _state(credentials)
+    await store.async_save_auth_state(credentials, initial)
+    first = replace(initial, g_token="first-rotation")
+    second = replace(initial, g_token="second-rotation")
+    entered = threading.Event()
+    release = threading.Event()
+    calls = 0
+    owner, name = (store._store, "_write_data") if blocked_phase == "write" else (cloud_storage, "_stored_record_matches")
+    original = getattr(owner, name)
+
+    def block_once(*args: object) -> object:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            entered.set()
+            if not release.wait(5):
+                raise RuntimeError("synthetic storage wait expired")
+        return original(*args)
+
+    monkeypatch.setattr(owner, name, block_once)
+    first_task = asyncio.create_task(store.async_save_auth_state(credentials, first))
+    try:
+        assert await asyncio.to_thread(entered.wait, 5)
+        first_task.cancel()
+        await asyncio.sleep(0)
+        first_task.cancel()
+        second_task = asyncio.create_task(store.async_save_auth_state(credentials, second))
+        await asyncio.sleep(0)
+        assert not first_task.done()
+        assert not second_task.done()
+    finally:
+        release.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await first_task
+    await second_task
+    restarted = cloud_state_store(HomeAssistant(str(tmp_path)), unique_id)
+    assert await restarted.async_load_auth_state(cloud_entry_data(credentials)) == second
 
 
 def _credentials(

@@ -578,6 +578,65 @@ class ChinaClient:
         except Exception:
             raise GwmNetworkError(operation=operation) from None
 
+    async def refresh_session(
+        self,
+        credentials: ChinaCredentials,
+        state: ChinaAuthState,
+        *,
+        timeout: float | None = None,
+        on_state: Callable[[ChinaAuthState], Awaitable[None]] | None = None,
+    ) -> ChinaAuthenticated:
+        """Publish G-App rotation before renewing platforms, without SMS login."""
+        if (
+            type(credentials) is not ChinaCredentials
+            or type(state) is not ChinaAuthState
+            or not state.matches(credentials)
+            or not state.has_g_app
+            or (on_state is not None and not callable(on_state))
+        ):
+            raise GwmConfigurationError(operation="refresh_token")
+
+        async def refresh(deadline: _Deadline) -> tuple[ChinaAuthenticated, tuple[ChinaVehicle, ...], int]:
+            if self._session is not None and self._session != state:
+                raise GwmConfigurationError(operation="refresh_token")
+            self._revoke_session()
+            revision = self._session_revision
+            refreshed = await self._refresh_g_app(credentials, state, deadline=deadline) if state.complete else state
+            if on_state is not None:
+                await on_state(refreshed)
+            try:
+                async with asyncio.TaskGroup() as group:
+                    bean_task = group.create_task(self._initialize_service(
+                        "bean_tech", credentials=credentials, partial=refreshed, deadline=deadline,
+                    ))
+                    auto_task = group.create_task(self._initialize_service(
+                        "auto_ai", credentials=credentials, partial=refreshed, deadline=deadline,
+                    ))
+            except ExceptionGroup as group_error:
+                errors = _flatten_client_errors(group_error)
+                for error_type in (_ChinaRiskControlError, GwmAuthenticationError, GwmClientError):
+                    for error in errors:
+                        if isinstance(error, error_type):
+                            raise error from None
+                raise
+            complete = _apply_platform_results(
+                refreshed, bean_result=bean_task.result(), auto_result=auto_task.result(),
+            )
+            vehicles = await self._acquire_vehicles_for_state(complete, deadline=deadline)
+            return ChinaAuthenticated(complete), vehicles, revision
+
+        def install(result: tuple[ChinaAuthenticated, tuple[ChinaVehicle, ...], int]) -> None:
+            self._install_if_revision(
+                expected_revision=result[2],
+                state=result[0].state,
+                vehicles=result[1],
+            )
+
+        result, _vehicles, _revision = await self._run_read(
+            "refresh_token", timeout=timeout, action=refresh, commit=install,
+        )
+        return result
+
     async def acquire_vehicles(
         self,
         *,
@@ -911,27 +970,7 @@ class ChinaClient:
     ) -> tuple[ChinaAuthenticationResult, tuple[ChinaVehicle, ...] | None]:
         partial_candidate = _without_downstream(candidate)
         try:
-            response = await self._send_locked(
-                self._build_g_app_request(
-                    operation="refresh_token",
-                    url=_REFRESH_URL,
-                    logical_body={
-                        "token": candidate.g_token,
-                        "refreshToken": candidate.g_refresh_token,
-                    },
-                    state=candidate,
-                    encrypt_body=True,
-                ),
-                deadline=deadline,
-            )
-            data = _decode_g_app_envelope(response, operation="refresh_token")
-            refreshed = _parse_g_app_state(
-                data,
-                base=candidate,
-                credentials=credentials,
-                allow_fallback=True,
-                operation="refresh_token",
-            )
+            refreshed = await self._refresh_g_app(credentials, candidate, deadline=deadline)
         except _ChinaRiskControlError:
             return ChinaRiskControlRequired(state=partial_candidate), None
         except GwmAuthenticationError:
@@ -945,6 +984,31 @@ class ChinaClient:
                 deadline=deadline,
             )
         return await self._initialize_and_validate(credentials, refreshed, deadline=deadline)
+
+    async def _refresh_g_app(
+        self,
+        credentials: ChinaCredentials,
+        state: ChinaAuthState,
+        *,
+        deadline: _Deadline,
+    ) -> ChinaAuthState:
+        response = await self._send_locked(
+            self._build_g_app_request(
+                operation="refresh_token",
+                url=_REFRESH_URL,
+                logical_body={"token": state.g_token, "refreshToken": state.g_refresh_token},
+                state=state,
+                encrypt_body=True,
+            ),
+            deadline=deadline,
+        )
+        return _parse_g_app_state(
+            _decode_g_app_envelope(response, operation="refresh_token"),
+            base=state,
+            credentials=credentials,
+            allow_fallback=True,
+            operation="refresh_token",
+        )
 
     async def _sms_continuation(
         self,
@@ -1048,6 +1112,7 @@ class ChinaClient:
         auto_result: Mapping[str, object] | None = None
         failures: list[str] = []
         risk_control = False
+        authentication_error: GwmAuthenticationError | None = None
         try:
             async with asyncio.TaskGroup() as group:
                 bean_task = group.create_task(
@@ -1068,12 +1133,18 @@ class ChinaClient:
                 )
         except* _ChinaRiskControlError:
             risk_control = True
+        except* GwmAuthenticationError as group_error:
+            authentication_error = next(
+                error for error in _flatten_client_errors(group_error) if isinstance(error, GwmAuthenticationError)
+            )
         except* GwmClientError as group_error:
             failures.extend(_initialization_failure_labels(group_error))
         except* Exception:
             failures.append("initialization:network_error")
         if risk_control:
             return ChinaRiskControlRequired(state=partial), None
+        if authentication_error is not None:
+            raise authentication_error
         if failures:
             return ChinaInitializationRequired(
                 state=partial,
@@ -1087,6 +1158,8 @@ class ChinaClient:
                 bean_result=bean_result,
                 auto_result=auto_result,
             )
+        except GwmAuthenticationError:
+            raise
         except GwmClientError as error:
             return ChinaInitializationRequired(
                 state=partial,
@@ -1097,6 +1170,8 @@ class ChinaClient:
         except _ChinaRiskControlError:
             return ChinaRiskControlRequired(state=partial), None
         except asyncio.CancelledError:
+            raise
+        except GwmAuthenticationError:
             raise
         except GwmClientError as error:
             return ChinaInitializationRequired(
@@ -4058,6 +4133,8 @@ def _decode_g_app_envelope(
     if code is not None and code not in {"0", "000000", "200"}:
         if code == "1013":
             raise _ChinaRiskControlError(operation=operation, api_code=code)
+        if code == "550004":
+            raise GwmAuthenticationError(operation=operation, api_code=code)
         raise GwmApiError(operation=operation, api_code=code)
     data = _property(root, "data")
     if data is None:
@@ -4087,6 +4164,8 @@ def _decode_auto_ai_envelope(response: _ChinaTransportResponse, *, operation: st
     if code is not None and code != "0":
         if code == "1013":
             raise _ChinaRiskControlError(operation=operation, api_code=code)
+        if code == "550004":
+            raise GwmAuthenticationError(operation=operation, api_code=code)
         raise GwmApiError(operation=operation, api_code=code)
     body = _property(root, "body")
     return root if body is None else body
@@ -4233,7 +4312,7 @@ def _failure_label(prefix: str, error: GwmClientError) -> str:
     return label
 
 
-def _flatten_client_errors(group: BaseExceptionGroup[GwmClientError]) -> list[GwmClientError]:
+def _flatten_client_errors(group: BaseExceptionGroup[BaseException]) -> list[GwmClientError]:
     result: list[GwmClientError] = []
     for error in group.exceptions:
         if isinstance(error, BaseExceptionGroup):

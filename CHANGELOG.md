@@ -6,7 +6,19 @@ This project follows semantic versioning. HACS uses the latest GitHub release ta
 
 <!-- Use direct release-note language. Do not begin changelog bullets with first-person "I". -->
 
-## [Unreleased]
+## [0.17.13] - 2026-11-04
+
+### Fixed
+
+- Recognized Mainland-China API code `550004` as session expiry. Renewed the G-App and platform sessions and retried failed reads once, matching EU, ANZ, and Russia recovery. Requested reauthentication when renewal or the retry rejects the session, without sending SMS automatically.
+- Preserved rotated G-App-only state when platform initialization is interrupted and resumed it on the next poll without another refresh or SMS login. Stopped automatic renewal on China risk-control code `1013` and requested reauthentication.
+- Prevented automatic command resubmission during session recovery across regions while retaining one retry for reads.
+- Requested reauthentication when saved China platform credentials are rejected during startup initialization.
+- Confirmed saved authentication state on disk before continuing recovery and completed interrupted writes before allowing another account update.
+
+### Known validation limitation
+
+- Retained the existing EU bootstrap certificate and renewal guard. The renewal deadline passed on October 6, 2026; the certificate remains valid until January 4, 2027. The existing renewal test still fails, as recorded in v0.17.11 and v0.17.12.
 
 ## [0.17.12] - 2026-10-19
 

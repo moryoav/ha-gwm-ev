@@ -357,7 +357,8 @@ async def test_matching_complete_state_is_never_accepted_from_cache() -> None:
 
 
 @pytest.mark.asyncio
-async def test_definitive_complete_session_rejection_refreshes_then_reinitializes() -> None:
+@pytest.mark.parametrize("rejection", [_response({}, status=401), {"code": "550004"}, {"code": 550004}])
+async def test_definitive_complete_session_rejection_refreshes_then_reinitializes(rejection: object) -> None:
     refresh = {
         "code": "000000",
         "data": {
@@ -368,7 +369,7 @@ async def test_definitive_complete_session_rejection_refreshes_then_reinitialize
     }
     plans = _success_plans(login=False)
     plans["acquire_vehicles"] = [
-        _response({}, status=401),
+        rejection,
         FIXTURE["responses"]["discovery"],
     ]
     plans["refresh_token"] = [refresh]
@@ -383,6 +384,217 @@ async def test_definitive_complete_session_rejection_refreshes_then_reinitialize
     assert operations[0:2] == ["acquire_vehicles", "refresh_token"]
     assert operations[-1] == "acquire_vehicles"
     _assert_request(transport.calls[1], "refresh_request")
+
+
+@pytest.mark.asyncio
+async def test_explicit_session_refresh_renews_platforms_without_sms_or_old_discovery() -> None:
+    plans = _success_plans(login=False)
+    plans["refresh_token"] = [{
+        "code": "000000",
+        "data": {"token": "ROTATED-G-TOKEN", "refreshToken": "ROTATED-G-REFRESH"},
+    }]
+    plans["initialize_bean_tech"] = [{
+        "code": "000000",
+        "data": {**FIXTURE["responses"]["bean_tech"]["data"], "accessToken": "ROTATED-BEAN-TOKEN"},
+    }]
+    transport = _FakeTransport(**plans)
+    client = _client(transport)
+
+    result = await client.refresh_session(_credentials(), _complete_state())
+
+    assert result.state.g_token == "ROTATED-G-TOKEN"
+    assert result.state.g_refresh_token == "ROTATED-G-REFRESH"
+    assert result.state.bean_tech_access_token == "ROTATED-BEAN-TOKEN"
+    assert result.state.auto_ai_token_id == "SYNTHETIC-AUTO-TOKEN"
+    assert client.authenticated
+    assert [request.operation for request in transport.calls] == [
+        "refresh_token", "initialize_bean_tech", "initialize_auto_ai", "acquire_vehicles",
+    ]
+    _assert_request(transport.calls[0], "refresh_request")
+    assert transport.calls[-1].headers["Authorization"] == "ROTATED-BEAN-TOKEN"
+
+
+@pytest.mark.asyncio
+async def test_renewal_platform_logins_start_together_with_one_deadline() -> None:
+    bean_started = asyncio.Event()
+    auto_started = asyncio.Event()
+    deadlines: list[_Deadline] = []
+
+    class Transport(_FakeTransport):
+        async def execute(self, request: _ChinaTransportRequest, **kwargs: Any) -> _ChinaTransportResponse:
+            if request.operation in {"initialize_bean_tech", "initialize_auto_ai"}:
+                deadlines.append(kwargs["deadline"])
+                started, other = (bean_started, auto_started) if request.operation == "initialize_bean_tech" else (auto_started, bean_started)
+                started.set()
+                await other.wait()
+            return await super().execute(request, **kwargs)
+
+    plans = _success_plans(login=False)
+    plans["refresh_token"] = [FIXTURE["responses"]["login"]]
+    client = _client(Transport(**plans))
+
+    result = await asyncio.wait_for(client.refresh_session(_credentials(), _complete_state()), 5)
+
+    assert result.state.complete and client.authenticated
+    assert len(deadlines) == 2 and deadlines[0] is deadlines[1]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bean_code,auto_code,expected,code", [
+    ("7654321", "550004", GwmAuthenticationError, "550004"),
+    ("550004", "1013", GwmApiError, "1013"),
+])
+async def test_concurrent_renewal_preserves_authentication_and_risk_failures(
+    bean_code: str, auto_code: str, expected: type[GwmClientError], code: str,
+) -> None:
+    transport = _FakeTransport(
+        refresh_token=[FIXTURE["responses"]["login"]],
+        initialize_bean_tech=[{"code": bean_code}],
+        initialize_auto_ai=[{"header": {"c": auto_code}}],
+    )
+    client = _client(transport)
+    with pytest.raises(expected) as raised:
+        await client.refresh_session(_credentials(), _complete_state())
+    assert raised.value.api_code == code
+    assert not client.authenticated
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code", ["550004", 550004])
+async def test_beantech_status_expiry_revokes_session_without_leaking_response(code: object) -> None:
+    transport = _FakeTransport(
+        acquire_vehicles=[FIXTURE["responses"]["discovery"]],
+        get_last_status=[{"code": code, "message": SENSITIVE}],
+    )
+    client = _client(transport)
+    await client.authenticate(_credentials(), state=_complete_state())
+    with pytest.raises(GwmAuthenticationError) as raised:
+        await client.get_last_status(VehicleIdentifier(BEAN_VIN))
+
+    assert raised.value.api_code == "550004"
+    assert raised.value.operation == "get_last_status"
+    assert not client.authenticated
+    assert SENSITIVE not in str(raised.value)
+    assert SENSITIVE not in repr(raised.value)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failed_operation", ["initialize_bean_tech", "initialize_auto_ai", "acquire_vehicles"])
+async def test_explicit_refresh_publishes_rotated_partial_before_later_failure(failed_operation: str) -> None:
+    plans = {operation: values * 2 for operation, values in _success_plans(login=False).items()}
+    plans[failed_operation].insert(0, GwmSchemaError(operation=failed_operation))
+    plans["refresh_token"] = [{
+        "code": "000000",
+        "data": {"token": "ROTATED-G-TOKEN", "refreshToken": "ROTATED-G-REFRESH"},
+    }]
+    transport = _FakeTransport(**plans)
+    client = _client(transport)
+    published: list[ChinaAuthState] = []
+
+    async def publish(state: ChinaAuthState) -> None:
+        assert not client.authenticated
+        published.append(state)
+
+    with pytest.raises(GwmSchemaError):
+        await client.refresh_session(_credentials(), _complete_state(), on_state=publish)
+
+    partial = published[-1]
+    assert partial.g_token == "ROTATED-G-TOKEN"
+    assert partial.g_refresh_token == "ROTATED-G-REFRESH"
+    assert partial.has_g_app and not partial.complete
+    assert partial.bean_tech_access_token is None
+    assert partial.auto_ai_token_id is None
+    assert not client.authenticated
+
+    result = await client.refresh_session(_credentials(), partial, on_state=publish)
+
+    assert result.state.g_refresh_token == "ROTATED-G-REFRESH"
+    assert result.state.complete
+    assert client.authenticated
+    assert sum(request.operation == "refresh_token" for request in transport.calls) == 1
+    assert not any(request.operation in {"login", "request_verification"} for request in transport.calls)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("response", "expected"),
+    [
+        ({"code": "550004"}, GwmAuthenticationError),
+        ({"code": "7654321"}, GwmApiError),
+        (_response({}, status=429), GwmRateLimitError),
+        (GwmNetworkError(operation="refresh_token"), GwmNetworkError),
+    ],
+)
+async def test_explicit_session_refresh_failure_does_not_send_sms(
+    response: object, expected: type[GwmClientError],
+) -> None:
+    transport = _FakeTransport(refresh_token=[response])
+    client = _client(transport)
+    with pytest.raises(expected):
+        await client.refresh_session(_credentials(), _complete_state())
+    assert [request.operation for request in transport.calls] == ["refresh_token"]
+    assert not client.authenticated
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code", ["550004", 550004])
+async def test_auto_ai_rejection_during_explicit_refresh_is_authentication_failure(code: object) -> None:
+    plans = _success_plans(login=False)
+    plans["refresh_token"] = [FIXTURE["responses"]["login"]]
+    plans["initialize_auto_ai"] = [{"header": {"c": code, "m": SENSITIVE}}]
+    transport = _FakeTransport(**plans)
+    client = _client(transport)
+
+    with pytest.raises(GwmAuthenticationError) as raised:
+        await client.refresh_session(_credentials(), _complete_state())
+
+    assert raised.value.operation == "initialize_auto_ai"
+    assert raised.value.api_code == "550004"
+    assert not client.authenticated
+    assert [request.operation for request in transport.calls] == [
+        "refresh_token", "initialize_bean_tech", "initialize_auto_ai",
+    ]
+    assert SENSITIVE not in repr(raised.value)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code", [[], {"code": "550004"}])
+async def test_explicit_refresh_rejects_malformed_auto_ai_error_code(code: object) -> None:
+    plans = _success_plans(login=False)
+    plans["refresh_token"] = [FIXTURE["responses"]["login"]]
+    plans["initialize_auto_ai"] = [{"header": {"c": code}}]
+    transport = _FakeTransport(**plans)
+    client = _client(transport)
+
+    with pytest.raises(GwmSchemaError) as raised:
+        await client.refresh_session(_credentials(), _complete_state())
+
+    assert raised.value.operation == "initialize_auto_ai"
+    assert not client.authenticated
+    assert not any(request.operation in {"login", "request_verification"} for request in transport.calls)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code", ["1013", 1013])
+@pytest.mark.parametrize("operation", [
+    "refresh_token", "initialize_bean_tech", "initialize_auto_ai", "acquire_vehicles",
+])
+async def test_explicit_refresh_risk_control_stops_without_sms(operation: str, code: object) -> None:
+    plans = _success_plans(login=False)
+    plans["refresh_token"] = [FIXTURE["responses"]["login"]]
+    plans[operation] = [{"header": {"c": code}} if operation == "initialize_auto_ai" else {"code": code}]
+    transport = _FakeTransport(**plans)
+    client = _client(transport)
+
+    with pytest.raises(GwmApiError) as raised:
+        await client.refresh_session(_credentials(), _complete_state())
+
+    assert raised.value.api_code == "1013"
+    assert raised.value.operation == operation
+    assert not client.authenticated
+    assert Counter(request.operation for request in transport.calls)[operation] == 1
+    assert Counter(request.operation for request in transport.calls)["refresh_token"] == 1
+    assert not any(request.operation in {"login", "request_verification"} for request in transport.calls)
 
 
 @pytest.mark.asyncio
@@ -714,7 +926,6 @@ async def test_initialization_retries_only_network_and_selected_gateway_failures
         (GwmTlsError(operation="initialize_bean_tech"), "tls_error"),
         (GwmRateLimitError(operation="initialize_bean_tech"), "rate_limit_error"),
         (GwmSchemaError(operation="initialize_bean_tech"), "schema_error"),
-        (GwmAuthenticationError(operation="initialize_bean_tech"), "authentication_error"),
     ],
 )
 async def test_terminal_initialization_failures_are_not_retried_or_cascaded(
@@ -734,6 +945,24 @@ async def test_terminal_initialization_failures_are_not_retried_or_cascaded(
     assert any(category in label for label in result.failures)
     assert Counter(request.operation for request in transport.calls)["initialize_bean_tech"] == 1
     assert all(request.operation not in {"refresh_token", "login", "request_verification"} for request in transport.calls)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code", ["550004", 550004])
+@pytest.mark.parametrize("operation", ["initialize_bean_tech", "initialize_auto_ai", "acquire_vehicles"])
+async def test_saved_partial_state_rejection_propagates_authentication_failure(operation: str, code: object) -> None:
+    plans = _success_plans(login=False)
+    plans[operation] = [{"header": {"c": code}} if operation == "initialize_auto_ai" else {"code": code}]
+    transport = _FakeTransport(**plans)
+    client = _client(transport)
+
+    with pytest.raises(GwmAuthenticationError) as raised:
+        await client.authenticate(_credentials(), state=_partial_state(), allow_sms_login=False)
+
+    assert raised.value.api_code == "550004"
+    assert raised.value.operation == operation
+    assert not client.authenticated
+    assert not any(request.operation in {"refresh_token", "login", "request_verification"} for request in transport.calls)
 
 
 @pytest.mark.asyncio
