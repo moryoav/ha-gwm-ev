@@ -823,6 +823,74 @@ async def test_china_status_expiry_renews_once_saves_and_retries_concurrent_read
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("region,kind", [
+    ("cn", "climate"), ("aus", "climate"),
+    ("cn", "lock"), ("aus", "lock"),
+    ("cn", "windows"), ("aus", "windows"),
+    ("cn", "charging"), ("aus", "charging"),
+    ("cn", "control"), ("aus", "defroster"), ("aus", "cabin_clean"),
+])
+@pytest.mark.parametrize("error_type", [GwmApiError, GwmAuthenticationError])
+async def test_expired_command_renews_session_without_replaying_or_retiring_it(
+    region: str, kind: str, error_type: type,
+) -> None:
+    credentials, bootstrap = _china_bootstrap() if region == "cn" else _bootstrap()
+    rotated = replace(bootstrap.state, **({"g_token": "rotated-token"} if region == "cn" else {"access_token": "rotated-token"}))
+    client = _ReadClient()
+    identifier = client.vehicles[0].identifier
+    operations = {
+        "climate": ("send_climate_command", ClimateCommand(identifier, "auto", 22, 10)),
+        "lock": ("send_lock_command", DoorLockCommand(identifier, True)),
+        "windows": ("send_close_windows_command", CloseWindowsCommand(identifier)),
+        "charging": ("set_charging_plan", ChargingPlanCommand(identifier, False)),
+        "control": ("send_vehicle_control_command", ChinaVehicleControlCommand(identifier, "horn")),
+        "defroster": ("send_front_defroster_command", FrontDefrosterCommand(identifier, True)),
+        "cabin_clean": ("send_cabin_clean_command", CabinCleanCommand(identifier)),
+    }
+    operation, command = operations[kind]
+
+    async def rejected(*_args: object, **_kwargs: object) -> None:
+        client.authenticated = False
+        raise error_type(operation=operation, api_code="550004")
+
+    writer = AsyncMock(side_effect=rejected)
+    setattr(client, operation, writer)
+
+    async def renew(*_args: object, **_kwargs: object) -> object:
+        client.authenticated = True
+        if region == "cn":
+            return ChinaAuthenticated(rotated)
+        return AnzAuthenticated(rotated, replace(bootstrap.session, access_token=rotated.access_token))
+
+    renewal = AsyncMock(side_effect=renew)
+    setattr(client, "refresh_session" if region == "cn" else "refresh_current_anz_session", renewal)
+    store = AsyncMock()
+    runtime = GwmCloudClient(
+        region, client, bootstrap=bootstrap, credentials=credentials,
+        state_store=store, entry_data=cloud_entry_data(credentials),
+    )
+    send = getattr(runtime, "async_" + operation)
+    kwargs = {} if region == "cn" or kind == "charging" else {"security_password_hash": "0" * 32}
+
+    with pytest.raises(GwmApiError) as raised:
+        await send(command, **kwargs)
+
+    assert raised.value.api_code == "550004"
+    writer.assert_awaited_once()
+    renewal.assert_awaited_once()
+    store.async_save_auth_state.assert_awaited_once_with(credentials, rotated)
+    store.async_clear_auth_state.assert_not_called()
+    assert runtime.reusable_bootstrap.state is rotated
+    assert (await runtime.async_get_vehicle_data())["vehicles"]
+
+    writer.side_effect = None
+    writer.return_value = RemoteCommandAcceptance("manual-command")
+    await send(command, **kwargs)
+    assert writer.await_count == 2
+    renewal.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("cancelled", [False, True])
 async def test_waiting_poll_resumes_partial_china_renewal_after_failure_or_cancellation(
     tmp_path: Path, cancelled: bool,

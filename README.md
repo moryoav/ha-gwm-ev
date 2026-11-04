@@ -285,7 +285,7 @@ Restrictions vary by vehicle and region. These conditions do not apply to every 
 
 Mainland China is available in the setup flow. The integration uses the registered phone number, SMS authentication, and separate G-App, BeanTech, and AutoAI sessions. Remote commands do not use a vehicle security PIN.
 
-If GWM returns session-expiry code `550004`, the integration renews the G-App and platform sessions, privately saves the replacement session, and retries the request once, as it does for EU, ANZ, and Russia. If renewal or the retry rejects the session, Home Assistant asks you to sign in again. Background recovery does not request SMS codes.
+If GWM returns session-expiry code `550004`, the integration renews the G-App and platform sessions, privately saves the replacement session, and retries the interrupted read once, as it does for EU, ANZ, and Russia. Commands are never resent automatically after renewal; a rejected command stays failed and can be submitted again manually. If renewal or the read retry rejects the session, Home Assistant asks you to sign in again. Background recovery does not request SMS codes.
 
 If platform initialization is interrupted after G-App tokens rotate, the integration saves the G-App-only state and resumes initialization on the next poll without another refresh or SMS login. Risk-control code `1013` during renewal stops automatic recovery and requests reauthentication; complete any account verification required in the official app before reconnecting.
 

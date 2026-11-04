@@ -584,7 +584,7 @@ class GwmCloudClient:
     async def async_get_vehicle_data(self) -> dict[str, object]:
         """Perform one atomic account discovery/status/basics refresh."""
 
-        return await self._async_with_session_renewal(self._async_get_vehicle_data_once)
+        return await self._async_with_session_renewal(self._async_get_vehicle_data_once, retry_after_renewal=True)
 
     async def _async_get_vehicle_data_once(self) -> dict[str, object]:
         """Perform one account refresh without a session-renewal retry."""
@@ -677,7 +677,8 @@ class GwmCloudClient:
             lambda: self._async_get_climate_context_once(
                 identifier,
                 include_status=include_status,
-            )
+            ),
+            retry_after_renewal=True
         )
 
     async def _async_get_climate_context_once(
@@ -738,7 +739,7 @@ class GwmCloudClient:
     ) -> ChargingPlanInfo:
         """Read the current charging plan through the authenticated client."""
 
-        return await self._async_with_session_renewal(lambda: self._client.get_charging_plan(identifier))
+        return await self._async_with_session_renewal(lambda: self._client.get_charging_plan(identifier), retry_after_renewal=True)
 
     async def async_set_charging_plan(self, command: ChargingPlanCommand) -> None:
         """Set or clear the charging plan through the authenticated client."""
@@ -862,7 +863,8 @@ class GwmCloudClient:
         return await self._async_with_session_renewal(
             lambda: cast(_ChinaReadClient, self._client).get_bean_tech_comfort_modes(
                 identifier
-            )
+            ),
+            retry_after_renewal=True
         )
 
     async def async_set_bean_tech_comfort_mode(
@@ -906,7 +908,8 @@ class GwmCloudClient:
         return await self._async_with_session_renewal(
             lambda: cast(
                 _ChinaReadClient, self._client
-            ).get_bean_tech_cabin_clean_appointment(identifier)
+            ).get_bean_tech_cabin_clean_appointment(identifier),
+            retry_after_renewal=True
         )
 
     async def async_get_remote_command_results(
@@ -920,17 +923,21 @@ class GwmCloudClient:
             return await self._async_with_session_renewal(
                 lambda: cast(_ChinaReadClient, self._client).get_remote_command_results(
                     identifier, command_id, control_action=control_action
-                )
+                ),
+                retry_after_renewal=True,
             )
         return await self._async_with_session_renewal(
-            lambda: self._client.get_remote_command_results(identifier, command_id)
+            lambda: self._client.get_remote_command_results(identifier, command_id),
+            retry_after_renewal=True
         )
 
     async def _async_with_session_renewal[T](
         self,
         action: Callable[[], Awaitable[T]],
+        *,
+        retry_after_renewal: bool = False,
     ) -> T:
-        """Retry one regional operation after one serialized session renewal."""
+        """Renew one regional session and replay only explicitly allowed reads."""
 
         async with self._session_renewal_lock:
             await self._async_flush_pending_auth_state()
@@ -963,6 +970,8 @@ class GwmCloudClient:
                         raise GwmAuthenticationError(
                             operation=renewal_error.operation, api_code=renewal_error.api_code,
                         ) from None
+            if not retry_after_renewal:
+                raise GwmApiError(operation=trigger.operation, api_code=trigger.api_code)
             try:
                 return await action()
             except (GwmAuthenticationError, GwmApiError) as retry_error:
@@ -1133,7 +1142,8 @@ class GwmCloudClient:
         return await self._async_with_session_renewal(
             lambda: cast(_ChinaReadClient, self._client).get_bean_tech_charge_setting(
                 identifier
-            )
+            ),
+            retry_after_renewal=True
         )
 
     async def async_set_bean_tech_charging_mode(
@@ -1161,7 +1171,8 @@ class GwmCloudClient:
         return await self._async_with_session_renewal(
             lambda: cast(_ChinaReadClient, self._client).get_bean_tech_switch_status(
                 identifier
-            )
+            ),
+            retry_after_renewal=True
         )
 
     async def async_get_bean_tech_battery_heating_appointment(
@@ -1173,7 +1184,8 @@ class GwmCloudClient:
         return await self._async_with_session_renewal(
             lambda: cast(
                 _ChinaReadClient, self._client
-            ).get_bean_tech_battery_heating_appointment(identifier)
+            ).get_bean_tech_battery_heating_appointment(identifier),
+            retry_after_renewal=True
         )
 
     async def async_set_bean_tech_battery_heating_appointment(
