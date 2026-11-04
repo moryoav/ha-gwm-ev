@@ -951,7 +951,9 @@ class GwmCloudClient:
                         operation=trigger.operation,
                         api_code=trigger.api_code,
                     )
-                if current_state == observed_state:
+                if current_state == observed_state or (
+                    type(current_state) is ChinaAuthState and not current_state.complete
+                ):
                     try:
                         await self._async_renew_session(current_state, trigger=trigger)
                     except GwmApiError as renewal_error:
