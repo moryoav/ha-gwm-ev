@@ -538,7 +538,8 @@ async def test_expired_eu_session_rotates_persists_and_retries() -> None:
 
 
 @pytest.mark.asyncio
-async def test_unknown_refresh_error_preserves_durable_session() -> None:
+@pytest.mark.parametrize("code", ["550002", "1013"])
+async def test_unknown_refresh_error_preserves_durable_session(code: str) -> None:
     credentials, bootstrap = _bootstrap()
 
     class FailingRefreshClient(_ReadClient):
@@ -556,7 +557,7 @@ async def test_unknown_refresh_error_preserves_durable_session() -> None:
             del regional_credentials, state
             raise GwmApiError(
                 operation="refresh_token",
-                api_code="550002",
+                api_code=code,
             )
 
     class StateStore:
@@ -587,7 +588,7 @@ async def test_unknown_refresh_error_preserves_durable_session() -> None:
     with pytest.raises(GwmApiError) as raised:
         await runtime.async_get_vehicle_data()
 
-    assert raised.value.api_code == "550002"
+    assert raised.value.api_code == code
     assert not state_store.cleared
     assert runtime.reusable_bootstrap == bootstrap
 
@@ -909,6 +910,54 @@ async def test_china_expiry_requests_reauth_after_rejected_renewal_or_single_ret
     assert client.get_last_status.await_count == (1 if renewal_error is not None else 2)
     assert runtime.reusable_bootstrap is None
     store.async_clear_auth_state.assert_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", [
+    "refresh_token", "initialize_bean_tech", "initialize_auto_ai", "acquire_vehicles",
+])
+async def test_china_risk_control_during_renewal_stops_repeated_refreshes(
+    tmp_path: Path, operation: str,
+) -> None:
+    from homeassistant.exceptions import ConfigEntryAuthFailed
+
+    from custom_components.gwm_ora.cloud_storage import cloud_state_store
+    from custom_components.gwm_ora.coordinator import GwmDataUpdateCoordinator
+
+    credentials, bootstrap = _china_bootstrap()
+    client = _ReadClient()
+    client.get_last_status = AsyncMock(side_effect=GwmAuthenticationError(operation="get_last_status"))
+    partial = replace(
+        bootstrap.state, g_token="rotated-g-token", bean_tech_access_token=None,
+        auto_ai_token_id=None, auto_ai_user_id=None,
+    )
+
+    async def refresh(
+        _credentials: object, _state: ChinaAuthState, *, on_state: Callable[[ChinaAuthState], Awaitable[None]],
+    ) -> ChinaAuthenticated:
+        client.authenticated = False
+        if operation != "refresh_token":
+            await on_state(partial)
+        raise GwmApiError(operation=operation, api_code="1013")
+
+    client.refresh_session = AsyncMock(side_effect=refresh)
+    store = cloud_state_store(HomeAssistant(str(tmp_path)), cloud_unique_id(credentials))
+    await store.async_save_auth_state(credentials, bootstrap.state)
+    runtime = GwmCloudClient(
+        "cn", client, bootstrap=bootstrap, credentials=credentials,
+        state_store=store, entry_data=cloud_entry_data(credentials),
+    )
+    coordinator = GwmDataUpdateCoordinator(HomeAssistant(str(tmp_path)), AsyncMock(), cloud_client=runtime)
+
+    for _ in range(4):
+        with pytest.raises(ConfigEntryAuthFailed):
+            await coordinator._async_update_data()
+
+    client.refresh_session.assert_awaited_once()
+    assert runtime.reusable_bootstrap is None
+    assert runtime._current_auth_state() is None
+    restarted = cloud_state_store(HomeAssistant(str(tmp_path)), cloud_unique_id(credentials))
+    assert await restarted.async_load_auth_state(cloud_entry_data(credentials)) is None
 
 
 @pytest.mark.asyncio

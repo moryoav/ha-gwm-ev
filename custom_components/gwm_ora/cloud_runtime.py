@@ -957,7 +957,8 @@ class GwmCloudClient:
                     try:
                         await self._async_renew_session(current_state, trigger=trigger)
                     except GwmApiError as renewal_error:
-                        if not self._is_session_expired(renewal_error):
+                        risk_control_required = self.region == REGION_CHINA and renewal_error.api_code == "1013"
+                        if not self._is_session_expired(renewal_error) and not risk_control_required:
                             raise
                         raise GwmAuthenticationError(
                             operation=renewal_error.operation, api_code=renewal_error.api_code,
