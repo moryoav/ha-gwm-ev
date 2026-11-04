@@ -492,6 +492,27 @@ async def test_explicit_session_refresh_failure_does_not_send_sms(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("code", ["550004", 550004])
+async def test_auto_ai_rejection_during_explicit_refresh_is_authentication_failure(code: object) -> None:
+    plans = _success_plans(login=False)
+    plans["refresh_token"] = [FIXTURE["responses"]["login"]]
+    plans["initialize_auto_ai"] = [{"header": {"c": code, "m": SENSITIVE}}]
+    transport = _FakeTransport(**plans)
+    client = _client(transport)
+
+    with pytest.raises(GwmAuthenticationError) as raised:
+        await client.refresh_session(_credentials(), _complete_state())
+
+    assert raised.value.operation == "initialize_auto_ai"
+    assert raised.value.api_code == "550004"
+    assert not client.authenticated
+    assert [request.operation for request in transport.calls] == [
+        "refresh_token", "initialize_bean_tech", "initialize_auto_ai",
+    ]
+    assert SENSITIVE not in repr(raised.value)
+
+
+@pytest.mark.asyncio
 async def test_restart_policy_refreshes_complete_state_without_sms_fallback() -> None:
     refresh = {
         "code": "000000",

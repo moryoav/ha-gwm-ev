@@ -4141,6 +4141,8 @@ def _decode_auto_ai_envelope(response: _ChinaTransportResponse, *, operation: st
     if code is not None and code != "0":
         if code == "1013":
             raise _ChinaRiskControlError(operation=operation, api_code=code)
+        if code == "550004":
+            raise GwmAuthenticationError(operation=operation, api_code=code)
         raise GwmApiError(operation=operation, api_code=code)
     body = _property(root, "body")
     return root if body is None else body

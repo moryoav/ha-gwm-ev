@@ -952,10 +952,14 @@ class GwmCloudClient:
                         api_code=trigger.api_code,
                     )
                 if current_state == observed_state:
-                    await self._async_renew_session(
-                        current_state,
-                        trigger=trigger,
-                    )
+                    try:
+                        await self._async_renew_session(current_state, trigger=trigger)
+                    except GwmApiError as renewal_error:
+                        if not self._is_session_expired(renewal_error):
+                            raise
+                        raise GwmAuthenticationError(
+                            operation=renewal_error.operation, api_code=renewal_error.api_code,
+                        ) from None
             try:
                 return await action()
             except (GwmAuthenticationError, GwmApiError) as retry_error:

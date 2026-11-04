@@ -876,8 +876,14 @@ async def test_china_partial_rotation_survives_later_failure_and_resumes(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("renewal_rejected", [True, False])
-async def test_china_expiry_requests_reauth_after_rejected_renewal_or_single_retry(renewal_rejected: bool) -> None:
+@pytest.mark.parametrize("renewal_error", [
+    GwmAuthenticationError(operation="refresh_token", api_code="550004"),
+    GwmApiError(operation="initialize_auto_ai", api_code="550004"),
+    None,
+])
+async def test_china_expiry_requests_reauth_after_rejected_renewal_or_single_retry(
+    renewal_error: Exception | None,
+) -> None:
     from homeassistant.exceptions import ConfigEntryAuthFailed
 
     from custom_components.gwm_ora.coordinator import GwmDataUpdateCoordinator
@@ -886,7 +892,7 @@ async def test_china_expiry_requests_reauth_after_rejected_renewal_or_single_ret
     client = _ReadClient()
     client.get_last_status = AsyncMock(side_effect=GwmApiError(operation="get_last_status", api_code="550004"))
     client.refresh_session = AsyncMock(
-        side_effect=GwmAuthenticationError(operation="refresh_token", api_code="550004") if renewal_rejected else None,
+        side_effect=renewal_error,
         return_value=ChinaAuthenticated(replace(bootstrap.state, g_token="rotated-g-token")),
     )
     store = AsyncMock()
@@ -900,7 +906,7 @@ async def test_china_expiry_requests_reauth_after_rejected_renewal_or_single_ret
         await coordinator._async_update_data()
 
     client.refresh_session.assert_awaited_once()
-    assert client.get_last_status.await_count == (1 if renewal_rejected else 2)
+    assert client.get_last_status.await_count == (1 if renewal_error is not None else 2)
     assert runtime.reusable_bootstrap is None
     store.async_clear_auth_state.assert_awaited()
 
