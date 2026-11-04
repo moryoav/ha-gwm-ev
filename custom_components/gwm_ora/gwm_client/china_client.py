@@ -578,6 +578,48 @@ class ChinaClient:
         except Exception:
             raise GwmNetworkError(operation=operation) from None
 
+    async def refresh_session(
+        self,
+        credentials: ChinaCredentials,
+        state: ChinaAuthState,
+        *,
+        timeout: float | None = None,
+    ) -> ChinaAuthenticated:
+        """Renew G-App and platform sessions without requesting an SMS login."""
+        if (
+            type(credentials) is not ChinaCredentials
+            or type(state) is not ChinaAuthState
+            or not state.matches(credentials)
+            or not state.complete
+        ):
+            raise GwmConfigurationError(operation="refresh_token")
+
+        async def refresh(deadline: _Deadline) -> tuple[ChinaAuthenticated, tuple[ChinaVehicle, ...]]:
+            if self._session is not None and self._session != state:
+                raise GwmConfigurationError(operation="refresh_token")
+            refreshed = await self._refresh_g_app(credentials, state, deadline=deadline)
+            bean_result = await self._initialize_service(
+                "bean_tech", credentials=credentials, partial=refreshed, deadline=deadline,
+            )
+            auto_result = await self._initialize_service(
+                "auto_ai", credentials=credentials, partial=refreshed, deadline=deadline,
+            )
+            complete = _apply_platform_results(refreshed, bean_result=bean_result, auto_result=auto_result)
+            vehicles = await self._acquire_vehicles_for_state(complete, deadline=deadline)
+            return ChinaAuthenticated(complete), vehicles
+
+        def install(result: tuple[ChinaAuthenticated, tuple[ChinaVehicle, ...]]) -> None:
+            self._install_if_revision(
+                expected_revision=self._session_revision,
+                state=result[0].state,
+                vehicles=result[1],
+            )
+
+        result, _vehicles = await self._run_read(
+            "refresh_token", timeout=timeout, action=refresh, commit=install,
+        )
+        return result
+
     async def acquire_vehicles(
         self,
         *,
@@ -911,27 +953,7 @@ class ChinaClient:
     ) -> tuple[ChinaAuthenticationResult, tuple[ChinaVehicle, ...] | None]:
         partial_candidate = _without_downstream(candidate)
         try:
-            response = await self._send_locked(
-                self._build_g_app_request(
-                    operation="refresh_token",
-                    url=_REFRESH_URL,
-                    logical_body={
-                        "token": candidate.g_token,
-                        "refreshToken": candidate.g_refresh_token,
-                    },
-                    state=candidate,
-                    encrypt_body=True,
-                ),
-                deadline=deadline,
-            )
-            data = _decode_g_app_envelope(response, operation="refresh_token")
-            refreshed = _parse_g_app_state(
-                data,
-                base=candidate,
-                credentials=credentials,
-                allow_fallback=True,
-                operation="refresh_token",
-            )
+            refreshed = await self._refresh_g_app(credentials, candidate, deadline=deadline)
         except _ChinaRiskControlError:
             return ChinaRiskControlRequired(state=partial_candidate), None
         except GwmAuthenticationError:
@@ -945,6 +967,31 @@ class ChinaClient:
                 deadline=deadline,
             )
         return await self._initialize_and_validate(credentials, refreshed, deadline=deadline)
+
+    async def _refresh_g_app(
+        self,
+        credentials: ChinaCredentials,
+        state: ChinaAuthState,
+        *,
+        deadline: _Deadline,
+    ) -> ChinaAuthState:
+        response = await self._send_locked(
+            self._build_g_app_request(
+                operation="refresh_token",
+                url=_REFRESH_URL,
+                logical_body={"token": state.g_token, "refreshToken": state.g_refresh_token},
+                state=state,
+                encrypt_body=True,
+            ),
+            deadline=deadline,
+        )
+        return _parse_g_app_state(
+            _decode_g_app_envelope(response, operation="refresh_token"),
+            base=state,
+            credentials=credentials,
+            allow_fallback=True,
+            operation="refresh_token",
+        )
 
     async def _sms_continuation(
         self,
@@ -4058,6 +4105,8 @@ def _decode_g_app_envelope(
     if code is not None and code not in {"0", "000000", "200"}:
         if code == "1013":
             raise _ChinaRiskControlError(operation=operation, api_code=code)
+        if code == "550004":
+            raise GwmAuthenticationError(operation=operation, api_code=code)
         raise GwmApiError(operation=operation, api_code=code)
     data = _property(root, "data")
     if data is None:

@@ -57,6 +57,7 @@ from custom_components.gwm_ora.gwm_client import (
     GwmConfigurationError,
     GwmNetworkError,
     GwmOptionalEndpointError,
+    GwmRateLimitError,
     GwmRoutePolicyError,
     GwmSession,
     RemoteCommandAcceptance,
@@ -65,6 +66,21 @@ from custom_components.gwm_ora.gwm_client import (
 
 _DEVICE_ID = "0123456789abcdef0123456789abcdef"
 _REFRESHED_AT = datetime(2026, 8, 28, 12, 0, tzinfo=UTC)
+
+
+def _china_bootstrap() -> tuple[GwmCloudCredentials, GwmCloudBootstrap]:
+    credentials = GwmCloudCredentials("cn", "CN", "13800138000", None, _DEVICE_ID)
+    state = replace(
+        ChinaAuthState.for_credentials(credentials.client_credentials()),
+        g_token="synthetic-g-token",
+        g_refresh_token="synthetic-g-refresh-token",
+        user_id="synthetic-g-user",
+        bean_id="synthetic-g-bean",
+        bean_tech_access_token="synthetic-bean-access-token",
+        auto_ai_token_id="synthetic-auto-token",
+        auto_ai_user_id="synthetic-auto-user",
+    )
+    return credentials, GwmCloudBootstrap.from_authentication(credentials, ChinaAuthenticated(state))
 
 
 def _bootstrap() -> tuple[GwmCloudCredentials, GwmCloudBootstrap]:
@@ -745,6 +761,117 @@ async def test_rejected_runtime_revision_cannot_be_restaged() -> None:
 
     assert runtime.reusable_bootstrap is None
     assert state_store.cleared == cloud_entry_data(credentials)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error_type", [GwmApiError, GwmAuthenticationError])
+async def test_china_status_expiry_renews_once_saves_and_retries_concurrent_reads(error_type: type) -> None:
+    credentials, bootstrap = _china_bootstrap()
+    rotated = replace(bootstrap.state, g_token="rotated-g-token", bean_tech_access_token="rotated-bean-token")
+    client = _ReadClient()
+    expired = True
+
+    async def status(identifier: VehicleIdentifier) -> CloudVehicleStatus:
+        if expired:
+            await asyncio.sleep(0)
+            raise error_type(operation="get_last_status", api_code="550004")
+        return client.statuses[identifier.value]
+
+    async def refresh(regional: object, state: ChinaAuthState) -> ChinaAuthenticated:
+        nonlocal expired
+        assert regional == credentials.client_credentials()
+        assert state is bootstrap.state
+        await asyncio.sleep(0)
+        expired = False
+        return ChinaAuthenticated(rotated)
+
+    client.get_last_status = status
+    client.refresh_session = AsyncMock(side_effect=refresh)
+    store = AsyncMock()
+    runtime = GwmCloudClient(
+        "cn", client, bootstrap=bootstrap, credentials=credentials,
+        state_store=store, entry_data=cloud_entry_data(credentials),
+    )
+
+    results = await asyncio.gather(*(runtime.async_get_vehicle_data() for _ in range(3)))
+
+    assert all(result["vehicles"][0]["values"]["soc"] == 80 for result in results)
+    client.refresh_session.assert_awaited_once()
+    store.async_save_auth_state.assert_awaited_once_with(credentials, rotated)
+    store.async_clear_auth_state.assert_not_called()
+    assert runtime.reusable_bootstrap.state is rotated
+    restored = GwmCloudClient.from_entry_data(
+        cloud_entry_data(credentials), cloud_unique_id(credentials), runtime.reusable_bootstrap,
+    )
+    assert restored.reusable_bootstrap.state is rotated
+    await restored.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("renewal_rejected", [True, False])
+async def test_china_expiry_requests_reauth_after_rejected_renewal_or_single_retry(renewal_rejected: bool) -> None:
+    from homeassistant.exceptions import ConfigEntryAuthFailed
+
+    from custom_components.gwm_ora.coordinator import GwmDataUpdateCoordinator
+
+    credentials, bootstrap = _china_bootstrap()
+    client = _ReadClient()
+    client.get_last_status = AsyncMock(side_effect=GwmApiError(operation="get_last_status", api_code="550004"))
+    client.refresh_session = AsyncMock(
+        side_effect=GwmAuthenticationError(operation="refresh_token", api_code="550004") if renewal_rejected else None,
+        return_value=ChinaAuthenticated(replace(bootstrap.state, g_token="rotated-g-token")),
+    )
+    store = AsyncMock()
+    runtime = GwmCloudClient(
+        "cn", client, bootstrap=bootstrap, credentials=credentials,
+        state_store=store, entry_data=cloud_entry_data(credentials),
+    )
+    coordinator = GwmDataUpdateCoordinator(HomeAssistant("synthetic-config"), AsyncMock(), cloud_client=runtime)
+
+    with pytest.raises(ConfigEntryAuthFailed):
+        await coordinator._async_update_data()
+
+    client.refresh_session.assert_awaited_once()
+    assert client.get_last_status.await_count == (1 if renewal_rejected else 2)
+    assert runtime.reusable_bootstrap is None
+    store.async_clear_auth_state.assert_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code", ["7654321", "551004"])
+async def test_china_unknown_api_failures_do_not_renew_or_discard_state(code: str) -> None:
+    credentials, bootstrap = _china_bootstrap()
+    client = _ReadClient()
+    client.get_last_status = AsyncMock(side_effect=GwmApiError(operation="get_last_status", api_code=code))
+    client.refresh_session = AsyncMock()
+    store = AsyncMock()
+    runtime = GwmCloudClient("cn", client, bootstrap=bootstrap, credentials=credentials, state_store=store)
+
+    with pytest.raises(GwmApiError) as raised:
+        await runtime.async_get_vehicle_data()
+
+    assert raised.value.api_code == code
+    client.refresh_session.assert_not_called()
+    store.async_clear_auth_state.assert_not_called()
+    assert runtime.reusable_bootstrap is bootstrap
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error", [GwmNetworkError(operation="refresh_token"), GwmRateLimitError(operation="refresh_token")])
+async def test_china_transient_renewal_failure_keeps_saved_state(error: Exception) -> None:
+    credentials, bootstrap = _china_bootstrap()
+    client = _ReadClient()
+    client.get_last_status = AsyncMock(side_effect=GwmApiError(operation="get_last_status", api_code="550004"))
+    client.refresh_session = AsyncMock(side_effect=error)
+    store = AsyncMock()
+    runtime = GwmCloudClient("cn", client, bootstrap=bootstrap, credentials=credentials, state_store=store)
+
+    with pytest.raises(type(error)):
+        await runtime.async_get_vehicle_data()
+
+    client.refresh_session.assert_awaited_once()
+    store.async_clear_auth_state.assert_not_called()
+    assert runtime.reusable_bootstrap is bootstrap
 
 
 @pytest.mark.asyncio

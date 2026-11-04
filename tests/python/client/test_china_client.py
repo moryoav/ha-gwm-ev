@@ -357,7 +357,8 @@ async def test_matching_complete_state_is_never_accepted_from_cache() -> None:
 
 
 @pytest.mark.asyncio
-async def test_definitive_complete_session_rejection_refreshes_then_reinitializes() -> None:
+@pytest.mark.parametrize("rejection", [_response({}, status=401), {"code": "550004"}, {"code": 550004}])
+async def test_definitive_complete_session_rejection_refreshes_then_reinitializes(rejection: object) -> None:
     refresh = {
         "code": "000000",
         "data": {
@@ -368,7 +369,7 @@ async def test_definitive_complete_session_rejection_refreshes_then_reinitialize
     }
     plans = _success_plans(login=False)
     plans["acquire_vehicles"] = [
-        _response({}, status=401),
+        rejection,
         FIXTURE["responses"]["discovery"],
     ]
     plans["refresh_token"] = [refresh]
@@ -383,6 +384,74 @@ async def test_definitive_complete_session_rejection_refreshes_then_reinitialize
     assert operations[0:2] == ["acquire_vehicles", "refresh_token"]
     assert operations[-1] == "acquire_vehicles"
     _assert_request(transport.calls[1], "refresh_request")
+
+
+@pytest.mark.asyncio
+async def test_explicit_session_refresh_renews_platforms_without_sms_or_old_discovery() -> None:
+    plans = _success_plans(login=False)
+    plans["refresh_token"] = [{
+        "code": "000000",
+        "data": {"token": "ROTATED-G-TOKEN", "refreshToken": "ROTATED-G-REFRESH"},
+    }]
+    plans["initialize_bean_tech"] = [{
+        "code": "000000",
+        "data": {**FIXTURE["responses"]["bean_tech"]["data"], "accessToken": "ROTATED-BEAN-TOKEN"},
+    }]
+    transport = _FakeTransport(**plans)
+    client = _client(transport)
+
+    result = await client.refresh_session(_credentials(), _complete_state())
+
+    assert result.state.g_token == "ROTATED-G-TOKEN"
+    assert result.state.g_refresh_token == "ROTATED-G-REFRESH"
+    assert result.state.bean_tech_access_token == "ROTATED-BEAN-TOKEN"
+    assert result.state.auto_ai_token_id == "SYNTHETIC-AUTO-TOKEN"
+    assert client.authenticated
+    assert [request.operation for request in transport.calls] == [
+        "refresh_token", "initialize_bean_tech", "initialize_auto_ai", "acquire_vehicles",
+    ]
+    _assert_request(transport.calls[0], "refresh_request")
+    assert transport.calls[-1].headers["Authorization"] == "ROTATED-BEAN-TOKEN"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code", ["550004", 550004])
+async def test_beantech_status_expiry_revokes_session_without_leaking_response(code: object) -> None:
+    transport = _FakeTransport(
+        acquire_vehicles=[FIXTURE["responses"]["discovery"]],
+        get_last_status=[{"code": code, "message": SENSITIVE}],
+    )
+    client = _client(transport)
+    await client.authenticate(_credentials(), state=_complete_state())
+    with pytest.raises(GwmAuthenticationError) as raised:
+        await client.get_last_status(VehicleIdentifier(BEAN_VIN))
+
+    assert raised.value.api_code == "550004"
+    assert raised.value.operation == "get_last_status"
+    assert not client.authenticated
+    assert SENSITIVE not in str(raised.value)
+    assert SENSITIVE not in repr(raised.value)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("response", "expected"),
+    [
+        ({"code": "550004"}, GwmAuthenticationError),
+        ({"code": "7654321"}, GwmApiError),
+        (_response({}, status=429), GwmRateLimitError),
+        (GwmNetworkError(operation="refresh_token"), GwmNetworkError),
+    ],
+)
+async def test_explicit_session_refresh_failure_does_not_send_sms(
+    response: object, expected: type[GwmClientError],
+) -> None:
+    transport = _FakeTransport(refresh_token=[response])
+    client = _client(transport)
+    with pytest.raises(expected):
+        await client.refresh_session(_credentials(), _complete_state())
+    assert [request.operation for request in transport.calls] == ["refresh_token"]
+    assert not client.authenticated
 
 
 @pytest.mark.asyncio

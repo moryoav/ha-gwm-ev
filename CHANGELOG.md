@@ -8,6 +8,10 @@ This project follows semantic versioning. HACS uses the latest GitHub release ta
 
 ## [Unreleased]
 
+### Fixed
+
+- Recognized Mainland-China API code `550004` as session expiry. Renewed the G-App and platform sessions and retried the failed request once, matching EU, ANZ, and Russia recovery. Requested reauthentication when renewal or the retry rejects the session, without sending SMS automatically.
+
 ## [0.17.12] - 2026-10-19
 
 ### Changed

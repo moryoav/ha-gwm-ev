@@ -47,6 +47,7 @@ from .gwm_client import (
     ChinaAuthState,
     ChinaClient,
     ChinaClientConfig,
+    ChinaCredentials,
     ChinaVehicleControlCommand,
     ClimateCommand,
     CloseWindowsCommand,
@@ -189,6 +190,12 @@ class _ChinaReadClient(Protocol):
     async def acquire_vehicles(self) -> tuple[CloudVehicle, ...]: ...
 
     async def get_last_status(self, identifier: VehicleIdentifier) -> CloudVehicleStatus: ...
+
+    async def refresh_session(
+        self,
+        credentials: ChinaCredentials,
+        state: ChinaAuthState,
+    ) -> ChinaAuthenticated: ...
 
     async def get_charging_plan(
         self,
@@ -920,37 +927,36 @@ class GwmCloudClient:
         self,
         action: Callable[[], Awaitable[T]],
     ) -> T:
-        """Retry one overseas operation after one serialized token rotation."""
+        """Retry one regional operation after one serialized session renewal."""
 
         async with self._session_renewal_lock:
             await self._async_flush_pending_auth_state()
-            observed_state = self._current_overseas_auth_state()
-        observed_access_token = observed_state.access_token if observed_state is not None else None
+            observed_state = self._current_auth_state()
         try:
             return await action()
         except (GwmAuthenticationError, GwmApiError) as error:
-            if observed_state is None or not is_overseas_session_expired(error):
+            if observed_state is None or not self._is_session_expired(error):
                 raise
             trigger = error
 
         try:
             async with self._session_renewal_lock:
                 await self._async_flush_pending_auth_state()
-                current_state = self._current_overseas_auth_state()
+                current_state = self._current_auth_state()
                 if current_state is None:
                     raise GwmAuthenticationError(
                         operation=trigger.operation,
                         api_code=trigger.api_code,
                     )
-                if current_state.access_token == observed_access_token:
-                    await self._async_renew_overseas_session(
+                if current_state == observed_state:
+                    await self._async_renew_session(
                         current_state,
                         trigger=trigger,
                     )
             try:
                 return await action()
             except (GwmAuthenticationError, GwmApiError) as retry_error:
-                if not is_overseas_session_expired(retry_error):
+                if not self._is_session_expired(retry_error):
                     raise
                 raise GwmAuthenticationError(
                     operation=retry_error.operation,
@@ -961,15 +967,22 @@ class GwmCloudClient:
                 await self.async_authentication_rejected()
             raise
 
-    async def _async_renew_overseas_session(
+    def _is_session_expired(self, error: GwmAuthenticationError | GwmApiError) -> bool:
+        if self.region == REGION_CHINA:
+            return type(error) is GwmAuthenticationError or (
+                type(error) is GwmApiError and error.api_code == "550004"
+            )
+        return is_overseas_session_expired(error)
+
+    async def _async_renew_session(
         self,
-        state: EuAuthState | AnzAuthState | RussiaAuthState,
+        state: EuAuthState | AnzAuthState | RussiaAuthState | ChinaAuthState,
         *,
         trigger: GwmAuthenticationError | GwmApiError,
     ) -> None:
         credentials = self._credentials
         if (
-            state.refresh_token is None
+            (state.g_refresh_token if type(state) is ChinaAuthState else state.refresh_token) is None
             or credentials is None
             or credentials.region != self.region
         ):
@@ -979,7 +992,11 @@ class GwmCloudClient:
             )
         regional_credentials = credentials.client_credentials()
         client = cast(_OverseasReadClient, self._client)
-        if self.region == REGION_EU and type(state) is EuAuthState:
+        if self.region == REGION_CHINA and type(state) is ChinaAuthState:
+            if type(regional_credentials) is not ChinaCredentials:
+                raise GwmAuthenticationError(operation=trigger.operation, api_code=trigger.api_code)
+            result = await cast(_ChinaReadClient, self._client).refresh_session(regional_credentials, state)
+        elif self.region == REGION_EU and type(state) is EuAuthState:
             if type(regional_credentials) is not EuCredentials:
                 raise GwmAuthenticationError(
                     operation=trigger.operation,
@@ -1038,13 +1055,15 @@ class GwmCloudClient:
         if self._pending_auth_state is state:
             self._pending_auth_state = None
 
-    def _current_overseas_auth_state(
+    def _current_auth_state(
         self,
-    ) -> EuAuthState | AnzAuthState | RussiaAuthState | None:
+    ) -> EuAuthState | AnzAuthState | RussiaAuthState | ChinaAuthState | None:
         bootstrap = self._bootstrap
         if bootstrap is None:
             return None
         state = bootstrap.state
+        if self.region == REGION_CHINA and type(state) is ChinaAuthState:
+            return state
         if self.region == REGION_EU and type(state) is EuAuthState:
             return state
         if self.region == REGION_ANZ and type(state) is AnzAuthState:
