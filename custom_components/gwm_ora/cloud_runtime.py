@@ -195,6 +195,8 @@ class _ChinaReadClient(Protocol):
         self,
         credentials: ChinaCredentials,
         state: ChinaAuthState,
+        *,
+        on_state: Callable[[ChinaAuthState], Awaitable[None]] | None = None,
     ) -> ChinaAuthenticated: ...
 
     async def get_charging_plan(
@@ -469,6 +471,7 @@ class GwmCloudClient:
         self._client = client
         self._clock = clock or (lambda: datetime.now(UTC))
         self._bootstrap = bootstrap
+        self._china_partial_state: ChinaAuthState | None = None
         self._credentials = credentials
         self._state_store = state_store
         self._entry_data = dict(entry_data or {})
@@ -995,7 +998,9 @@ class GwmCloudClient:
         if self.region == REGION_CHINA and type(state) is ChinaAuthState:
             if type(regional_credentials) is not ChinaCredentials:
                 raise GwmAuthenticationError(operation=trigger.operation, api_code=trigger.api_code)
-            result = await cast(_ChinaReadClient, self._client).refresh_session(regional_credentials, state)
+            result = await cast(_ChinaReadClient, self._client).refresh_session(
+                regional_credentials, state, on_state=self._async_publish_china_partial_state,
+            )
         elif self.region == REGION_EU and type(state) is EuAuthState:
             if type(regional_credentials) is not EuCredentials:
                 raise GwmAuthenticationError(
@@ -1033,7 +1038,15 @@ class GwmCloudClient:
             )
         bootstrap = GwmCloudBootstrap.from_authentication(credentials, result)
         self._bootstrap = bootstrap
+        self._china_partial_state = None
         self._pending_auth_state = result.state
+        await self._async_flush_pending_auth_state()
+
+    async def _async_publish_china_partial_state(self, state: ChinaAuthState) -> None:
+        """Retain rotated G-App credentials before fallible platform initialization."""
+        self._china_partial_state = state
+        self._bootstrap = None
+        self._pending_auth_state = state
         await self._async_flush_pending_auth_state()
 
     async def _async_flush_pending_auth_state(self) -> None:
@@ -1058,6 +1071,8 @@ class GwmCloudClient:
     def _current_auth_state(
         self,
     ) -> EuAuthState | AnzAuthState | RussiaAuthState | ChinaAuthState | None:
+        if self.region == REGION_CHINA and self._china_partial_state is not None:
+            return self._china_partial_state
         bootstrap = self._bootstrap
         if bootstrap is None:
             return None
@@ -1081,6 +1096,7 @@ class GwmCloudClient:
         """Retire a rejected durable revision without logging its contents."""
 
         self._bootstrap = None
+        self._china_partial_state = None
         self._pending_auth_state = None
         if self._state_store is not None:
             await self._state_store.async_clear_auth_state(self._entry_data)

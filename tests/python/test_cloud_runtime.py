@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import ssl
+from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -777,10 +779,15 @@ async def test_china_status_expiry_renews_once_saves_and_retries_concurrent_read
             raise error_type(operation="get_last_status", api_code="550004")
         return client.statuses[identifier.value]
 
-    async def refresh(regional: object, state: ChinaAuthState) -> ChinaAuthenticated:
+    partial = replace(rotated, bean_tech_access_token=None, auto_ai_token_id=None, auto_ai_user_id=None)
+
+    async def refresh(
+        regional: object, state: ChinaAuthState, *, on_state: Callable[[ChinaAuthState], Awaitable[None]],
+    ) -> ChinaAuthenticated:
         nonlocal expired
         assert regional == credentials.client_credentials()
         assert state is bootstrap.state
+        await on_state(partial)
         await asyncio.sleep(0)
         expired = False
         return ChinaAuthenticated(rotated)
@@ -797,7 +804,9 @@ async def test_china_status_expiry_renews_once_saves_and_retries_concurrent_read
 
     assert all(result["vehicles"][0]["values"]["soc"] == 80 for result in results)
     client.refresh_session.assert_awaited_once()
-    store.async_save_auth_state.assert_awaited_once_with(credentials, rotated)
+    assert store.async_save_auth_state.await_args_list == [
+        ((credentials, partial), {}), ((credentials, rotated), {}),
+    ]
     store.async_clear_auth_state.assert_not_called()
     assert runtime.reusable_bootstrap.state is rotated
     restored = GwmCloudClient.from_entry_data(
@@ -805,6 +814,65 @@ async def test_china_status_expiry_renews_once_saves_and_retries_concurrent_read
     )
     assert restored.reusable_bootstrap.state is rotated
     await restored.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancelled", [False, True])
+async def test_china_partial_rotation_survives_later_failure_and_resumes(
+    tmp_path: Path, cancelled: bool,
+) -> None:
+    from custom_components.gwm_ora.cloud_storage import cloud_state_store
+
+    credentials, bootstrap = _china_bootstrap()
+    partial = replace(
+        bootstrap.state, g_token="rotated-g-token", g_refresh_token="rotated-g-refresh",
+        bean_tech_access_token=None, auto_ai_token_id=None, auto_ai_user_id=None,
+    )
+    client = _ReadClient()
+    client.get_last_status = AsyncMock(side_effect=GwmAuthenticationError(operation="get_last_status", api_code="550004"))
+    store = cloud_state_store(HomeAssistant(str(tmp_path)), cloud_unique_id(credentials))
+    await store.async_save_auth_state(credentials, bootstrap.state)
+    entered = asyncio.Event()
+
+    async def refresh(
+        regional: object, state: ChinaAuthState, *, on_state: Callable[[ChinaAuthState], Awaitable[None]],
+    ) -> ChinaAuthenticated:
+        assert regional == credentials.client_credentials()
+        if state.complete:
+            await on_state(partial)
+            entered.set()
+            if cancelled:
+                await asyncio.Event().wait()
+            raise GwmNetworkError(operation="initialize_bean_tech")
+        assert state == partial
+        client.get_last_status = AsyncMock(side_effect=lambda identifier: client.statuses[identifier.value])
+        return ChinaAuthenticated(replace(
+            partial, bean_tech_access_token="rotated-bean-token",
+            auto_ai_token_id="rotated-auto-token", auto_ai_user_id="synthetic-auto-user",
+        ))
+
+    client.refresh_session = AsyncMock(side_effect=refresh)
+    runtime = GwmCloudClient(
+        "cn", client, bootstrap=bootstrap, credentials=credentials,
+        state_store=store, entry_data=cloud_entry_data(credentials),
+    )
+    task = asyncio.create_task(runtime.async_get_vehicle_data())
+    await entered.wait()
+    if cancelled:
+        task.cancel()
+    with pytest.raises(asyncio.CancelledError if cancelled else GwmNetworkError):
+        await task
+
+    assert runtime._current_auth_state() == partial
+    assert runtime.reusable_bootstrap is None
+    restored_store = cloud_state_store(HomeAssistant(str(tmp_path)), cloud_unique_id(credentials))
+    assert await restored_store.async_load_auth_state(cloud_entry_data(credentials)) == partial
+
+    recovered = await runtime.async_get_vehicle_data()
+
+    assert recovered["vehicles"]
+    assert client.refresh_session.await_count == 2
+    assert runtime.reusable_bootstrap.state.g_refresh_token == "rotated-g-refresh"
 
 
 @pytest.mark.asyncio

@@ -584,20 +584,25 @@ class ChinaClient:
         state: ChinaAuthState,
         *,
         timeout: float | None = None,
+        on_state: Callable[[ChinaAuthState], Awaitable[None]] | None = None,
     ) -> ChinaAuthenticated:
-        """Renew G-App and platform sessions without requesting an SMS login."""
+        """Publish G-App rotation before renewing platforms, without SMS login."""
         if (
             type(credentials) is not ChinaCredentials
             or type(state) is not ChinaAuthState
             or not state.matches(credentials)
-            or not state.complete
+            or not state.has_g_app
+            or (on_state is not None and not callable(on_state))
         ):
             raise GwmConfigurationError(operation="refresh_token")
 
         async def refresh(deadline: _Deadline) -> tuple[ChinaAuthenticated, tuple[ChinaVehicle, ...]]:
             if self._session is not None and self._session != state:
                 raise GwmConfigurationError(operation="refresh_token")
-            refreshed = await self._refresh_g_app(credentials, state, deadline=deadline)
+            self._revoke_session()
+            refreshed = await self._refresh_g_app(credentials, state, deadline=deadline) if state.complete else state
+            if on_state is not None:
+                await on_state(refreshed)
             bean_result = await self._initialize_service(
                 "bean_tech", credentials=credentials, partial=refreshed, deadline=deadline,
             )

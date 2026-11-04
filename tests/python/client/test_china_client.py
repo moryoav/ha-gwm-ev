@@ -434,6 +434,43 @@ async def test_beantech_status_expiry_revokes_session_without_leaking_response(c
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("failed_operation", ["initialize_bean_tech", "initialize_auto_ai", "acquire_vehicles"])
+async def test_explicit_refresh_publishes_rotated_partial_before_later_failure(failed_operation: str) -> None:
+    plans = {operation: values * 2 for operation, values in _success_plans(login=False).items()}
+    plans[failed_operation].insert(0, GwmSchemaError(operation=failed_operation))
+    plans["refresh_token"] = [{
+        "code": "000000",
+        "data": {"token": "ROTATED-G-TOKEN", "refreshToken": "ROTATED-G-REFRESH"},
+    }]
+    transport = _FakeTransport(**plans)
+    client = _client(transport)
+    published: list[ChinaAuthState] = []
+
+    async def publish(state: ChinaAuthState) -> None:
+        assert not client.authenticated
+        published.append(state)
+
+    with pytest.raises(GwmSchemaError):
+        await client.refresh_session(_credentials(), _complete_state(), on_state=publish)
+
+    partial = published[-1]
+    assert partial.g_token == "ROTATED-G-TOKEN"
+    assert partial.g_refresh_token == "ROTATED-G-REFRESH"
+    assert partial.has_g_app and not partial.complete
+    assert partial.bean_tech_access_token is None
+    assert partial.auto_ai_token_id is None
+    assert not client.authenticated
+
+    result = await client.refresh_session(_credentials(), partial, on_state=publish)
+
+    assert result.state.g_refresh_token == "ROTATED-G-REFRESH"
+    assert result.state.complete
+    assert client.authenticated
+    assert sum(request.operation == "refresh_token" for request in transport.calls) == 1
+    assert not any(request.operation in {"login", "request_verification"} for request in transport.calls)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("response", "expected"),
     [
