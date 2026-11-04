@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
-from homeassistant.core import HomeAssistant
+from homeassistant.core import CoreState, HomeAssistant
 from homeassistant.helpers.storage import Store
 
 from .cloud_auth import (
@@ -521,6 +521,9 @@ class GwmCloudStateStore:
     async def _async_save_confirmed(self, record: _GwmCloudRecord) -> None:
         data = _encode_record(record)
         await self._store.async_save(data)
+        if self._hass.state is CoreState.stopping:
+            # Store defers shutdown writes; this caller needs completed publication.
+            await self._store._async_handle_write_data()
         # Store.async_save can log a writer failure and return normally.
         if not await self._hass.async_add_executor_job(_stored_record_matches, self._store.path, data):
             raise OSError("GWM cloud state write could not be confirmed")

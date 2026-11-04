@@ -15,7 +15,7 @@ import pytest
 
 pytest.importorskip("homeassistant")
 
-from homeassistant.core import HomeAssistant
+from homeassistant.core import CoreState, HomeAssistant
 
 from custom_components.gwm_ora.cloud_auth import (
     CloudAuthState,
@@ -119,6 +119,54 @@ async def test_swallowed_writer_failure_does_not_publish_state_and_can_be_retrie
     await store.async_save_auth_state(credentials, rotated)
     successful_restart = cloud_state_store(HomeAssistant(str(tmp_path)), unique_id)
     assert await successful_restart.async_load_auth_state(cloud_entry_data(credentials)) == rotated
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["save", "clear", "journal"])
+@pytest.mark.parametrize("writer_failure", [False, True])
+async def test_shutdown_storage_confirms_auth_and_journal_writes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: str, writer_failure: bool,
+) -> None:
+    from homeassistant.helpers.storage import WriteError
+
+    credentials = _credentials("cn")
+    unique_id = cloud_unique_id(credentials)
+    hass = HomeAssistant(str(tmp_path))
+    store = cloud_state_store(hass, unique_id)
+    initial = _state(credentials)
+    rotated = replace(initial, g_token="rotated-shutdown-token")
+    await store.async_save_auth_state(credentials, initial)
+    hass.set_state(CoreState.stopping)
+
+    if writer_failure:
+        def fail(_data: object) -> None:
+            raise WriteError("synthetic shutdown write failure")
+
+        monkeypatch.setattr(store._store, "_write_data", fail)
+
+    async def save() -> None:
+        if operation == "save":
+            await store.async_save_auth_state(credentials, rotated)
+        elif operation == "clear":
+            await store.async_clear_auth_state(cloud_entry_data(credentials))
+        else:
+            await store.async_record_accepted_command(
+                credentials, vehicle_id="SYNTHETIC-VEHICLE", command_name="climate",
+                cloud_command_id="SYNTHETIC-COMMAND", accepted_at=_NOW,
+            )
+
+    if writer_failure:
+        with pytest.raises(OSError, match="write could not be confirmed"):
+            await save()
+    else:
+        await save()
+
+    expected = initial if writer_failure or operation == "journal" else rotated if operation == "save" else None
+    assert await store.async_load_auth_state(cloud_entry_data(credentials)) == expected
+    restarted = cloud_state_store(HomeAssistant(str(tmp_path)), unique_id)
+    assert await restarted.async_load_auth_state(cloud_entry_data(credentials)) == expected
+    journal = await restarted.async_get_command_journal(cloud_entry_data(credentials))
+    assert len(journal) == (1 if operation == "journal" and not writer_failure else 0)
 
 
 def test_auth_storage_logging_failure_is_nonfatal(monkeypatch: pytest.MonkeyPatch) -> None:
