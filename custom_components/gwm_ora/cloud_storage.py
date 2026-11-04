@@ -502,6 +502,23 @@ class GwmCloudStateStore:
         )
 
     async def _async_save(self, record: _GwmCloudRecord) -> None:
+        """Keep the account lock until the writer and confirmation have finished."""
+        task = asyncio.create_task(self._async_save_confirmed(record))
+        cancelled = False
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                cancelled = True
+            except Exception:
+                break
+        if cancelled:
+            with suppress(Exception):
+                task.result()
+            raise asyncio.CancelledError
+        task.result()
+
+    async def _async_save_confirmed(self, record: _GwmCloudRecord) -> None:
         data = _encode_record(record)
         await self._store.async_save(data)
         # Store.async_save can log a writer failure and return normally.
