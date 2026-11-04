@@ -414,16 +414,27 @@ async def test_process_restart_resumes_and_rotates_durable_session_without_login
 
 
 @pytest.mark.asyncio
-async def test_china_restart_resumes_complete_state_and_enables_no_pin_commands(
+@pytest.mark.parametrize("saved_partial", [False, True])
+async def test_china_restart_resumes_saved_state_and_enables_no_pin_commands(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Any,
+    saved_partial: bool,
 ) -> None:
     entry, credentials, bootstrap = _china_entry_and_bootstrap()
+    bootstrap = GwmCloudBootstrap.from_authentication(
+        credentials, ChinaAuthenticated(replace(bootstrap.state, sso_token="synthetic-sso-token")),
+    )
+    saved_state = replace(
+        bootstrap.state,
+        bean_tech_access_token=None, bean_tech_refresh_token=None,
+        bean_tech_sso_token=None, bean_tech_bean_id=None,
+        auto_ai_token_id=None, auto_ai_user_id=None, auto_ai_gw_id=None,
+    ) if saved_partial else bootstrap.state
     first_hass = HomeAssistant(str(tmp_path))
     await cloud_state_store(
         first_hass,
         entry.unique_id or "",
-    ).async_save_auth_state(credentials, bootstrap.state)
+    ).async_save_auth_state(credentials, saved_state)
 
     class Cloud:
         region = "cn"
@@ -465,7 +476,7 @@ async def test_china_restart_resumes_complete_state_and_enables_no_pin_commands(
             **kwargs: Any,
         ) -> object:
             assert supplied == credentials
-            assert kwargs["state"] == bootstrap.state
+            assert kwargs["state"] == saved_state
             assert kwargs["allow_password_login"] is False
             assert kwargs["allow_session_reclaim"] is False
             return ChinaAuthenticated(bootstrap.state)
@@ -483,6 +494,8 @@ async def test_china_restart_resumes_complete_state_and_enables_no_pin_commands(
 
     assert await async_setup_entry(restarted_hass, entry)
     assert entry.runtime_data.cloud is cloud
+    restored = cloud_state_store(HomeAssistant(str(tmp_path)), entry.unique_id or "")
+    assert await restored.async_load_auth_state(dict(entry.data)) == bootstrap.state
 
 
 @pytest.mark.asyncio
