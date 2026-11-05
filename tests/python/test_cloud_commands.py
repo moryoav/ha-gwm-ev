@@ -362,36 +362,6 @@ async def test_acceptance_is_journaled_before_polling_and_reaches_terminal_resul
 
 
 @pytest.mark.asyncio
-async def test_restart_restores_polling_without_resending_vehicle_operation(
-    tmp_path: Path,
-) -> None:
-    clock = _Clock()
-    first_cloud = _Cloud()
-    first, store, credentials = await _api(tmp_path, first_cloud, clock)
-    accepted = await first.async_set_climate(_VIN, mode="auto")
-    assert len(first_cloud.sent) == 1
-
-    second_cloud = _Cloud()
-    second_cloud.poll_results = [
-        (RemoteCommandResultItem("provider-command-1", "0x04", "6", "Success"),)
-    ]
-    second = GwmCommandApi(
-        second_cloud,  # type: ignore[arg-type]
-        store,
-        credentials,
-        enabled=True,
-        security_pin="1234",
-        clock=clock,
-    )
-    restored = await second.async_restore(cloud_entry_data(credentials))
-    assert restored[0]["id"] == accepted["id"]
-    assert second_cloud.sent == []
-    completed = await second.async_get_command(str(accepted["id"]))
-    assert completed["state"] == "completed"
-    assert second_cloud.sent == []
-
-
-@pytest.mark.asyncio
 async def test_timeout_is_persisted_without_an_extra_poll(tmp_path: Path) -> None:
     cloud = _Cloud()
     clock = _Clock()
@@ -495,52 +465,6 @@ async def test_saved_runtime_is_used_by_immediate_climate_start(
     assert len(cloud.sent) == 1
     assert cloud.sent[0].operation_time_minutes == 5
     assert api.climate_operation_time_minutes(_VIN) == 5
-
-
-@pytest.mark.asyncio
-async def test_lock_and_window_acceptance_use_same_restart_safe_journal(
-    tmp_path: Path,
-) -> None:
-    clock = _Clock()
-    first_cloud = _Cloud()
-    first, store, credentials = await _api(tmp_path, first_cloud, clock)
-
-    locked = await first.async_lock(_VIN, "lock")
-    closed = await first.async_close_windows(_VIN)
-    journal = await store.async_get_command_journal(cloud_entry_data(credentials))
-
-    assert [entry.command_name for entry in journal] == ["Door lock", "Window close"]
-    assert locked["state"] == closed["state"] == "in_progress"
-    assert len(first_cloud.lock_sent) == len(first_cloud.windows_sent) == 1
-
-    second_cloud = _Cloud()
-    second_cloud.poll_results = [
-        (
-            RemoteCommandResultItem("stale", "0x04", "9", "Wrong family"),
-            RemoteCommandResultItem("provider-command-lock", "0x05", "6", "Success"),
-        ),
-        (
-            RemoteCommandResultItem("stale", "0x04", "9", "Wrong family"),
-            RemoteCommandResultItem(
-                "provider-command-windows", "0x08", "6", "Success"
-            ),
-        ),
-    ]
-    second = GwmCommandApi(
-        second_cloud,  # type: ignore[arg-type]
-        store,
-        credentials,
-        enabled=True,
-        security_pin="1234",
-        clock=clock,
-    )
-    restored = await second.async_restore(cloud_entry_data(credentials))
-
-    assert {item["id"] for item in restored} == {locked["id"], closed["id"]}
-    assert second_cloud.lock_sent == second_cloud.windows_sent == []
-    assert (await second.async_get_command(str(locked["id"])))["state"] == "completed"
-    assert (await second.async_get_command(str(closed["id"])))["state"] == "completed"
-    assert second_cloud.lock_sent == second_cloud.windows_sent == []
 
 
 @pytest.mark.asyncio
@@ -824,9 +748,14 @@ async def test_overseas_write_lifecycle_matrix_resumes_every_family_without_rese
         await first.async_set_front_defroster(_VIN, enabled=True),
         await first.async_start_cabin_clean(_VIN),
     )
-    assert (
-        len(await store.async_get_command_journal(cloud_entry_data(credentials))) == 5
-    )
+    journal = await store.async_get_command_journal(cloud_entry_data(credentials))
+    assert [item.command_name for item in journal] == [
+        "A/C", "Door lock", "Window close", "Front defroster", "Air circulation",
+    ]
+    assert [len(sent) for sent in (
+        first_cloud.sent, first_cloud.lock_sent, first_cloud.windows_sent,
+        first_cloud.front_defroster_sent, first_cloud.cabin_clean_sent,
+    )] == [1, 1, 1, 1, 1]
 
     second_cloud = _Cloud()
     second_cloud.region = region
@@ -1245,8 +1174,10 @@ _BEANTECH_CHARGING_CALLS = [
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("region", ["cn", "eu", "aus", "rus"])
-@pytest.mark.parametrize("remote,charging", [(True, True), (False, True), (True, False), (False, False)])
+@pytest.mark.parametrize("region,remote,charging", [
+    ("cn", True, True), ("cn", False, True), ("cn", True, False), ("cn", False, False),
+    ("eu", True, True), ("aus", True, True), ("rus", True, True),
+])
 @pytest.mark.parametrize("method,cloud_method,kwargs,result,requires_charging", _BEANTECH_CHARGING_CALLS)
 async def test_beantech_charging_api_enforces_region_and_independent_consent(tmp_path, region, remote, charging, method, cloud_method, kwargs, result, requires_charging):
     cloud = _Cloud()

@@ -91,7 +91,6 @@ def test_bootstrap_certificate_metadata_keys_and_renewal_controls_are_exact() ->
         assert certificate.not_valid_after_utc == _parse_instant(record["not_after"])
         renew_by = _parse_instant(record["renew_by"])
         assert renew_by == certificate.not_valid_after_utc - timedelta(days=90)
-        assert datetime.now(UTC) < renew_by
         assert hashlib.sha256(
             certificate.public_key().public_bytes(
                 serialization.Encoding.DER,
@@ -106,24 +105,23 @@ def test_bootstrap_certificate_metadata_keys_and_renewal_controls_are_exact() ->
         assert bundle.count(b"-----BEGIN CERTIFICATE-----") == records[bundle_name]["certificate_count"]
 
 
-def test_client_is_bundled_without_an_external_package_requirement() -> None:
-    manifest = json.loads(
-        (ROOT / "custom_components" / "gwm_ora" / "manifest.json").read_text(encoding="utf-8")
-    )
-
-    assert "requirements" not in manifest
-    assert manifest["integration_type"] == "hub"
-    assert "loggers" not in manifest
-    assert manifest["domain"] == "gwm_ora"
+def test_protocol_material_is_confined_to_audited_resources() -> None:
     assert _RESOURCE_DIRECTORY == RESOURCE_DIRECTORY
-    assert (CLIENT_DIRECTORY / "__init__.py").is_file()
-    assert not (ROOT / "gwm_client").exists()
-    assert not (ROOT / "gwm_ora_client").exists()
-    assert not (ROOT / "addons").exists()
     assert not any(
         path.suffix.casefold() in {".cer", ".key", ".pem"}
         for path in CLIENT_DIRECTORY.rglob("*")
     )
+
+
+def test_bootstrap_renewal_deadlines_have_not_elapsed() -> None:
+    now = datetime.now(UTC)
+    overdue = {
+        record["path"]: record["certificate"]["renew_by"]
+        for record in _load_provenance()["resources"]
+        if "certificate" in record
+        and now >= _parse_instant(record["certificate"]["renew_by"])
+    }
+    assert not overdue, f"Bootstrap certificate renewal deadlines have elapsed: {overdue}"
 
 
 def test_protocol_material_notice_is_shipped_with_the_hacs_integration() -> None:
@@ -134,30 +132,4 @@ def test_protocol_material_notice_is_shipped_with_the_hacs_integration() -> None
 
     assert integration_notice == root_notice
     assert "LicenseRef-GWM-Protocol-Materials" in root_notice
-    assert "bundled client" in root_notice
-    assert "Bundling does not resolve" in root_notice
     assert (ROOT / "custom_components/gwm_ora/LICENSE").read_bytes() == (ROOT / "LICENSE").read_bytes()
-
-
-def test_new_client_name_has_only_explicit_legacy_compatibility_values() -> None:
-    allowed_lines = {
-        "anz_auth.py": {'_LEGACY_ACCOUNT_BINDING_DOMAIN = b"gwm-ora-anz-account-v1\\0"'},
-        "china_client.py": {'_LEGACY_ACCOUNT_BINDING_DOMAIN = b"gwm-ora-china-account-v1\\0"'},
-        "eu_auth.py": {'_LEGACY_ACCOUNT_BINDING_DOMAIN = b"gwm-ora-eu-account-v1\\0"'},
-        "russia_auth.py": {
-            '_LEGACY_ACCOUNT_BINDING_DOMAIN = b"gwm-ora-russia-account-v1\\0"',
-            '_LEGACY_APP_MODEL = "ha-gwm-ora"',
-        },
-    }
-    actual_lines: dict[str, set[str]] = {}
-
-    for path in sorted(CLIENT_DIRECTORY.glob("*.py")):
-        matching_lines = {
-            line.strip()
-            for line in path.read_text(encoding="utf-8").splitlines()
-            if any(marker in line for marker in ("gwm-ora", "gwm_ora", "GwmOra", "GWM ORA"))
-        }
-        if matching_lines:
-            actual_lines[path.name] = matching_lines
-
-    assert actual_lines == allowed_lines

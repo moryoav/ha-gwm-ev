@@ -8,6 +8,7 @@ from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote, urlsplit
 
 from custom_components.gwm_ora.gwm_client._protocol import _Deadline
 from custom_components.gwm_ora.gwm_client.china_client import (
@@ -152,3 +153,18 @@ def _charging_setting(**updates):
             "futureField": {"nested": [1, None, True]},
         }, **updates,
     }
+
+
+def _assert_request(request: _ChinaTransportRequest, expected_name: str) -> None:
+    expected = FIXTURE["requests"][expected_name]
+    assert request.method == expected["method"]
+    assert request.service == expected["service"]
+    assert request.url == expected["url"]
+    assert dict(request.headers) == expected["headers"]
+    assert (None if request.body is None else request.body.decode()) == expected["body"]
+
+
+def _auto_ai_payload(request: _ChinaTransportRequest) -> dict[str, Any]:
+    parsed = urlsplit(request.url)
+    assert parsed.query.startswith("p=")
+    return json.loads(unquote(parsed.query[2:]))

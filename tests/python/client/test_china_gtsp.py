@@ -22,7 +22,7 @@ from support.http import _deadline, _FakeResponse, _FakeSession
 
 from custom_components.gwm_ora.gwm_client import china_gtsp
 from custom_components.gwm_ora.gwm_client.charging import ChargingPlanCommand
-from custom_components.gwm_ora.gwm_client.china_client import ChinaClient, ChinaClientConfig, ChinaVehicle
+from custom_components.gwm_ora.gwm_client.china_client import ChinaClient, ChinaClientConfig
 from custom_components.gwm_ora.gwm_client.china_transport import ChinaAiohttpTransport
 from custom_components.gwm_ora.gwm_client.commands import (
     BEANTECH_CHINA_VEHICLE_CONTROL_ACTIONS,
@@ -45,17 +45,28 @@ from custom_components.gwm_ora.gwm_client.errors import (
 from custom_components.gwm_ora.gwm_client.models import VehicleIdentifier
 
 
-def client_for(transport, *, platform="gtsp", **kwargs):
+async def client_for(transport, *, platform="gtsp", **kwargs):
+    from collections import deque
+
+    kwargs.setdefault("nonce_source", lambda: "0123456789abcdef")
     client = ChinaClient(
         ChinaClientConfig(), transport=transport, authenticated_state=_complete_state(),
-        clock=lambda: CLOCK, nonce_source=lambda: "0123456789abcdef", **kwargs,
+        clock=lambda: CLOCK, **kwargs,
     )
-    client._commit_vehicles((ChinaVehicle(identifier=IDENTIFIER, platform=platform),))
+    transport.plans["acquire_vehicles"] = deque([{"code": "000000", "data": {"acquireVehiclesList": [
+        {"vin": VIN, "belongPlatform": platform},
+    ]}}])
+    await client.acquire_vehicles()
+    assert [item.operation for item in transport.calls] == ["acquire_vehicles"]
+    transport.calls.clear()  # Record only the operation under test after discovery.
     return client
 
 
-def request():
-    return client_for(_FakeTransport())._build_gtsp_status_request(_complete_state(), IDENTIFIER)
+async def request():
+    transport = _FakeTransport(get_last_status=[payload()])
+    client = await client_for(transport)
+    await client.get_last_status(IDENTIFIER)
+    return transport.calls[-1]
 
 
 @pytest.mark.parametrize("method,path,parameter,expected", [
@@ -68,8 +79,9 @@ def test_synthetic_signing_vectors(monkeypatch, method, path, parameter, expecte
     assert china_gtsp.gtsp_sign(method, path, "0123456789abcdef", "1760000000000", parameter) == expected
 
 
-def test_request_contract_uses_shared_tokens_but_gtsp_headers_and_host():
-    req = request()
+@pytest.mark.asyncio
+async def test_request_contract_uses_shared_tokens_but_gtsp_headers_and_host():
+    req = await request()
     assert req.service == "gtsp"
     assert req.url == china_gtsp.STATUS_URL + "?vin=" + VIN
     assert req.method == "GET" and req.body is None
@@ -92,9 +104,10 @@ def test_request_contract_uses_shared_tokens_but_gtsp_headers_and_host():
     {"url": china_gtsp.STATUS_URL.replace("https:", "http:") + "?vin=" + VIN},
     {"url": china_gtsp.STATUS_URL + "?vin=" + VIN + "#fragment"},
 ])
-def test_transport_rejects_route_confusion(changes):
+@pytest.mark.asyncio
+async def test_transport_rejects_route_confusion(changes):
     with pytest.raises(ValueError):
-        replace(request(), **changes)
+        replace(await request(), **changes)
 
 
 @pytest.mark.parametrize("name,value", [
@@ -104,23 +117,27 @@ def test_transport_rejects_route_confusion(changes):
     ("ampToken", " "), ("accessToken", "\r\n"), ("tokenId", ""),
     ("extra", "value"),
 ])
-def test_transport_rejects_invalid_headers(name, value):
-    req = request()
+@pytest.mark.asyncio
+async def test_transport_rejects_invalid_headers(name, value):
+    req = await request()
     with pytest.raises(ValueError):
         replace(req, headers={**req.headers, name: value})
 
 
 @pytest.mark.parametrize("state", [replace(_complete_state(), pt_token=None), _partial_state()])
-def test_missing_token_cannot_build_request(state):
+@pytest.mark.asyncio
+async def test_missing_token_cannot_build_request(state):
+    client = await client_for(_FakeTransport())
     with pytest.raises(GwmAuthenticationError):
-        client_for(_FakeTransport())._build_gtsp_status_request(
+        client._build_gtsp_status_request(
             state, IDENTIFIER,
         )
 
 
 @pytest.mark.parametrize("nonce", [None, "wrong", RuntimeError(SECRET)])
-def test_nonce_failure_is_sanitized(nonce):
-    client = client_for(_FakeTransport())
+@pytest.mark.asyncio
+async def test_nonce_failure_is_sanitized(nonce):
+    client = await client_for(_FakeTransport())
 
     def source():
         if isinstance(nonce, Exception):
@@ -138,7 +155,7 @@ async def test_read_only_status_maps_soc_range_and_discards_private_fields(caplo
     transport = _FakeTransport(get_last_status=[payload(
         acquisitionTime=1760000000000, latitude=12.345, longitude=23.456, deviceId=SECRET,
     )])
-    client = client_for(transport, platform=" GTSP ")
+    client = await client_for(transport, platform=" GTSP ")
     with caplog.at_level(logging.DEBUG, logger=LOGGER):
         result = await client.get_last_status(IDENTIFIER)
     assert [(item.code, item.value, item.unit) for item in result.items] == [
@@ -200,8 +217,9 @@ def test_unknown_or_ambiguous_schema_is_rejected(data):
 ])
 async def test_errors_are_sanitized_without_fallback_or_extra_requests(response, error, caplog):
     transport = _FakeTransport(get_last_status=[response])
+    client = await client_for(transport)
     with caplog.at_level(logging.DEBUG, logger=LOGGER), pytest.raises(error) as exc:
-        await client_for(transport).get_last_status(IDENTIFIER)
+        await client.get_last_status(IDENTIFIER)
     assert SECRET not in caplog.text + str(exc.value)
     assert VIN not in caplog.text
     assert len(transport.calls) == 1 and transport.calls[0].service == "gtsp"
@@ -210,8 +228,9 @@ async def test_errors_are_sanitized_without_fallback_or_extra_requests(response,
 @pytest.mark.asyncio
 async def test_undiscovered_vehicle_never_sends_gtsp_request():
     transport = _FakeTransport()
+    client = await client_for(transport)
     with pytest.raises(GwmRoutePolicyError):
-        await client_for(transport).get_last_status(VehicleIdentifier("LGWTEST0000000002"))
+        await client.get_last_status(VehicleIdentifier("LGWTEST0000000002"))
     assert transport.calls == []
 
 
@@ -219,15 +238,16 @@ async def test_undiscovered_vehicle_never_sends_gtsp_request():
 @pytest.mark.parametrize("action", sorted(BEANTECH_CHINA_VEHICLE_CONTROL_ACTIONS | NAVINFO_CHINA_VEHICLE_CONTROL_ACTIONS))
 async def test_all_vehicle_commands_remain_blocked_for_gtsp(action):
     transport = _FakeTransport()
+    client = await client_for(transport)
     with pytest.raises(GwmRoutePolicyError):
-        await client_for(transport).send_vehicle_control_command(ChinaVehicleControlCommand(IDENTIFIER, action))
+        await client.send_vehicle_control_command(ChinaVehicleControlCommand(IDENTIFIER, action))
     assert transport.calls == []
 
 
 @pytest.mark.asyncio
 async def test_climate_lock_windows_charging_and_result_polling_are_blocked():
     transport = _FakeTransport()
-    client = client_for(transport)
+    client = await client_for(transport)
     calls = (
         (client.send_climate_command, ClimateCommand(IDENTIFIER, "auto", 22, 15)),
         (client.send_lock_command, DoorLockCommand(IDENTIFIER, True)),
@@ -271,7 +291,7 @@ async def test_gtsp_transport_preserves_tls_gzip_and_no_redirect_policy():
     body = json.dumps(payload()).encode()
     session = _FakeSession(_FakeResponse(headers={"Content-Encoding": "gzip"}, chunks=[gzip.compress(body)]))
     transport = ChinaAiohttpTransport(session)
-    result = await transport.execute(request(), deadline=_deadline(), connect_timeout=10, read_timeout=20)
+    result = await transport.execute(await request(), deadline=_deadline(), connect_timeout=10, read_timeout=20)
     assert result.body == body
     args, kwargs = session.calls[0]
     assert args[0] == "GET" and str(args[1]).startswith(china_gtsp.STATUS_URL)
@@ -281,10 +301,10 @@ async def test_gtsp_transport_preserves_tls_gzip_and_no_redirect_policy():
     assert kwargs["data"] is None
     session.response = _FakeResponse(status=302)
     with pytest.raises(GwmRedirectError):
-        await transport.execute(request(), deadline=_deadline(), connect_timeout=10, read_timeout=20)
+        await transport.execute(await request(), deadline=_deadline(), connect_timeout=10, read_timeout=20)
     session.error = ssl.SSLError(SECRET)
     with pytest.raises(GwmTlsError) as exc:
-        await transport.execute(request(), deadline=_deadline(), connect_timeout=10, read_timeout=20)
+        await transport.execute(await request(), deadline=_deadline(), connect_timeout=10, read_timeout=20)
     assert SECRET not in str(exc.value)
 
 

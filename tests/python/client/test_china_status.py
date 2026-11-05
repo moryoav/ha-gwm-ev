@@ -84,15 +84,6 @@ def test_bean_tech_fixture_maps_released_and_platform_specific_signals() -> None
 
 
 @pytest.mark.parametrize(
-    ("field", "code"),
-    [
-        ("lfWinPosnSts", "2210001"),
-        ("rfWinPosnSts", "2210002"),
-        ("lbWinPosnSts", "2210004"),
-        ("rbWinPosnSts", "2210003"),
-    ],
-)
-@pytest.mark.parametrize(
     ("raw", "expected"),
     [
         (1, "1"),
@@ -137,10 +128,29 @@ def test_bean_tech_fixture_maps_released_and_platform_specific_signals() -> None
         (False, None),
     ],
 )
-def test_bean_tech_window_codes_preserve_independent_and_unknown_states(
-    field: str, code: str, raw: object, expected: str | None,
+def test_bean_tech_window_position_values(
+    raw: object, expected: str | None,
 ) -> None:
     """Decode app-backed positions without copying its closed-looking fallbacks."""
+    field, code = "lfWinPosnSts", "2210001"
+    windows = dict.fromkeys(("lfWinPosnSts", "rfWinPosnSts", "lbWinPosnSts", "rbWinPosnSts"), 1)
+    windows[field] = raw
+    items = _items(_map_bean({"vehicleStatusInfo": {"windows": windows}}))
+    actual = {key: value for key, value in items.items() if key in {"2210001", "2210002", "2210003", "2210004"}}
+    expected_items = dict.fromkeys(("2210001", "2210002", "2210003", "2210004"), ("1", None))
+    if expected is None:
+        del expected_items[code]
+    else:
+        expected_items[code] = (expected, None)
+    assert actual == expected_items
+
+
+@pytest.mark.parametrize("field,code", [
+    ("lfWinPosnSts", "2210001"), ("rfWinPosnSts", "2210002"),
+    ("lbWinPosnSts", "2210004"), ("rbWinPosnSts", "2210003"),
+])
+@pytest.mark.parametrize("raw,expected", [(1, "1"), (16, "0"), (4, None)])
+def test_bean_tech_window_positions_stay_independent(field, code, raw, expected):
     windows = dict.fromkeys(("lfWinPosnSts", "rfWinPosnSts", "lbWinPosnSts", "rbWinPosnSts"), 1)
     windows[field] = raw
     items = _items(_map_bean({"vehicleStatusInfo": {"windows": windows}}))

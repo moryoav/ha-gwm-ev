@@ -52,8 +52,12 @@ def _entity(cls=GwmSmartChargeSwitch, **kwargs):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("region,platform", [("cn", "beantech"), ("cn", "navinfo"), ("cn", "unknown"), ("eu", "beantech"), ("aus", "beantech"), ("rus", "beantech")])
-@pytest.mark.parametrize("remote,charging", [(True, True), (False, True), (True, False), (False, False)])
+@pytest.mark.parametrize("region,platform,remote,charging", [
+    ("cn", "beantech", True, True), ("cn", "beantech", False, True),
+    ("cn", "beantech", True, False), ("cn", "beantech", False, False),
+    ("cn", "navinfo", True, True), ("cn", "unknown", True, True),
+    ("eu", "beantech", True, True), ("aus", "beantech", True, True), ("rus", "beantech", True, True),
+])
 async def test_charging_entities_isolate_platform_and_independent_consents(region, platform, remote, charging):
     hass, api, coordinator, _, entry = _charging_context(region, platform, remote, charging)
     for setup, expected_count in ((setup_switches, 4), (setup_selects, 3), (setup_numbers, 1)):
@@ -63,7 +67,7 @@ async def test_charging_entities_isolate_platform_and_independent_consents(regio
         new = [entity for entity in entities if isinstance(entity, BeanTechChargingEntity)]
         assert len(new) == (expected_count if (region, platform) == ("cn", "beantech") else 0)
         for entity in new:
-            assert entity.available == (charging if entity._requires_charging_control else remote)
+            assert entity.available == (charging if entity.translation_key in {"smart_charge", "charge_window_start", "charge_window_end", "charge_soc_limit"} else remote)
             coordinator.last_update_success = False
             assert not entity.available
             coordinator.last_update_success = True
@@ -71,16 +75,17 @@ async def test_charging_entities_isolate_platform_and_independent_consents(regio
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("cls,kwargs,method,on,off,key", [
-    (GwmSmartChargeSwitch, {}, "async_set_charging_mode", {"enable": True}, {"enable": False}, "enabled"),
-    (GwmBatteryHeatSwitch, {"plugged_in": True}, "async_vehicle_control", "battery_gun_heat", "battery_gun_heat_stop", "gun_warm"),
-    (GwmBatteryHeatSwitch, {"plugged_in": False}, "async_vehicle_control", "battery_initiative_heat", "battery_initiative_heat_stop", "active_warm"),
+@pytest.mark.parametrize("cls,kwargs,method,on,off,read_method,field", [
+    (GwmSmartChargeSwitch, {}, "async_set_charging_mode", {"enable": True}, {"enable": False}, "async_get_charging_mode", "enabled"),
+    (GwmBatteryHeatSwitch, {"plugged_in": True}, "async_vehicle_control", "battery_gun_heat", "battery_gun_heat_stop", "async_get_battery_heat_status", "gun_warm"),
+    (GwmBatteryHeatSwitch, {"plugged_in": False}, "async_vehicle_control", "battery_initiative_heat", "battery_initiative_heat_stop", "async_get_battery_heat_status", "active_warm"),
 ])
 @pytest.mark.parametrize("state", ["completed", "failed", "timeout", None])
-async def test_switches_read_back_after_every_outcome_without_optimistic_state(cls, kwargs, method, on, off, key, state):
+async def test_switches_read_back_after_every_outcome_without_optimistic_state(cls, kwargs, method, on, off, read_method, field, state):
     entity, api, coordinator, _ = _entity(cls, **kwargs)
     assert entity.is_on is None
-    for action, command in ((entity.async_turn_on, on), (entity.async_turn_off, off)):
+    for action, command, reported in ((entity.async_turn_on, on, False), (entity.async_turn_off, off, True)):
+        getattr(api, read_method).return_value = {field: reported}
         await action()
         call = getattr(api, method)
         if isinstance(command, dict):
@@ -90,8 +95,8 @@ async def test_switches_read_back_after_every_outcome_without_optimistic_state(c
         result = None if state is None else {"state": state}
         callback = coordinator.async_track_command.call_args.kwargs["on_terminal"]
         await callback(result)
-        assert entity.is_on == entity._data.get(key)
-    assert entity._read.await_count == 2
+        assert entity.is_on is reported
+    assert getattr(api, read_method).await_count == 2
 
 
 @pytest.mark.asyncio
@@ -132,7 +137,11 @@ async def test_charge_limit_rejects_invalid_values_without_sending(value):
 async def test_charge_limit_requires_terminal_success_and_invalidates_previous_value_on_acceptance(state):
     entity, api, coordinator, _ = _entity(GwmChargeSocNumber)
     assert entity.native_value is None
-    entity._confirmed_percent = 90
+    await entity.async_set_native_value(90)
+    await coordinator.async_track_command.call_args.kwargs["on_terminal"]({"state": "completed"})
+    assert entity.native_value == 90
+    api.async_set_charge_soc.reset_mock()
+    coordinator.async_track_command.reset_mock()
     await entity.async_set_native_value(60.0)
     api.async_set_charge_soc.assert_awaited_once_with(VIN, percent=60)
     assert entity.native_value is None

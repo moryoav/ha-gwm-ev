@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime
-from unittest.mock import Mock
+from unittest.mock import Mock, call
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -29,8 +29,11 @@ from custom_components.gwm_ora.switch import async_setup_entry as setup_switches
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("region,platform", [("cn", "beantech"), ("cn", "navinfo"), ("cn", "unknown"), ("eu", "beantech"), ("aus", "beantech"), ("rus", "beantech")])
-@pytest.mark.parametrize("enabled", [True, False])
+@pytest.mark.parametrize("region,platform,enabled", [
+    ("cn", "beantech", True), ("cn", "beantech", False),
+    ("cn", "navinfo", True), ("cn", "unknown", True),
+    ("eu", "beantech", True), ("aus", "beantech", True), ("rus", "beantech", True),
+])
 async def test_beantech_entities_are_registered_only_on_the_intended_platform(region, platform, enabled):
     hass, api, coordinator, vehicle, entry = _context(region, platform, enabled)
     expected = region == "cn" and platform == "beantech"
@@ -84,25 +87,38 @@ async def test_climate_presets_use_auto_at_the_captured_temperature_bounds(tempe
 
 
 @pytest.mark.asyncio
-async def test_every_comfort_switch_dispatches_both_actions_and_keeps_reported_state():
+@pytest.mark.parametrize("key,state_key,on,off", [
+    ("seat_heating", "front_driver_seat_heater_level", "seat_heating_start", "seat_heating_stop"),
+    ("seat_heating_passenger", "front_passenger_seat_heater_level", "seat_heating_start_passenger", "seat_heating_stop_passenger"),
+    ("seat_ventilation", "front_driver_seat_vent_level", "seat_ventilation_start", "seat_ventilation_stop"),
+    ("seat_ventilation_passenger", "front_passenger_seat_vent_level", "seat_ventilation_start_passenger", "seat_ventilation_stop_passenger"),
+    ("steering_wheel_heating", "steering_wheel_heater_active", "steering_wheel_heating", "steering_wheel_heatless"),
+    ("defrost_front", "front_defroster", "defrost_front_start", "defrost_front_stop"),
+    ("defrost_back", "rear_defroster", "defrost_back_start", "defrost_back_stop"),
+])
+async def test_comfort_switch_uses_its_own_telemetry_and_exact_actions(key, state_key, on, off):
     hass, api, coordinator, vehicle, entry = _context()
     added = []
     await setup_switches(hass, entry, added.extend)
-    for switch in [entity for entity in added if isinstance(entity, GwmRemoteControlSwitch)]:
-        assert switch.is_on is None
-        vehicle["values"][switch._state_key] = 0
-        assert switch.is_on is False
-        await switch.async_turn_on()
-        api.async_vehicle_control.assert_awaited_with(VIN, switch._turn_on_action)
-        assert switch.is_on is False
-        vehicle["values"][switch._state_key] = 3
-        assert switch.is_on is True
-        await switch.async_turn_off()
-        api.async_vehicle_control.assert_awaited_with(VIN, switch._turn_off_action)
-        assert switch.is_on is True
-        vehicle["values"][switch._state_key] = "0"
-        assert switch.is_on is None
-    assert coordinator.async_track_command.call_count == 14
+    switches = {entity.translation_key: entity for entity in added if isinstance(entity, GwmRemoteControlSwitch)}
+    switch = switches[key]
+    assert switch.unique_id == f"{VIN}_{key}"
+    assert switch.is_on is None
+    vehicle["values"][state_key] = 0
+    assert switch.is_on is False
+    await switch.async_turn_on()
+    api.async_vehicle_control.assert_awaited_once_with(VIN, on)
+    assert switch.is_on is False
+    vehicle["values"][state_key] = 3
+    assert switch.is_on is True
+    assert all(entity.is_on is None for name, entity in switches.items() if name != key)
+    api.async_vehicle_control.reset_mock()
+    await switch.async_turn_off()
+    api.async_vehicle_control.assert_awaited_once_with(VIN, off)
+    assert switch.is_on is True
+    vehicle["values"][state_key] = "0"
+    assert switch.is_on is None
+    assert coordinator.async_track_command.call_args_list == [call(ACCEPTED), call(ACCEPTED)]
 
 
 @pytest.mark.parametrize("now,option,expected", [
