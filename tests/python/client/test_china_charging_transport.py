@@ -24,15 +24,25 @@ from custom_components.gwm_ora.gwm_client.china_crypto import bean_tech_sign
 from custom_components.gwm_ora.gwm_client.commands import ChinaVehicleControlCommand
 from custom_components.gwm_ora.gwm_client.models import VehicleIdentifier
 
-CHARGING_REQUEST_KINDS = [
-    "get_bean_tech_charge_setting", "set_bean_tech_charging_mode", "set_bean_tech_charge_window",
-    "get_bean_tech_battery_heating_appointment", "get_bean_tech_switch_status", "set_bean_tech_charge_soc",
-    "appointment_on", "appointment_off", "battery_gun_heat", "battery_gun_heat_stop",
-    "battery_initiative_heat", "battery_initiative_heat_stop", "charge_result",
-]
+CHARGING_REQUEST_METHODS = {
+    "get_bean_tech_charge_setting": "GET",
+    "set_bean_tech_charging_mode": "POST",
+    "set_bean_tech_charge_window": "POST",
+    "get_bean_tech_battery_heating_appointment": "POST",
+    "get_bean_tech_switch_status": "GET",
+    "set_bean_tech_charge_soc": "POST",
+    "appointment_on": "POST",
+    "appointment_off": "POST",
+    "battery_gun_heat": "POST",
+    "battery_gun_heat_stop": "POST",
+    "battery_initiative_heat": "POST",
+    "battery_initiative_heat_stop": "POST",
+    "charge_result": "GET",
+}
+CHARGING_REQUEST_KINDS = list(CHARGING_REQUEST_METHODS)
+# The appointment read uses a signed POST, despite its Python method name.
 CHARGING_POST_KINDS = [
-    kind for kind in CHARGING_REQUEST_KINDS
-    if not kind.startswith("get_") and kind != "charge_result"
+    kind for kind, method in CHARGING_REQUEST_METHODS.items() if method == "POST"
 ]
 
 
@@ -60,7 +70,9 @@ async def charging_request(request):
         kwargs = {"set_bean_tech_charging_mode": {"enable": True}, "set_bean_tech_charge_soc": {"percent": 80},
             "set_bean_tech_charge_window": {"start_time": "21:00"}}.get(kind, {})
         await getattr(client, kind)(identifier, **kwargs)
-    return transport.calls[-1]
+    captured = transport.calls[-1]
+    assert captured.method == CHARGING_REQUEST_METHODS[kind]
+    return captured
 
 
 @pytest.mark.asyncio
