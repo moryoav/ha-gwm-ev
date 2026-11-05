@@ -8,7 +8,7 @@ from urllib.parse import urlsplit
 
 import pytest
 import pytest_asyncio
-from test_china_client import (
+from support.china import (
     BEAN_COMMAND_ID,
     BEAN_VIN,
     FIXTURE,

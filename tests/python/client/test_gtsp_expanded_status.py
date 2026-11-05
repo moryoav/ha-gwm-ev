@@ -4,7 +4,7 @@ import logging
 from datetime import UTC, datetime
 
 import pytest
-from test_china_gtsp import IDENTIFIER, LOGGER, SECRET, mapped
+from support.gtsp import IDENTIFIER, LOGGER, SECRET, mapped
 
 from custom_components.gwm_ora.gwm_client import CloudVehicle, CloudVehicleBasics, map_vehicle_snapshot
 from custom_components.gwm_ora.gwm_client.china_gtsp import _BINARY_FIELDS, _WINDOW_FIELDS

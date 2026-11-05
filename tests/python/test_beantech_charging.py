@@ -12,7 +12,7 @@ pytest.importorskip("homeassistant")
 
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
-from test_beantech_entities import ACCEPTED, VIN, _context
+from support.entities import ACCEPTED, VIN, _context
 
 from custom_components.gwm_ora.beantech_charging import BeanTechChargingEntity
 from custom_components.gwm_ora.entity import GwmEntity

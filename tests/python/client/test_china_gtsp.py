@@ -9,8 +9,16 @@ import ssl
 from dataclasses import replace
 
 import pytest
-from test_china_client import CLOCK, _complete_state, _FakeTransport, _partial_state, _response
-from test_china_transport import _deadline, _FakeResponse, _FakeSession
+from support.china import CLOCK, _complete_state, _FakeTransport, _partial_state, _response
+from support.gtsp import (
+    IDENTIFIER,
+    LOGGER,
+    SECRET,
+    VIN,
+    mapped,
+    payload,
+)
+from support.http import _deadline, _FakeResponse, _FakeSession
 
 from custom_components.gwm_ora.gwm_client import china_gtsp
 from custom_components.gwm_ora.gwm_client.charging import ChargingPlanCommand
@@ -36,11 +44,6 @@ from custom_components.gwm_ora.gwm_client.errors import (
 )
 from custom_components.gwm_ora.gwm_client.models import VehicleIdentifier
 
-VIN = "LGWTEST0000000001"
-IDENTIFIER = VehicleIdentifier(VIN)
-SECRET = "PRIVATE-RESPONSE-OR-TOKEN-MUST-NOT-LEAK"
-LOGGER = "custom_components.gwm_ora.gwm_client.china_gtsp"
-
 
 def client_for(transport, *, platform="gtsp", **kwargs):
     client = ChinaClient(
@@ -53,21 +56,6 @@ def client_for(transport, *, platform="gtsp", **kwargs):
 
 def request():
     return client_for(_FakeTransport())._build_gtsp_status_request(_complete_state(), IDENTIFIER)
-
-
-def payload(status=None, **kwargs):
-    return {
-        "code": "000000", "data": {
-            "vehicleStatusInfo": {"powerBatteryPercent": "65", "evContnsDistance": "125"} if status is None else status,
-            **kwargs,
-        },
-    }
-
-
-def mapped(status, **kwargs):
-    return china_gtsp.map_gtsp_status(
-        payload(status, **kwargs)["data"], identifier=IDENTIFIER, vehicle_id=None,
-    )
 
 
 @pytest.mark.parametrize("method,path,parameter,expected", [

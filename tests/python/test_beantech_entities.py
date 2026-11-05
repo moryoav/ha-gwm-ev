@@ -4,45 +4,28 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime
-from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import Mock
 from zoneinfo import ZoneInfo
 
 import pytest
+from support.entities import (
+    ACCEPTED,
+    VIN,
+    _context,
+)
 
 pytest.importorskip("homeassistant")
 
-from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 
 from custom_components.gwm_ora.button import GwmBeanTechComfortButton, GwmClimatePresetButton
 from custom_components.gwm_ora.button import async_setup_entry as setup_buttons
-from custom_components.gwm_ora.coordinator import GwmDataUpdateCoordinator
 from custom_components.gwm_ora.gwm_client import GwmApiError
 from custom_components.gwm_ora.select import GwmCabinCleanAppointmentSelect, _clock_to_today_ms, _ms_to_clock
 from custom_components.gwm_ora.select import async_setup_entry as setup_selects
 from custom_components.gwm_ora.switch import GwmChargingScheduleSwitch, GwmFrontDefrosterSwitch, GwmRemoteControlSwitch
 from custom_components.gwm_ora.switch import async_setup_entry as setup_switches
-
-VIN = "LGWTEST0000000003"
-ACCEPTED = {"id": "accepted", "state": "in_progress"}
-
-
-def _context(region="cn", platform="beantech", enabled=True):
-    hass = HomeAssistant("synthetic-config")
-    api = SimpleNamespace(**{name: AsyncMock(return_value=ACCEPTED) for name in (
-        "async_vehicle_control", "async_set_comfort_mode", "async_set_climate",
-        "async_get_charging_mode", "async_get_battery_heat_status", "async_get_battery_heating_appointment",
-    )}, async_get_cabin_clean_appointment=AsyncMock(return_value=None), async_set_cabin_clean_appointment=AsyncMock())
-    coordinator = GwmDataUpdateCoordinator(hass, api, cloud_client=SimpleNamespace())
-    vehicle = {"vin": VIN, "platform": platform, "values": {}, "capabilities": {
-        "china_vehicle_commands": enabled, "climate_commands": enabled,
-    }}
-    coordinator.async_set_updated_data({"region": region, "vehicles": [vehicle]})
-    coordinator.async_track_command = Mock()
-    entry = SimpleNamespace(runtime_data=SimpleNamespace(api=api, coordinator=coordinator), async_on_unload=lambda callback: None)
-    return hass, api, coordinator, vehicle, entry
 
 
 @pytest.mark.asyncio
