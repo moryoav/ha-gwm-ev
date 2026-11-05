@@ -663,6 +663,8 @@ def _window_closed_code(node: _Object | None, property_name: str) -> str | None:
     raw = _get(node, property_name)
     if isinstance(raw, bool):
         return None
+    if isinstance(raw, float) and not raw.is_integer():
+        return None
     value = _integer(raw)
     if value == 1:
         return "1"

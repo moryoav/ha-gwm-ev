@@ -103,6 +103,21 @@ def test_bean_tech_fixture_maps_released_and_platform_specific_signals() -> None
         *[(value, "0") for value in range(6, 26)],
         (" 16 ", "0"),
         ("25", "0"),
+        (1.0, "1"),
+        (0.0, "0"),
+        (2.0, "0"),
+        (3.0, "0"),
+        (6.0, "0"),
+        (16.0, "0"),
+        (25.0, "0"),
+        *[
+            (math.nextafter(value, direction), None)
+            for value in (1.0, 2.0, 6.0, 25.0)
+            for direction in (-math.inf, math.inf)
+        ],
+        (math.nan, None),
+        (math.inf, None),
+        (-math.inf, None),
         (4, None),
         ("4", None),
         (5, None),
