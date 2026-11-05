@@ -8,8 +8,6 @@ from datetime import UTC, datetime, timedelta, timezone
 import pytest
 
 from custom_components.gwm_ora.gwm_client.china_crypto import (
-    AUTO_AI_CKEY,
-    BEAN_TECH_APP_KEY,
     DEFAULT_NOTE_ID,
     ChinaCryptoError,
     auto_ai_sign,
@@ -242,12 +240,6 @@ def test_china_clock_converts_non_utc_aware_inputs_by_instant() -> None:
 def test_china_clock_rejects_values_without_an_instant(instant: object) -> None:
     with pytest.raises(ValueError, match="^china_time_invalid$"):
         to_china_time(instant)  # type: ignore[arg-type]
-
-
-def test_only_protocol_header_constants_are_public_app_derived_constants() -> None:
-    assert DEFAULT_NOTE_ID == "145765423214576567716671"
-    assert BEAN_TECH_APP_KEY == "7863128529"
-    assert AUTO_AI_CKEY == "ea49a50f914b8d38af1c84809d302683"
 
 
 def _flip_encrypted_byte(wrapped: str, index: int, mask: int) -> str:

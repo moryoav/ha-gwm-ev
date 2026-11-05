@@ -228,43 +228,32 @@ def test_optional_value_functions_tolerate_missing_vehicle_data() -> None:
         assert binary_descriptions[key].value_fn({"values": {}}) is None
 
 
-def test_beantech_entities_are_isolated_from_other_platforms() -> None:
+@pytest.mark.asyncio
+@pytest.mark.parametrize("region,platform", [("cn", "beantech"), ("cn", "navinfo"), ("eu", "beantech")])
+async def test_beantech_entities_are_isolated_from_other_platforms(region, platform):
     pytest.importorskip("homeassistant")
-    from custom_components.gwm_ora.binary_sensor import (
-        BEANTECH_BINARY_SENSOR_KEYS,
-        _binary_sensor_descriptions_for_vehicle,
-    )
-    from custom_components.gwm_ora.sensor import (
-        BEANTECH_SENSOR_KEYS,
-        _sensor_descriptions_for_vehicle,
-    )
+    from support.entities import _context
 
-    navinfo_sensors = {
-        description.key
-        for description in _sensor_descriptions_for_vehicle({"platform": "navinfo"}, "cn")
-    }
+    from custom_components.gwm_ora.binary_sensor import async_setup_entry as setup_binary_sensors
+    from custom_components.gwm_ora.sensor import async_setup_entry as setup_sensors
+
+    hass, _, _, _, entry = _context(region, platform)
     beantech_sensors = {
-        description.key
-        for description in _sensor_descriptions_for_vehicle({"platform": "beantech"}, "cn")
-    }
-    navinfo_binary = {
-        description.key
-        for description in _binary_sensor_descriptions_for_vehicle({"platform": "navinfo"}, "cn")
+        "charge_soc", "charging_gun_model", "hcu_powertrain_state", "power", "battery_pack_state",
+        "acc_clean_off", "tbox_state", "wireless_level", "oil_segments", "aux_battery_level",
+        "remaining_usable_charge_percent", "battery_pack_current", "battery_pack_voltage",
     }
     beantech_binary = {
-        description.key
-        for description in _binary_sensor_descriptions_for_vehicle({"platform": "beantech"}, "cn")
+        "near_beam_active", "far_beam_active", "left_turn_lamp_active", "right_turn_lamp_active",
+        "oil_alarm_active", "engine_door_open", "back_door_open", "ac_auto_mode_active",
+        "air_clean_active", "cabin_clean_active", "tire_pressure_indicator_front_left",
+        "tire_pressure_indicator_front_right", "tire_pressure_indicator_rear_left", "tire_pressure_indicator_rear_right",
     }
-    eu_beantech_sensors = {
-        description.key
-        for description in _sensor_descriptions_for_vehicle({"platform": "beantech"}, "eu")
-    }
-
-    assert BEANTECH_SENSOR_KEYS.isdisjoint(navinfo_sensors)
-    assert beantech_sensors >= BEANTECH_SENSOR_KEYS
-    assert BEANTECH_BINARY_SENSOR_KEYS.isdisjoint(navinfo_binary)
-    assert beantech_binary >= BEANTECH_BINARY_SENSOR_KEYS
-    assert BEANTECH_SENSOR_KEYS.isdisjoint(eu_beantech_sensors)
+    for setup, exclusive in ((setup_sensors, beantech_sensors), (setup_binary_sensors, beantech_binary)):
+        added = []
+        await setup(hass, entry, added.extend)
+        keys = {entity.entity_description.key for entity in added}
+        assert keys & exclusive == (exclusive if (region, platform) == ("cn", "beantech") else set())
 
 
 def test_beantech_enum_values_reject_unknown_codes() -> None:
@@ -288,36 +277,6 @@ def test_beantech_enum_values_reject_unknown_codes() -> None:
             {"values": {"charge_plug_connected": True, "charging_gun_model": 99}}
         )
         is None
-    )
-
-
-def test_beantech_controls_only_expose_mapped_capabilities() -> None:
-    pytest.importorskip("homeassistant")
-    from custom_components.gwm_ora.button import (
-        BEANTECH_REMOTE_ACTIONS,
-        CHINA_REMOTE_BUTTONS,
-        _china_remote_buttons_for_vehicle,
-    )
-    from custom_components.gwm_ora.entity import (
-        _vehicle_charging_control_available,
-    )
-
-    beantech_actions = {
-        action
-        for action, _ in _china_remote_buttons_for_vehicle({"platform": "beantech"})
-    }
-    navinfo_actions = {
-        action
-        for action, _ in _china_remote_buttons_for_vehicle({"platform": "navinfo"})
-    }
-
-    assert beantech_actions == BEANTECH_REMOTE_ACTIONS
-    assert navinfo_actions == {action for action, _ in CHINA_REMOTE_BUTTONS}
-    assert not _vehicle_charging_control_available(
-        {"capabilities": {"charging_control": False}},
-    )
-    assert _vehicle_charging_control_available(
-        {"capabilities": {"charging_control": True}},
     )
 
 

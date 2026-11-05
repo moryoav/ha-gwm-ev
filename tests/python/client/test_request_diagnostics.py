@@ -12,7 +12,17 @@ from unittest.mock import Mock
 
 import aiohttp
 import pytest
+from support.overseas import _default_context, _QueueTransport
 
+from custom_components.gwm_ora.gwm_client import (
+    ClimateCommand,
+    CloseWindowsCommand,
+    DoorLockCommand,
+    GwmClient,
+    GwmClientConfig,
+    GwmSession,
+    VehicleIdentifier,
+)
 from custom_components.gwm_ora.gwm_client import _diagnostics as diagnostics
 from custom_components.gwm_ora.gwm_client._protocol import _Deadline, _TransportRequest, _TransportResponse
 from custom_components.gwm_ora.gwm_client.errors import GwmApiError, GwmNetworkError, GwmSchemaError
@@ -70,8 +80,12 @@ def test_operation_alias_is_preserved(operation, error_type):
     (b"[" * 1200 + b"0" + b"]" * 1200, "json_too_deep"),
     pytest.param(b" " * (64 * 1024 + 1), "diagnostic_size_limit", id="diagnostic-size-limit"),
 ])
-def test_envelope_reason(body, reason):
-    assert diagnostics._envelope_shape(body).reason == reason
+def test_response_logs_the_bounded_envelope_reason(caplog, body, reason):
+    caplog.set_level(logging.DEBUG, logger=LOGGER)
+    diagnostics.log_response(_request(), _TransportResponse(200, {}, body))
+    assert f"envelope_reason={reason}" in caplog.text
+    assert len(caplog.records) == 1
+    assert SECRET not in caplog.text
 
 
 @pytest.mark.parametrize(("code", "safe"), [
@@ -81,8 +95,11 @@ def test_envelope_reason(body, reason):
     ([], None), (10**12, None), (-10**11, None), (10**100, None),
     (999_999_999_999, "999999999999"), (-99_999_999_999, "-99999999999"),
 ])
-def test_numeric_code_is_bounded_and_never_coerces_unsafe_types(code, safe):
-    assert diagnostics._numeric_code(code) == safe
+def test_response_logs_only_bounded_numeric_codes(caplog, code, safe):
+    caplog.set_level(logging.DEBUG, logger=LOGGER)
+    diagnostics.log_response(_request(), _TransportResponse(200, {}, json.dumps({"code": code}).encode()))
+    assert f"api_code={safe} api_code_type=" in caplog.text
+    assert SECRET not in caplog.text
 
 
 @pytest.mark.parametrize(("operation", "path", "method", "stage"), [
@@ -240,25 +257,47 @@ async def test_real_transport_preserves_bytes_request_count_and_failure(caplog, 
     (b'{"code":0,"data":null}', GwmApiError),
     (b'{"code":"000000","data":null}', None),
 ])
-def test_success_decoder_does_not_require_data(caplog, body, expected_error):
+@pytest.mark.asyncio
+async def test_code_only_acknowledgements_reach_the_public_client(caplog, body, expected_error):
     """Accept code-only acknowledgements while rejecting invalid envelopes."""
-
-    from custom_components.gwm_ora.gwm_client.client import _decode_envelope
 
     caplog.set_level(logging.DEBUG, logger=LOGGER)
     response = _TransportResponse(200, {}, body)
     diagnostics.log_response(_request(), response)
-    if expected_error is not None:
-        with pytest.raises(expected_error):
-            _decode_envelope(response, operation="send_climate_command")
-    else:
-        assert _decode_envelope(response, operation="send_climate_command") is None
+    client = GwmClient(
+        GwmClientConfig("aus"), GwmSession("AU", "0123456789abcdef", "SYNTHETIC-ACCESS", _default_context()),
+        transport=_QueueTransport([response]),
+    )
+    call = client.update_climate_defaults(VehicleIdentifier("LGWTEST0000000001"), temperature=21, operation_time_minutes=15)
+    try:
+        if expected_error is not None:
+            with pytest.raises(expected_error):
+                await call
+        else:
+            assert await call is None
+    finally:
+        await client.aclose()
 
 
+@pytest.mark.asyncio
 @pytest.mark.parametrize("operation", NEW_OPERATIONS)
-def test_client_error_sanitization_preserves_operation(operation):
-    from custom_components.gwm_ora.gwm_client.client import _sanitized_client_error
-
-    error = _sanitized_client_error(GwmSchemaError(operation=operation), operation=operation)
-    assert type(error) is GwmSchemaError
-    assert error.operation == operation
+async def test_public_client_preserves_the_operation_on_sanitized_failures(operation):
+    client = GwmClient(
+        GwmClientConfig("aus"), GwmSession("AU", "0123456789abcdef", "SYNTHETIC-ACCESS", _default_context()),
+        transport=_QueueTransport([GwmSchemaError(operation=operation)]),
+    )
+    identifier = VehicleIdentifier("LGWTEST0000000001")
+    calls = {
+        "get_charging_plan": lambda: client.get_charging_plan(identifier),
+        "get_remote_command_result": lambda: client.get_remote_command_results(identifier, "SYNTHETIC-COMMAND"),
+        "update_climate_defaults": lambda: client.update_climate_defaults(identifier, temperature=21, operation_time_minutes=15),
+        "send_climate_command": lambda: client.send_climate_command(ClimateCommand(identifier, "auto", 21, 15), security_password_hash="0" * 32),
+        "send_close_windows_command": lambda: client.send_close_windows_command(CloseWindowsCommand(identifier), security_password_hash="0" * 32),
+        "send_lock_command": lambda: client.send_lock_command(DoorLockCommand(identifier, True), security_password_hash="0" * 32),
+    }
+    try:
+        with pytest.raises(GwmSchemaError) as raised:
+            await calls[operation]()
+        assert raised.value.operation == operation
+    finally:
+        await client.aclose()
