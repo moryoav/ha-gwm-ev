@@ -86,7 +86,9 @@ async def test_switches_read_back_after_every_outcome_without_optimistic_state(c
     assert entity.is_on is None
     for action, command, reported in ((entity.async_turn_on, on, False), (entity.async_turn_off, off, True)):
         getattr(api, read_method).return_value = {field: reported}
+        previous = entity.is_on
         await action()
+        assert entity.is_on is previous
         call = getattr(api, method)
         if isinstance(command, dict):
             call.assert_awaited_with(VIN, **command)

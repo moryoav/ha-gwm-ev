@@ -913,7 +913,7 @@ async def test_external_transport_lifecycle_and_invalid_injected_entropy_are_fai
         await bad_salt.authenticate(_credentials())
     assert bad_salt_transport.calls == []
 
-    bad_nonce_transport = _FakeTransport()
+    bad_nonce_transport = _FakeTransport(initialize_auto_ai=[FIXTURE["responses"]["auto_ai"]])
     bad_nonce = ChinaClient(
         ChinaClientConfig(),
         transport=bad_nonce_transport,
@@ -923,6 +923,8 @@ async def test_external_transport_lifecycle_and_invalid_injected_entropy_are_fai
     )
     result = await bad_nonce.authenticate(_credentials(), state=_partial_state())
     assert isinstance(result, ChinaInitializationRequired)
+    assert result.failures == ("bean_tech:configuration_error",)
+    assert [request.operation for request in bad_nonce_transport.calls] == ["initialize_auto_ai"]
     assert all(SENSITIVE not in failure for failure in result.failures)
 
 

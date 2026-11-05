@@ -687,6 +687,7 @@ async def test_beantech_climate_companion_timeout_keeps_the_accepted_id():
     result = await client.send_climate_command(ClimateCommand(VehicleIdentifier(BEAN_VIN), "auto", 22, 15), timeout=0.4)
     assert result.command_id == BEAN_COMMAND_ID
     assert Counter(call.operation for call in transport.calls)["send_climate_command"] == 1
+    assert Counter(call.operation for call in transport.calls)["set_bean_tech_ac_temperature"] == 1
 
 
 @pytest.mark.asyncio

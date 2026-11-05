@@ -121,7 +121,11 @@ async def test_cloud_refresh_keeps_latest_remote_command_status(monkeypatch) -> 
         "A/C: completed - Success [0]"
     )
 
-    api.async_refresh.return_value = await CloudClient().async_get_vehicle_data()
+    api.async_refresh.return_value = {
+        "region": "eu", "vehicles": [{
+            "vin": "SYNTHETIC-VIN", "command_status": "No remote command has run yet", "values": {"soc": 42},
+        }],
+    }
     api.async_get_command.return_value = {
         "id": "polled-command", "vin": "SYNTHETIC-VIN", "state": "completed",
         "status": "A/C: completed - Success [0]",
@@ -137,9 +141,11 @@ async def test_cloud_refresh_keeps_latest_remote_command_status(monkeypatch) -> 
     await coordinator._command_tasks["polled-command"]
     api.async_refresh.assert_awaited_once()
 
-    assert coordinator.data["vehicles"][0]["command_status"] == (
-        "A/C: completed - Success [0]"
-    )
+    assert coordinator.data == {
+        "region": "eu", "vehicles": [{
+            "vin": "SYNTHETIC-VIN", "command_status": "A/C: completed - Success [0]", "values": {"soc": 42},
+        }],
+    }
 
 
 @pytest.mark.asyncio
@@ -296,8 +302,10 @@ async def test_command_terminal_callback_runs_once_after_result_or_deadline(monk
     if outcome == "errors":
         api.async_get_command.side_effect = GwmNetworkError()
     coordinator = GwmDataUpdateCoordinator(HomeAssistant("synthetic-config"), api, cloud_client=object())
-    coordinator.data = {"region": "cn", "vehicles": []}
-    api.async_refresh.return_value = {"region": "cn", "vehicles": []}
+    initial_data = {"region": "cn", "vehicles": []}
+    refreshed_data = {"region": "cn", "vehicles": [{"vin": "SYNTHETIC-REFRESHED", "values": {"soc": 42}}]}
+    coordinator.data = initial_data
+    api.async_refresh.return_value = refreshed_data
     callback = AsyncMock()
     command = {"id": "command", "state": initial}
     coordinator.async_track_command(command, on_terminal=callback)
@@ -315,7 +323,7 @@ async def test_command_terminal_callback_runs_once_after_result_or_deadline(monk
     else:
         callback.assert_awaited_once_with(api.async_get_command.return_value)
         assert api.async_refresh.await_count == int(outcome == "completed")
-        assert coordinator.data == {"region": "cn", "vehicles": []}
+        assert coordinator.data == (refreshed_data if outcome == "completed" else initial_data)
 
 
 @pytest.mark.asyncio
