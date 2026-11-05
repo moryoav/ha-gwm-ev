@@ -659,10 +659,14 @@ def _add_split_percentage(
 
 
 def _window_closed_code(node: _Object | None, property_name: str) -> str | None:
-    value = _integer(_get(node, property_name))
-    if value == 5:
+    """Normalize known BeanTech positions without its app's error-state fallback."""
+    raw = _get(node, property_name)
+    if isinstance(raw, bool):
+        return None
+    value = _integer(raw)
+    if value == 1:
         return "1"
-    if value is not None and 0 <= value <= 4:
+    if value in {0, 2, 3} or (value is not None and 6 <= value <= 25):
         return "0"
     return None
 

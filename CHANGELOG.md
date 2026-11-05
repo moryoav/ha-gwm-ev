@@ -6,6 +6,13 @@ This project follows semantic versioning. HACS uses the latest GitHub release ta
 
 <!-- Use direct release-note language. Do not begin changelog bullets with first-person "I". -->
 
+## [Unreleased]
+
+### Fixed
+
+- Corrected BeanTech window sensors across models: recognized raw `1` as closed and supported open and percentage-position codes. Kept invalid, unsupported, and missing window positions unknown instead of reporting a confirmed state.
+- Corrected rear window names to physical left and right for each backend while preserving existing entity IDs and the physical windows they track. Kept the four individual sensors and single close-all-windows button.
+
 ## [0.17.13] - 2026-11-04
 
 ### Fixed
