@@ -231,6 +231,7 @@ def test_optional_value_functions_tolerate_missing_vehicle_data() -> None:
 @pytest.mark.asyncio
 @pytest.mark.parametrize("region,platform", [("cn", "beantech"), ("cn", "navinfo"), ("eu", "beantech")])
 async def test_beantech_entities_are_isolated_from_other_platforms(region, platform):
+    pytest.importorskip("homeassistant")
     from support.entities import _context
 
     from custom_components.gwm_ora.binary_sensor import async_setup_entry as setup_binary_sensors

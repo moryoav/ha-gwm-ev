@@ -8,16 +8,12 @@ from unittest.mock import Mock, call
 from zoneinfo import ZoneInfo
 
 import pytest
-from support.entities import (
-    ACCEPTED,
-    VIN,
-    _context,
-)
 
 pytest.importorskip("homeassistant")
 
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
+from support.entities import ACCEPTED, VIN, _context
 
 from custom_components.gwm_ora.button import GwmBeanTechComfortButton, GwmClimatePresetButton
 from custom_components.gwm_ora.button import async_setup_entry as setup_buttons

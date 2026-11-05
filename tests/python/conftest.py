@@ -14,6 +14,6 @@ for path in (ROOT, Path(__file__).resolve().parent):
 
 # Home Assistant installs its validation compatibility layer during import.
 # Match real startup before any integration module can bind the old library.
-# The standalone client tests can still run when Home Assistant is absent.
+# Framework-dependent modules keep their own skip guards when it is absent.
 if find_spec("homeassistant") is not None:
     import_module("homeassistant")

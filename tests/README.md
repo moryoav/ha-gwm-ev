@@ -32,7 +32,7 @@ I keep tests that protect an observable contract or reproduce a distinct failure
 
 I run Home Assistant tests on Linux, including WSL on Windows, using the Python and Home Assistant versions in [the Python workflow](../.github/workflows/python.yml). A clean virtual environment avoids unrelated globally installed pytest plugins. The workflow also checks the extracted HACS installation on the minimum supported Home Assistant release.
 
-The test configuration initializes Home Assistant before importing the integration, matching real startup and its validation compatibility layer. Standalone client tests can still run without Home Assistant installed.
+The test configuration initializes Home Assistant before importing the integration, matching real startup and its validation compatibility layer. Home Assistant-specific tests put skip guards before framework-dependent imports. The repository suite needs Home Assistant because imports pass through the integration package, even though the bundled client source is independent of Home Assistant.
 
 From the repository root:
 
