@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from homeassistant.components.binary_sensor import (
@@ -96,13 +96,13 @@ BINARY_SENSORS: tuple[GwmBinarySensorEntityDescription, ...] = (
     ),
     GwmBinarySensorEntityDescription(
         key="window_rear_left_open",
-        translation_key="window_rear_passenger_side",
+        translation_key="window_rear_left",
         device_class=BinarySensorDeviceClass.WINDOW,
         value_fn=_bool_value("window_rear_passenger_side_open", "window_rear_left_open"),
     ),
     GwmBinarySensorEntityDescription(
         key="window_rear_right_open",
-        translation_key="window_rear_driver_side",
+        translation_key="window_rear_right",
         device_class=BinarySensorDeviceClass.WINDOW,
         value_fn=_bool_value("window_rear_driver_side_open", "window_rear_right_open"),
     ),
@@ -269,12 +269,27 @@ def _binary_sensor_descriptions_for_vehicle(
     region: str,
 ) -> tuple[GwmBinarySensorEntityDescription, ...]:
     """Return descriptions supported by the vehicle backend."""
-    if str(region or "").lower() == "cn" and str(vehicle.get("platform") or "").lower() == "beantech":
-        return BINARY_SENSORS
+    china_platform = (
+        str(vehicle.get("platform") or "").strip().lower()
+        if str(region or "").strip().lower() == "cn"
+        else ""
+    )
+    # BeanTech and GTSP already map left-back to 2210004 and right-back to
+    # 2210003. Change their names without changing the existing entity bindings.
+    rear_names = (
+        {
+            "window_rear_left_open": "window_rear_right",
+            "window_rear_right_open": "window_rear_left",
+        }
+        if china_platform in {"beantech", "gtsp"}
+        else {}
+    )
     return tuple(
-        description
+        replace(description, translation_key=rear_names[description.key])
+        if description.key in rear_names
+        else description
         for description in BINARY_SENSORS
-        if description.key not in BEANTECH_BINARY_SENSOR_KEYS
+        if china_platform == "beantech" or description.key not in BEANTECH_BINARY_SENSOR_KEYS
     )
 
 

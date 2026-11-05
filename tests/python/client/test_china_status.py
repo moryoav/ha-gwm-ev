@@ -66,10 +66,10 @@ def test_bean_tech_fixture_maps_released_and_platform_specific_signals() -> None
     assert items["2101008"] == ("38", "°C")
     assert items["2208001"] == ("0", None)
     assert items["2206002"] == ("1", None)
-    assert items["2210001"] == ("1", None)
+    assert "2210001" not in items  # Raw 5 does not establish a closed window.
     assert items["2210002"] == ("0", None)
     assert items["2210004"] == ("0", None)
-    assert items["2210003"] == ("1", None)
+    assert "2210003" not in items
     assert items["2041142"] == ("3", None)
     assert items["2013022"] == ("12", "min")
     assert items["2201001"] == ("235", None)
@@ -81,6 +81,76 @@ def test_bean_tech_fixture_maps_released_and_platform_specific_signals() -> None
     assert items["9000023"] == ("3", None)
     assert items["2310001"] == ("1", None)
     assert _BEAN_FIXTURE["vin"] not in repr(status)
+
+
+@pytest.mark.parametrize(
+    ("field", "code"),
+    [
+        ("lfWinPosnSts", "2210001"),
+        ("rfWinPosnSts", "2210002"),
+        ("lbWinPosnSts", "2210004"),
+        ("rbWinPosnSts", "2210003"),
+    ],
+)
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        (1, "1"),
+        ("1", "1"),
+        (0, "0"),
+        (2, "0"),
+        (3, "0"),
+        *[(value, "0") for value in range(6, 26)],
+        (" 16 ", "0"),
+        ("25", "0"),
+        (1.0, "1"),
+        (0.0, "0"),
+        (2.0, "0"),
+        (3.0, "0"),
+        (6.0, "0"),
+        (16.0, "0"),
+        (25.0, "0"),
+        *[
+            (math.nextafter(value, direction), None)
+            for value in (1.0, 2.0, 6.0, 25.0)
+            for direction in (-math.inf, math.inf)
+        ],
+        (math.nan, None),
+        (math.inf, None),
+        (-math.inf, None),
+        (4, None),
+        ("4", None),
+        (5, None),
+        ("5", None),
+        (-1, None),
+        (26, None),
+        (2**31, None),
+        (None, None),
+        ("", None),
+        ("-", None),
+        ("--", None),
+        ("null", None),
+        ("unknown", None),
+        ("2.5", None),
+        (2.5, None),
+        (True, None),
+        (False, None),
+    ],
+)
+def test_bean_tech_window_codes_preserve_independent_and_unknown_states(
+    field: str, code: str, raw: object, expected: str | None,
+) -> None:
+    """Decode app-backed positions without copying its closed-looking fallbacks."""
+    windows = dict.fromkeys(("lfWinPosnSts", "rfWinPosnSts", "lbWinPosnSts", "rbWinPosnSts"), 1)
+    windows[field] = raw
+    items = _items(_map_bean({"vehicleStatusInfo": {"windows": windows}}))
+    actual = {key: value for key, value in items.items() if key in {"2210001", "2210002", "2210003", "2210004"}}
+    expected_items = dict.fromkeys(("2210001", "2210002", "2210003", "2210004"), ("1", None))
+    if expected is None:
+        del expected_items[code]
+    else:
+        expected_items[code] = (expected, None)
+    assert actual == expected_items
 
 
 def test_bean_tech_sparse_v3_pack_fields_map() -> None:
