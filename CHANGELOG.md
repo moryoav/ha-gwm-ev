@@ -6,12 +6,17 @@ This project follows semantic versioning. HACS uses the latest GitHub release ta
 
 <!-- Use direct release-note language. Do not begin changelog bullets with first-person "I". -->
 
-## [Unreleased]
+## [0.17.14] - 2026-11-05
 
 ### Fixed
 
 - Corrected BeanTech window sensors across models: recognized raw `1` as closed and supported open and percentage-position codes. Kept invalid, unsupported, and missing window positions unknown instead of reporting a confirmed state.
 - Corrected rear window names to physical left and right for each backend while preserving existing entity IDs and the physical windows they track. Kept the four individual sensors and single close-all-windows button.
+- Rejected fractional and non-finite window positions before numeric formatting while preserving valid integral readings.
+
+### Known validation limitation
+
+- Retained the existing EU bootstrap certificate and renewal guard. The renewal deadline passed on October 6, 2026; the certificate remains valid until January 4, 2027. The existing renewal test still fails, as recorded in v0.17.13.
 
 ## [0.17.13] - 2026-11-04
 
