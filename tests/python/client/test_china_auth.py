@@ -728,16 +728,17 @@ async def test_initialization_retries_only_network_and_selected_gateway_failures
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("failure", "category"),
+    ("failure", "label"),
     [
-        (GwmTlsError(operation="initialize_bean_tech"), "tls_error"),
-        (GwmRateLimitError(operation="initialize_bean_tech"), "rate_limit_error"),
-        (GwmSchemaError(operation="initialize_bean_tech"), "schema_error"),
+        (GwmTlsError(operation="initialize_bean_tech"), "bean_tech:tls_error"),
+        (GwmRateLimitError(operation="initialize_bean_tech"), "bean_tech:rate_limit_error"),
+        (GwmSchemaError(operation="initialize_bean_tech"), "bean_tech:schema_error"),
+        (RuntimeError(SENSITIVE), "initialization:network_error"),
     ],
 )
 async def test_terminal_initialization_failures_are_not_retried_or_cascaded(
-    failure: GwmClientError,
-    category: str,
+    failure: Exception,
+    label: str,
 ) -> None:
     transport = _FakeTransport(
         initialize_bean_tech=[failure],
@@ -749,7 +750,8 @@ async def test_terminal_initialization_failures_are_not_retried_or_cascaded(
     assert not result.state.complete
     assert result.state.bean_tech_access_token is None
     assert result.state.auto_ai_token_id is None
-    assert any(category in label for label in result.failures)
+    assert result.failures == (label,)
+    assert SENSITIVE not in repr(result)
     assert Counter(request.operation for request in transport.calls)["initialize_bean_tech"] == 1
     assert all(request.operation not in {"refresh_token", "login", "request_verification"} for request in transport.calls)
 
