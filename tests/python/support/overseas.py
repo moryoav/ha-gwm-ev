@@ -96,7 +96,7 @@ class _RecordingTransport:
         connect_timeout: float,
         read_timeout: float,
     ) -> _TransportResponse:
-        assert deadline.remaining(0) > 0
+        assert deadline.remaining(asyncio.get_running_loop().time()) > 0
         assert connect_timeout > 0
         assert read_timeout > 0
         self.requests.append(request)
