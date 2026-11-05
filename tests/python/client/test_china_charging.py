@@ -760,10 +760,17 @@ async def test_concurrent_charge_window_edits_preserve_each_other_and_app_fields
     await client.authenticate(_credentials(), state=_complete_state())
     identifier = VehicleIdentifier(BEAN_VIN)
     start = asyncio.create_task(client.set_bean_tech_charge_window(identifier, start_time="22:00"))
-    await started.wait()
-    end = asyncio.create_task(client.set_bean_tech_charge_window(identifier, end_time="08:00"))
-    release.set()
-    await asyncio.gather(start, end)
+    tasks = [start]
+    try:
+        await asyncio.wait_for(started.wait(), 5)
+        tasks.append(asyncio.create_task(client.set_bean_tech_charge_window(identifier, end_time="08:00")))
+        release.set()
+        await asyncio.wait_for(asyncio.gather(*tasks), 5)
+    finally:
+        release.set()
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
     assert operations == ["read", "write", "read", "write"]
     expected = _charging_setting()
     expected["chargeSetParam"]["customTime"].update(startTime="22:00", endTime="08:00")
@@ -783,10 +790,14 @@ async def test_cancelled_charge_setting_read_never_submits_a_write():
     client = _client(transport)
     await client.authenticate(_credentials(), state=_complete_state())
     task = asyncio.create_task(client.set_bean_tech_charging_mode(VehicleIdentifier(BEAN_VIN), enable=True))
-    await started.wait()
-    task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await task
+    try:
+        await asyncio.wait_for(started.wait(), 5)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, 5)
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
     assert not any(call.operation == "set_bean_tech_charging_mode" for call in transport.calls)
 
 
