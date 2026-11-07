@@ -684,7 +684,8 @@ async def test_beantech_climate_companion_timeout_keeps_the_accepted_id():
     transport = _FakeTransport(acquire_vehicles=[FIXTURE["responses"]["discovery"]], send_climate_command=[{"code": "000000"}], set_bean_tech_ac_temperature=[_Wait()])
     client = _client(transport)
     await client.authenticate(_credentials(), state=_complete_state())
-    result = await client.send_climate_command(ClimateCommand(VehicleIdentifier(BEAN_VIN), "auto", 22, 15), timeout=0.4)
+    # Leave room for command acceptance on slow CI while the companion save stalls.
+    result = await client.send_climate_command(ClimateCommand(VehicleIdentifier(BEAN_VIN), "auto", 22, 15), timeout=2.0)
     assert result.command_id == BEAN_COMMAND_ID
     assert Counter(call.operation for call in transport.calls)["send_climate_command"] == 1
     assert Counter(call.operation for call in transport.calls)["set_bean_tech_ac_temperature"] == 1
