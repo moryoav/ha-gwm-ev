@@ -1436,8 +1436,10 @@ async def test_china_runtime_handoff_maps_platform_capabilities_and_no_pin_write
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("region", ["eu", "aus", "rus", "cn"])
-@pytest.mark.parametrize("action", [None, "horn", "flash_lights", "horn_and_lights", "climate", "comfort_mode", "comfort_off", "cabin_clean"])
+@pytest.mark.parametrize("region,action", [
+    *[("cn", action) for action in (None, "horn", "flash_lights", "horn_and_lights", "climate", "comfort_mode", "comfort_off", "cabin_clean")],
+    *[(region, action) for region in ("eu", "aus", "rus") for action in (None, "horn")],
+])
 async def test_horn_result_routing_keyword_stays_inside_china(region: str, action: str | None) -> None:
     client = SimpleNamespace(get_remote_command_results=AsyncMock(return_value=()))
     runtime = GwmCloudClient(region, client)

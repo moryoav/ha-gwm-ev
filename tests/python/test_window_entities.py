@@ -8,7 +8,7 @@ import pytest
 
 pytest.importorskip("homeassistant")
 
-from test_beantech_entities import VIN, _context
+from support.entities import VIN, _context
 
 from custom_components.gwm_ora.binary_sensor import async_setup_entry as setup_binary_sensors
 from custom_components.gwm_ora.button import GwmCloseWindowsButton
