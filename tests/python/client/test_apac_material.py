@@ -84,6 +84,29 @@ def test_installed_loader_falls_back_only_when_bundle_is_absent(
         apac_material.load_installed_apac_material(local)
 
 
+def test_unreadable_installed_bundle_does_not_fall_back(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Redact bundle lookup failures and avoid loading the development files."""
+    component = tmp_path / "component"
+    bundle = component / "resources" / "apac"
+    original_lstat = Path.lstat
+
+    def lstat(path: Path):
+        """Report a permission error for the installed bundle directory."""
+        if path == bundle:
+            raise PermissionError(str(bundle))
+        return original_lstat(path)
+
+    def unexpected_fallback(directory: Path) -> ApacMaterial:
+        """Fail if the loader uses the private folder after a lookup error."""
+        pytest.fail("The installed bundle lookup failed with a permission error")
+
+    monkeypatch.setattr(apac_material, "_SOURCE_DIRECTORY", component / "gwm_client")
+    monkeypatch.setattr(apac_material, "load_apac_material", unexpected_fallback)
+    monkeypatch.setattr(Path, "lstat", lstat)
+    with pytest.raises(ValueError, match="^apac_material_invalid$"):
+        apac_material.load_installed_apac_material(tmp_path / "development")
+
+
 def test_missing_or_relative_private_path_fails_without_disclosure(tmp_path: Path) -> None:
     """Reject missing or relative directories without exposing their paths."""
     for path in (tmp_path / "private-name", Path("relative-private-name")):
