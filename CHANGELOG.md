@@ -14,6 +14,10 @@ This project follows semantic versioning. HACS uses the latest GitHub release ta
 
 - Added APAC read-only setup, private session storage, refresh, discovery and status for Pakistan, Thailand, Malaysia and Indonesia. Vehicle commands and charging writes are disabled by default.
 
+### Changed
+
+- Load APAC authentication resources from the installed integration when supplied, with a fallback to private development files for existing testers.
+
 ## [0.17.12] - 2026-10-19
 
 ### Changed

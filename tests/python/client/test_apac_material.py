@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from custom_components.gwm_ora.gwm_client import apac_material
 from custom_components.gwm_ora.gwm_client.apac_material import ApacMaterial, load_apac_material
 from custom_components.gwm_ora.gwm_client.eu_identity import EuBootstrapMaterial
 
@@ -58,6 +59,29 @@ def test_loads_only_explicit_local_files_with_synthetic_material(tmp_path: Path)
     material = load_apac_material(tmp_path)
     assert material.signing_profile().app_secret == "synthetic-secret"
     assert "synthetic" not in repr(material)
+
+
+def test_installed_loader_falls_back_only_when_bundle_is_absent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Keep older installations working and reject a partial installed bundle."""
+    component = tmp_path / "component"
+    local = tmp_path / "development"
+    monkeypatch.setattr(apac_material, "_SOURCE_DIRECTORY", component / "gwm_client")
+    material = ApacMaterial(_synthetic_bootstrap(), "synthetic-key", "synthetic-secret")
+
+    def load_local(directory: Path) -> ApacMaterial:
+        """Return the older installation's material from its configured path."""
+        assert directory == local
+        return material
+
+    monkeypatch.setattr(apac_material, "load_apac_material", load_local)
+    assert apac_material.load_installed_apac_material(local) is material
+
+    bundle = component / "resources" / "apac"
+    bundle.mkdir(parents=True)
+    with pytest.raises(ValueError, match="^apac_material_invalid$"):
+        apac_material.load_installed_apac_material(local)
 
 
 def test_missing_or_relative_private_path_fails_without_disclosure(tmp_path: Path) -> None:

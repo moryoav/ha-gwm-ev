@@ -88,7 +88,7 @@ from .gwm_client import (
     RussiaVerificationRequired,
 )
 from .gwm_client.apac_flow import ApacAuthenticated, ApacVerificationRequired
-from .gwm_client.apac_material import load_apac_material
+from .gwm_client.apac_material import load_installed_apac_material
 from .gwm_client.apac_restore import ApacRestored
 
 _LOGGER = logging.getLogger(__name__)
@@ -614,7 +614,7 @@ class GwmConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if self._cloud_authenticator is None:
             self._cloud_authenticator = (
                 GwmCloudAuthenticator(
-                    apac_material_loader=lambda: load_apac_material(
+                    apac_material_loader=lambda: load_installed_apac_material(
                         Path(self.hass.config.path(".storage", "gwm_apac_material"))
                     )
                 )

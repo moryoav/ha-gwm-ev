@@ -69,7 +69,7 @@ from .gwm_client import (
     RussiaAuthenticated,
 )
 from .gwm_client.apac_flow import ApacAuthenticated
-from .gwm_client.apac_material import load_apac_material
+from .gwm_client.apac_material import load_installed_apac_material
 from .gwm_client.apac_restore import ApacRestored
 
 
@@ -377,7 +377,7 @@ async def _async_load_cloud_bootstrap_once(
     try:
         authenticator = (
             GwmCloudAuthenticator(
-                apac_material_loader=lambda: load_apac_material(
+                apac_material_loader=lambda: load_installed_apac_material(
                     Path(hass.config.path(".storage", "gwm_apac_material"))
                 )
             )

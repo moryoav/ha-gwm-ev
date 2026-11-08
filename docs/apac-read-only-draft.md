@@ -4,11 +4,15 @@ This development branch adds a shared APAC Home Assistant setup with read-only a
 
 In the integration settings, **Vehicle controls** enables supported climate, locks, windows, seats and other vehicle commands. **Charging control** separately enables direct start/stop charging. Both toggles default to off and require a vehicle security PIN. The former climate-only toggle is no longer used; users of that test package must explicitly enable Vehicle controls. These implementations use the earlier prototype's APAC command formats and require validation of each command on the submitted branch. Scheduled charging remains unavailable. The seat-stop request in the earlier implementation contains zeroes for both front and rear seats and may stop more than one seat; test with this behavior in mind. Other regions retain their existing policies. Authentication and vehicle requests use distinct, strictly validated TLS contexts.
 
-## Private local material
+## Installation and sign-in
 
-This directory is a temporary development requirement. Before release, APAC installation and authentication must use the normal integration setup, matching the other regions, without asking users to prepare these files.
+APAC setup reads the authentication bundle from `resources/apac/` in the installed integration when those resources are included. Add the GWM integration, choose **Asia-Pacific (experimental)**, select the account's registration country, and enter the account credentials. Complete a verification code when requested.
 
-APAC setup loads private material from `.storage/gwm_apac_material/` inside Home Assistant's configuration directory, using `hass.config.path`. For example, if the configuration directory is `/config`, the full path is `/config/.storage/gwm_apac_material/`. Use the actual configuration directory for your installation. It must contain:
+The integration stores account-bound session state privately in Home Assistant storage. On restart it attempts to restore the issued identity and renew an expired session. Packaged sign-in still needs a live test.
+
+## Private development material
+
+The public development branch still requires separately supplied material while distribution permission for the shared bundle is pending. If the installed bundle is absent, APAC setup reads `.storage/gwm_apac_material/` inside Home Assistant's configuration directory. For example, if the configuration directory is `/config`, the full path is `/config/.storage/gwm_apac_material/`. It must contain the following files.
 
 - `bootstrap.cer`: the separately supplied bootstrap certificate.
 - `bootstrap.key`: the separately supplied transformed bootstrap key.
@@ -22,8 +26,6 @@ The format is shown below using deliberately fake values; these do not authentic
 ```json
 {"app_key": "synthetic-key", "app_secret": "synthetic-secret"}
 ```
-
-After supplying authorized material, add the GWM integration, choose **Asia-Pacific (experimental)**, select the account's registration country, and enter the account credentials. Complete a verification code only when requested. The integration stores account-bound session state privately in Home Assistant storage. On restart it attempts to restore an issued identity and renew an expired session without silently falling back to password login or requesting another code.
 
 ## Development testing
 

@@ -174,7 +174,7 @@ class GwmCloudAuthenticator:
         resource_loader: ResourceLoader | None = None,
         apac_material_loader: Callable[[], ApacMaterial] | None = None,
     ) -> None:
-        """Retain regional client factories and the optional private APAC material loader."""
+        """Retain regional client factories and the optional APAC material loader."""
         self._overseas_client_factory = overseas_client_factory or GwmClient
         self._china_client_factory = china_client_factory or ChinaClient
         self._resource_loader = resource_loader or _load_bootstrap_material
