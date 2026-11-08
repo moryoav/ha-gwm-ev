@@ -39,13 +39,21 @@ from custom_components.gwm_ora.gwm_client.regions import TlsMode
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("linked_bundle", [False, True])
 async def test_packaged_apac_install_signs_in_and_resumes_after_restart(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, linked_bundle: bool
 ) -> None:
     """Sign in from installed resources and reload the saved session on startup."""
     component = tmp_path / "custom_components" / "gwm_ora"
-    resources = component / "resources" / "apac"
+    installed = component / "resources" / "apac"
+    resources = tmp_path / "mounted_bundle" if linked_bundle else installed
     resources.mkdir(parents=True)
+    if linked_bundle:
+        installed.parent.mkdir(parents=True)
+        try:
+            installed.symlink_to(resources, target_is_directory=True)
+        except (OSError, NotImplementedError):
+            pytest.skip("Directory symlinks are unavailable on this platform")
     (resources / "bootstrap.cer").write_bytes(b"fixture-certificate")
     (resources / "bootstrap.key").write_bytes(b"c3ludGhldGljLWtleQ==")
     (resources / "ca.pem").write_bytes(b"fixture-ca-bundle")

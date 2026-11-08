@@ -81,6 +81,8 @@ def load_apac_material(directory: Path) -> ApacMaterial:
 def _read_apac_material(directory: Path) -> ApacMaterial:
     """Read all four files within the given directory and redact load errors."""
     try:
+        directory = directory.resolve(strict=True)
+
         def read_file(name: str) -> bytes:
             """Read one bounded regular file within the bundle directory."""
             path = (directory / name).resolve(strict=True)
