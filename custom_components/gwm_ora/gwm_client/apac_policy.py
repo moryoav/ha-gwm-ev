@@ -1,8 +1,4 @@
-"""APAC gateway policy for the regional read-only integration.
-
-The profile must be supplied by the caller and no credentials are bundled.
-This module alone does not implement authentication or make network requests.
-"""
+"""Construct APAC gateway policies using the regional signing profile."""
 
 from __future__ import annotations
 
@@ -16,7 +12,7 @@ _CALLING_CODES = MappingProxyType({"TH": "+66", "MY": "+60", "ID": "+62", "PK": 
 
 
 def apac_gateways(material: ApacMaterial) -> Mapping[GatewayRole, GatewayConfig]:
-    """Construct request routing with externally provided signing material."""
+    """Construct request routing with the supplied APAC signing material."""
     if type(material) is not ApacMaterial:
         raise ValueError("apac_material_invalid")
     profile = material.signing_profile()

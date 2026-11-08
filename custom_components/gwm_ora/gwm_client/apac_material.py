@@ -1,8 +1,4 @@
-"""External material contract for the experimental APAC read-only client.
-
-This module does not distribute app-derived material. Callers may supply
-private material explicitly from a directory outside the repository.
-"""
+"""Load enrollment and signing resources for the APAC client."""
 
 from __future__ import annotations
 
@@ -19,9 +15,9 @@ _SOURCE_DIRECTORY = Path(__file__).resolve().parent
 
 @dataclass(frozen=True, slots=True)
 class ApacMaterial:
-    """Caller-supplied private enrollment and signing material.
+    """Enrollment and signing material for the APAC region.
 
-    Do not log or persist this object. It has no default or bundled material.
+    Do not log or persist this object.
     """
 
     bootstrap: EuBootstrapMaterial = field(repr=False)
@@ -29,7 +25,7 @@ class ApacMaterial:
     app_secret: str = field(repr=False)
 
     def __post_init__(self) -> None:
-        """Reject missing or malformed caller-supplied signing material."""
+        """Reject missing or malformed signing material."""
         if type(self.bootstrap) is not EuBootstrapMaterial:
             raise ValueError("apac_material_invalid")
         for value in (self.app_key, self.app_secret):
@@ -53,22 +49,42 @@ class ApacMaterial:
         )
 
 
-def load_apac_material(directory: Path) -> ApacMaterial:
-    """Load explicitly provided local files; never log content or file paths.
+def load_installed_apac_material(local_directory: Path) -> ApacMaterial:
+    """Use the installed bundle or fall back to private development files.
 
-    The directory must be supplied by the caller; this function has no default,
-    does not download material and does not persist anything to the repository.
+    An incomplete or unreadable bundle fails setup instead of falling back.
     """
+    bundle = _SOURCE_DIRECTORY.parent / "resources" / "apac"
+    try:
+        bundle.lstat()
+    except FileNotFoundError:
+        return load_apac_material(local_directory)
+    except OSError:
+        raise ValueError("apac_material_invalid") from None
+    return _read_apac_material(bundle)
+
+
+def load_apac_material(directory: Path) -> ApacMaterial:
+    """Load explicitly supplied local files from outside the Git checkout."""
     if not isinstance(directory, Path) or not directory.is_absolute():
         raise ValueError("apac_material_invalid")
     try:
         directory = directory.resolve(strict=True)
         repository = next((parent for parent in _SOURCE_DIRECTORY.parents if (parent / ".git").exists()), None)
-        if not directory.is_dir() or (repository is not None and directory.is_relative_to(repository)):
+        if repository is not None and directory.is_relative_to(repository):
             raise ValueError("apac_material_invalid")
+    except (OSError, RuntimeError, ValueError):
+        raise ValueError("apac_material_invalid") from None
+    return _read_apac_material(directory)
+
+
+def _read_apac_material(directory: Path) -> ApacMaterial:
+    """Read all four files within the given directory and redact load errors."""
+    try:
+        directory = directory.resolve(strict=True)
 
         def read_file(name: str) -> bytes:
-            """Read one bounded regular file within the resolved private directory."""
+            """Read one bounded regular file within the bundle directory."""
             path = (directory / name).resolve(strict=True)
             if not path.is_relative_to(directory) or not path.is_file():
                 raise ValueError("apac_material_invalid")

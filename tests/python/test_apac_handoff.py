@@ -508,7 +508,7 @@ async def test_post_refresh_rejection_requires_reauthentication(
     await store.async_save_auth_state(credentials, state)
     cloud._state_store = store
     if boundary == "startup":
-        monkeypatch.setattr(integration, "load_apac_material", lambda *args: material)
+        monkeypatch.setattr(integration, "load_installed_apac_material", lambda *args: material)
         monkeypatch.setattr(auth_boundary.AiohttpTransport, "create_owned", lambda **kwargs: transport)
         entry = SimpleNamespace(data=cloud_entry_data(credentials), unique_id=unique_id)
 
@@ -661,7 +661,7 @@ async def test_startup_retries_failed_rotation_save_before_reusing_credentials(t
         return transport
 
     monkeypatch.setattr(store._store, "async_save", fail_one_save)
-    monkeypatch.setattr(integration, "load_apac_material", lambda *args: material)
+    monkeypatch.setattr(integration, "load_installed_apac_material", lambda *args: material)
     monkeypatch.setattr(auth_boundary.AiohttpTransport, "create_owned", make_transport)
     entry = SimpleNamespace(data=cloud_entry_data(credentials), unique_id=unique_id)
     try:
@@ -885,7 +885,7 @@ async def test_cancelled_staged_writer_cannot_overwrite_a_later_confirmed_rotati
             loop.call_soon_threadsafe(writer_finished.set)
 
     monkeypatch.setattr(ha_storage, "write_utf8_file_atomic", delay_one_write)
-    monkeypatch.setattr(integration, "load_apac_material", lambda *args: material)
+    monkeypatch.setattr(integration, "load_installed_apac_material", lambda *args: material)
     monkeypatch.setattr(auth_boundary.AiohttpTransport, "create_owned", lambda **kwargs: transport)
     older = asyncio.create_task(integration._async_load_cloud_bootstrap(hass, entry, store))
     newer = None
@@ -956,7 +956,7 @@ async def test_failed_startup_retirement_publication_retries_before_requesting_r
         return original_write(filename, data, *args, **kwargs)
 
     monkeypatch.setattr(ha_storage, "write_utf8_file_atomic", fail_one_retirement_write)
-    monkeypatch.setattr(integration, "load_apac_material", lambda *args: material)
+    monkeypatch.setattr(integration, "load_installed_apac_material", lambda *args: material)
     monkeypatch.setattr(auth_boundary.AiohttpTransport, "create_owned", lambda **kwargs: transport)
     try:
         with pytest.raises(ConfigEntryNotReady):
