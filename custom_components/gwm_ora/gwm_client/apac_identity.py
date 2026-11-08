@@ -1,8 +1,4 @@
-"""Strict APAC client-identity validation without changing EU TLS rules.
-
-The private caller supplies the four-certificate CA bundle. This implementation
-never bundles, downloads, or falls back to an unverified certificate.
-"""
+"""Validate APAC client identities against the scoped regional CA bundle."""
 
 from __future__ import annotations
 

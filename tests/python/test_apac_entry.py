@@ -43,34 +43,22 @@ from custom_components.gwm_ora.gwm_client.regions import TlsMode
 async def test_packaged_apac_install_signs_in_and_resumes_after_restart(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, linked_bundle: bool
 ) -> None:
-    """Sign in from installed resources and reload the saved session on startup."""
-    component = tmp_path / "custom_components" / "gwm_ora"
-    installed = component / "resources" / "apac"
-    resources = tmp_path / "mounted_bundle" if linked_bundle else installed
-    resources.mkdir(parents=True)
+    """Use the shipped bundle for setup and restart against a simulated service."""
+    resources = Path(apac_material.__file__).resolve().parents[1] / "resources" / "apac"
     if linked_bundle:
+        component = tmp_path / "custom_components" / "gwm_ora"
+        installed = component / "resources" / "apac"
         installed.parent.mkdir(parents=True)
         try:
             installed.symlink_to(resources, target_is_directory=True)
         except (OSError, NotImplementedError):
             pytest.skip("Directory symlinks are unavailable on this platform")
-    (resources / "bootstrap.cer").write_bytes(b"fixture-certificate")
-    (resources / "bootstrap.key").write_bytes(b"c3ludGhldGljLWtleQ==")
-    (resources / "ca.pem").write_bytes(b"fixture-ca-bundle")
-    (resources / "signing.json").write_text(
-        '{"app_key":"fixture-app-key","app_secret":"fixture-app-secret"}', encoding="utf-8"
-    )
-    monkeypatch.setattr(apac_material, "_SOURCE_DIRECTORY", component / "gwm_client")
+        monkeypatch.setattr(apac_material, "_SOURCE_DIRECTORY", component / "gwm_client")
+    app_key = json.loads((resources / "signing.json").read_text(encoding="utf-8"))["app_key"]
 
-    def tls_context(mode: TlsMode) -> ssl.SSLContext:
-        """Represent a prevalidated client TLS context at the fake transport boundary."""
-        context = ssl.create_default_context()
-        context.set_ciphers("DEFAULT:@SECLEVEL=0")
-        return _register_validated_context(context, mode)
-
-    bootstrap_context = tls_context(TlsMode.APAC_BOOTSTRAP_MTLS)
-    issued_context = tls_context(TlsMode.APAC_ISSUED_MTLS)
-    monkeypatch.setattr(apac_auth_client, "create_apac_bootstrap_context", lambda *_: bootstrap_context)
+    issued_context = ssl.create_default_context()
+    issued_context.set_ciphers("DEFAULT:@SECLEVEL=0")
+    _register_validated_context(issued_context, TlsMode.APAC_ISSUED_MTLS)
     for module in (apac_auth_client, apac_restore):
         monkeypatch.setattr(module, "create_apac_issued_context", lambda *args, **kwargs: issued_context)
 
@@ -90,7 +78,8 @@ async def test_packaged_apac_install_signs_in_and_resumes_after_restart(
 
         async def execute(self, request, **kwargs):
             """Require the installed signing profile on every APAC request."""
-            assert request.headers["bt-auth-appkey"] == "fixture-app-key"
+            if request.headers["bt-auth-appkey"] != app_key:
+                pytest.fail("APAC request did not use the installed signing profile")
             operations.append(request.operation)
             data = {"code": "000000", "data": responses[request.operation]}
             return _TransportResponse(200, {}, json.dumps(data).encode())
@@ -111,6 +100,7 @@ async def test_packaged_apac_install_signs_in_and_resumes_after_restart(
     )
     assert result["type"] is FlowResultType.CREATE_ENTRY, result.get("errors")
     assert "login" in operations and "enroll_certificate" in operations
+    assert not (tmp_path / ".storage" / "gwm_apac_material").exists()
 
     entry = ConfigEntry(
         data=result["data"],

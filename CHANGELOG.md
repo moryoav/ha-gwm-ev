@@ -16,7 +16,7 @@ This project follows semantic versioning. HACS uses the latest GitHub release ta
 
 ### Changed
 
-- Load APAC authentication resources from the installed integration when supplied, with a fallback to private development files for existing testers.
+- Bundled the shared APAC authentication files for standard installation and sign-in.
 
 ## [0.17.12] - 2026-10-19
 

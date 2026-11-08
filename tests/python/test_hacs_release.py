@@ -15,6 +15,7 @@ MANIFEST = ROOT / "custom_components" / "gwm_ora" / "manifest.json"
 
 
 def test_release_zip_has_integration_files_at_root(tmp_path: Path) -> None:
+    """Build and verify the integration and APAC bundle in an isolated install."""
     manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
     tag = f"v{manifest['version']}"
     result = subprocess.run(
@@ -39,6 +40,10 @@ def test_release_zip_has_integration_files_at_root(tmp_path: Path) -> None:
             "gwm_client/client.py",
             "gwm_client/china_client.py",
             "gwm_client/py.typed",
+            "resources/apac/bootstrap.cer",
+            "resources/apac/bootstrap.key",
+            "resources/apac/ca.pem",
+            "resources/apac/signing.json",
         }.issubset(names)
         assert "gwm_ora/manifest.json" not in names
         assert json.loads(archive.read("manifest.json")) == manifest
@@ -69,6 +74,8 @@ def test_release_zip_has_integration_files_at_root(tmp_path: Path) -> None:
                 import custom_components.gwm_ora as integration
                 from custom_components.gwm_ora import cloud_auth, gwm_client
                 from custom_components.gwm_ora.gwm_client import live_poc
+                from custom_components.gwm_ora.gwm_client.apac_identity import create_apac_bootstrap_context
+                from custom_components.gwm_ora.gwm_client.apac_material import load_installed_apac_material
 
                 installed = Path.cwd() / "custom_components" / "gwm_ora"
                 for module in pkgutil.iter_modules(integration.__path__):
@@ -78,6 +85,10 @@ def test_release_zip_has_integration_files_at_root(tmp_path: Path) -> None:
                 assert integration.GwmClientError is gwm_client.GwmClientError
                 assert cloud_auth._RESOURCE_DIRECTORY == installed / "resources"
                 assert live_poc._default_resource_dir() == installed / "resources"
+                local_material = Path.cwd() / ".storage" / "gwm_apac_material"
+                assert not local_material.exists()
+                apac = load_installed_apac_material(local_material)
+                assert create_apac_bootstrap_context(apac.bootstrap).check_hostname
                 """
             ),
         ],
