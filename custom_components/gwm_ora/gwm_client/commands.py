@@ -46,7 +46,9 @@ type ChinaVehicleControlAction = Literal[
     "battery_initiative_heat",
     "battery_initiative_heat_stop",
 ]
-type ChinaRemoteCommandAction = ChinaVehicleControlAction | Literal["climate", "comfort_mode", "charging_mode", "charge_window", "charge_soc", "battery_appointment"]
+type ChinaRemoteCommandAction = ChinaVehicleControlAction | Literal[
+    "climate", "comfort_mode", "charging_mode", "charge_window", "charge_soc", "battery_appointment", "authorized_lock"
+]
 
 type RemoteCommandState = Literal["pending", "completed", "failed"]
 
@@ -108,7 +110,9 @@ BEANTECH_CHARGING_ACTIONS: frozenset[ChinaRemoteCommandAction] = (
 )
 BEANTECH_CHINA_VEHICLE_CONTROL_ACTIONS |= BEANTECH_COMFORT_ACTIONS | BEANTECH_BATTERY_HEAT_ACTIONS
 BEANTECH_TIMELY_ACTIONS: frozenset[ChinaRemoteCommandAction] = (
-    BEANTECH_HORN_LIGHT_ACTIONS | BEANTECH_COMFORT_ACTIONS | frozenset[ChinaRemoteCommandAction]({"climate", "comfort_mode"}) | BEANTECH_CHARGING_ACTIONS
+    BEANTECH_HORN_LIGHT_ACTIONS | BEANTECH_COMFORT_ACTIONS
+    | frozenset[ChinaRemoteCommandAction]({"climate", "comfort_mode", "authorized_lock"})
+    | BEANTECH_CHARGING_ACTIONS
 )
 
 _COMMAND_IDENTIFIER = re.compile(r"[\x21-\x7e]{1,512}")
@@ -215,9 +219,12 @@ class RemoteCommandAcceptance:
     """Provider-owned identifier returned only after command acceptance."""
 
     command_id: str = field(repr=False)
+    result_action: Literal["authorized_lock"] | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.command_id, str) or _COMMAND_IDENTIFIER.fullmatch(self.command_id) is None:
+            raise ValueError("command_acceptance_invalid")
+        if self.result_action not in (None, "authorized_lock"):
             raise ValueError("command_acceptance_invalid")
 
 

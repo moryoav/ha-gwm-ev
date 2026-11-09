@@ -50,11 +50,16 @@ _SMART_CHARGE_COMMAND_NAME = "Smart charge"
 _BATTERY_APPOINTMENT_COMMAND_NAME = "Battery appointment heating"
 _CHARGE_SOC_COMMAND_NAME = "Charge SOC limit"
 _CHARGE_WINDOW_COMMAND_NAME = "Charge window"
+_AUTHORIZED_LOCK_NAMES = {
+    "Door lock": "Authorized door lock",
+    "Door unlock": "Authorized door unlock",
+}
 _BEANTECH_RESULT_ACTIONS: dict[str, ChinaRemoteCommandAction] = {
     _SMART_CHARGE_COMMAND_NAME: "charging_mode",
     _CHARGE_WINDOW_COMMAND_NAME: "charge_window",
     _CHARGE_SOC_COMMAND_NAME: "charge_soc",
     _BATTERY_APPOINTMENT_COMMAND_NAME: "battery_appointment",
+    **dict.fromkeys(_AUTHORIZED_LOCK_NAMES.values(), "authorized_lock"),
 }
 
 _DEFAULT_RESULT_TIMEOUT = timedelta(seconds=90)
@@ -74,6 +79,7 @@ class GwmCommandApi:
         enabled: bool,
         charging_enabled: bool = False,
         security_pin: str | None,
+        bean_tech_lock_credential: str | None = None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         if (
@@ -83,6 +89,7 @@ class GwmCommandApi:
             or type(enabled) is not bool
             or type(charging_enabled) is not bool
             or (security_pin is not None and not isinstance(security_pin, str))
+            or (bean_tech_lock_credential is not None and not isinstance(bean_tech_lock_credential, str))
             or (clock is not None and not callable(clock))
         ):
             raise ValueError("gwm_command_api_invalid")
@@ -93,6 +100,7 @@ class GwmCommandApi:
         self._enabled = enabled
         self._charging_enabled = charging_enabled
         self._security_pin = security_pin.strip() if security_pin else ""
+        self._bean_tech_lock_credential = bean_tech_lock_credential
         self._clock = clock or (lambda: datetime.now(UTC))
         self._commands: dict[str, GwmCommandJournalEntry] = {}
         self._timeout_ids: set[str] = set()
@@ -304,12 +312,20 @@ class GwmCommandApi:
         command_name = "Door lock" if normalized_action == "lock" else "Door unlock"
         command = DoorLockCommand(identifier, normalized_action == "lock")
         if self._cloud.region == "cn":
-            acceptance = await self._cloud.async_send_lock_command(command)  # type: ignore[call-arg]
+            if self._bean_tech_lock_credential is None:
+                acceptance = await self._cloud.async_send_lock_command(command)
+            else:
+                acceptance = await self._cloud.async_send_lock_command(
+                    command, bean_tech_lock_credential=self._bean_tech_lock_credential,
+                )
         else:
             acceptance = await self._cloud.async_send_lock_command(
                 command,
                 security_password_hash=_security_password_hash(self._security_pin),
             )
+        if acceptance.result_action == "authorized_lock":
+            # Keep the route in the existing journal format, independent of options on restart.
+            command_name = _AUTHORIZED_LOCK_NAMES[command_name]
         return await self._record_acceptance(
             identifier, command_name, acceptance.command_id
         )
@@ -1018,7 +1034,11 @@ def _expected_remote_type(command_name: str) -> str:
         return "0x0B"
     if command_name == "Air circulation":
         return "0x11"
-    if command_name == "Comfort mode" or command_name in _CHINA_VEHICLE_CONTROL_NAMES.values():
+    if (
+        command_name == "Comfort mode"
+        or command_name in _CHINA_VEHICLE_CONTROL_NAMES.values()
+        or command_name in _AUTHORIZED_LOCK_NAMES.values()
+    ):
         return "china"
     raise GwmCommandError(
         "Remote command journal contains an unsupported command family"

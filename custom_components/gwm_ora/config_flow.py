@@ -35,6 +35,7 @@ from .const import (
     CONF_ACCOUNT,
     CONF_ALLOW_SESSION_RECLAIM,
     CONF_AUTHENTICATION_METHOD,
+    CONF_BEAN_TECH_LOCK_CREDENTIAL,
     CONF_CONNECTION_TYPE,
     CONF_COUNTRY,
     CONF_ENABLE_CHARGING_CONTROL,
@@ -80,6 +81,7 @@ from .gwm_client import (
     RussiaIdentityError,
     RussiaVerificationRequired,
 )
+from .gwm_client.china_crypto import valid_bean_tech_lock_credential
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -218,6 +220,10 @@ def _cloud_options_schema(entry: ConfigEntry, defaults: dict[str, Any] | None = 
                 # an administrator to reveal or replace the configured PIN.
                 default=current.get(CONF_SECURITY_PIN, ""),
             )
+        ] = _password_selector(autocomplete="off")
+    else:
+        fields[
+            vol.Optional(CONF_BEAN_TECH_LOCK_CREDENTIAL, default=current.get(CONF_BEAN_TECH_LOCK_CREDENTIAL, ""))
         ] = _password_selector(autocomplete="off")
     return vol.Schema(fields)
 
@@ -793,26 +799,31 @@ class GwmOptionsFlow(config_entries.OptionsFlowWithReload):
         errors: dict[str, str] = {}
         if user_input is not None:
             normalized = dict(user_input)
-            pin = normalized.get(CONF_SECURITY_PIN)
-            normalized_pin = pin.strip() if isinstance(pin, str) else ""
-            existing_pin = entry.options.get(CONF_SECURITY_PIN)
-            preserved_pin = existing_pin.strip() if isinstance(existing_pin, str) else ""
-            if (
-                entry.data.get(CONF_REGION) != REGION_CHINA
-                and normalized.get(CONF_ENABLE_REMOTE_COMMANDS) is True
-                and not (normalized_pin or preserved_pin)
-            ):
-                errors[CONF_SECURITY_PIN] = "security_pin_required"
-            else:
-                if (
-                    entry.data.get(CONF_REGION) == REGION_CHINA
-                    or normalized.get(CONF_ENABLE_REMOTE_COMMANDS) is not True
-                ):
-                    normalized.pop(CONF_SECURITY_PIN, None)
-                elif normalized_pin:
-                    normalized[CONF_SECURITY_PIN] = normalized_pin
+            enabled = normalized.get(CONF_ENABLE_REMOTE_COMMANDS) is True
+            if entry.data.get(CONF_REGION) == REGION_CHINA:
+                normalized.pop(CONF_SECURITY_PIN, None)
+                credential = normalized.get(CONF_BEAN_TECH_LOCK_CREDENTIAL, entry.options.get(CONF_BEAN_TECH_LOCK_CREDENTIAL))
+                if isinstance(credential, str):
+                    credential = credential.strip()
+                if not enabled or credential in (None, ""):
+                    normalized.pop(CONF_BEAN_TECH_LOCK_CREDENTIAL, None)
+                elif valid_bean_tech_lock_credential(credential):
+                    normalized[CONF_BEAN_TECH_LOCK_CREDENTIAL] = credential
                 else:
-                    normalized[CONF_SECURITY_PIN] = preserved_pin
+                    errors[CONF_BEAN_TECH_LOCK_CREDENTIAL] = "bean_tech_lock_credential_invalid"
+            else:
+                normalized.pop(CONF_BEAN_TECH_LOCK_CREDENTIAL, None)
+                pin = normalized.get(CONF_SECURITY_PIN)
+                normalized_pin = pin.strip() if isinstance(pin, str) else ""
+                existing_pin = entry.options.get(CONF_SECURITY_PIN)
+                preserved_pin = existing_pin.strip() if isinstance(existing_pin, str) else ""
+                if not enabled:
+                    normalized.pop(CONF_SECURITY_PIN, None)
+                elif normalized_pin or preserved_pin:
+                    normalized[CONF_SECURITY_PIN] = normalized_pin or preserved_pin
+                else:
+                    errors[CONF_SECURITY_PIN] = "security_pin_required"
+            if not errors:
                 return self.async_create_entry(data=normalized)
 
         return self.async_show_form(

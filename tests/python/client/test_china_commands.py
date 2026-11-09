@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import replace
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from support.china import (
@@ -38,6 +38,7 @@ from custom_components.gwm_ora.gwm_client.commands import (
     select_remote_command_result,
 )
 from custom_components.gwm_ora.gwm_client.errors import (
+    GwmApiError,
     GwmClientError,
     GwmConfigurationError,
     GwmNetworkError,
@@ -45,6 +46,88 @@ from custom_components.gwm_ora.gwm_client.errors import (
     GwmSchemaError,
 )
 from custom_components.gwm_ora.gwm_client.models import VehicleIdentifier
+
+_SYNTHETIC_LOCK_CREDENTIAL = "A" * 64
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("lock", "control_type"), [(True, "VEHICLE_LOCK"), (False, "VEHICLE_UNLOCK")])
+async def test_beantech_authorized_lock_follows_the_observed_v3_sequence(lock: bool, control_type: str) -> None:
+    token = "G_A(synthetic-opaque-token)"
+    transport = _FakeTransport(
+        acquire_vehicles=[FIXTURE["responses"]["discovery"]],
+        authorize_bean_tech_lock=[{"code": "000000", "data": token}],
+        send_lock_command=[{"code": "000000"}],
+        get_remote_command_result=[
+            {"code": "000000", "data": {"messageList": [{"messageData": {"resultCode": code}}]}}
+            for code in ("2", "0")
+        ],
+    )
+    client = _client(transport)
+    await client.authenticate(_credentials(), state=_complete_state())
+    identifier = VehicleIdentifier(BEAN_VIN)
+
+    accepted = await client.send_lock_command(
+        DoorLockCommand(identifier, lock), bean_tech_lock_credential=_SYNTHETIC_LOCK_CREDENTIAL,
+    )
+    assert accepted.result_action == "authorized_lock"
+    for state in ("pending", "completed"):
+        candidates = await client.get_remote_command_results(
+            identifier, accepted.command_id, control_action=accepted.result_action,
+        )
+        result = select_remote_command_result(candidates, command_id=accepted.command_id, region=None)
+        assert result is not None and result.state == state
+
+    auth, submit, *polls = transport.calls[-4:]
+    base = "/app-api/api/v3.0/vehicle/"
+    assert [(req.method, urlsplit(req.url).path) for req in (auth, submit, *polls)] == [
+        ("POST", base + "security/generate-token"),
+        ("POST", base + "remote-ctrl/timely"),
+        ("GET", base + "remote-ctrl/result"),
+        ("GET", base + "remote-ctrl/result"),
+    ]
+    assert json.loads(auth.body or b"null") == {"securityPwd": _SYNTHETIC_LOCK_CREDENTIAL, "eventType": 2, "version": 1}
+    assert json.loads(submit.body or b"null") == {
+        "vin": BEAN_VIN, "seqNo": BEAN_COMMAND_ID, "sendType": 0, "commands": [{"controlType": control_type}],
+    }
+    assert submit.headers["securityToken"] == token
+    assert token not in repr(submit) and _SYNTHETIC_LOCK_CREDENTIAL not in repr(auth)
+    for request in polls:
+        assert parse_qs(urlsplit(request.url).query) == {"vin": [BEAN_VIN], "seqNo": [BEAN_COMMAND_ID], "msgType": ["remote"]}
+        assert "securityToken" not in request.headers
+    with pytest.raises(ValueError, match="route_invalid"):
+        replace(submit, headers={key: val for key, val in submit.headers.items() if key != "securityToken"})
+    with pytest.raises(ValueError, match="route_invalid"):
+        replace(submit, operation="send_close_windows_command")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("operation", "response", "error"), [
+    ("authorize_bean_tech_lock", {"code": "550002"}, GwmApiError),
+    ("authorize_bean_tech_lock", {"code": "000000", "data": {"token": "nested"}}, GwmSchemaError),
+    ("authorize_bean_tech_lock", {"code": "000000", "data": "bad\r\nheader"}, GwmSchemaError),
+    ("send_lock_command", {"code": "550002"}, GwmApiError),
+])
+async def test_beantech_authorized_lock_does_not_fall_back_or_resend(
+    operation: str, response: dict[str, object], error: type[GwmClientError],
+) -> None:
+    replies = {"authorize_bean_tech_lock": [{"code": "000000", "data": "synthetic-security-token"}]}
+    replies[operation] = [response]
+    transport = _FakeTransport(acquire_vehicles=[FIXTURE["responses"]["discovery"]], **replies)
+    client = _client(transport)
+    await client.authenticate(_credentials(), state=_complete_state())
+
+    with pytest.raises(error) as raised:
+        await client.send_lock_command(
+            DoorLockCommand(VehicleIdentifier(BEAN_VIN), False), bean_tech_lock_credential=_SYNTHETIC_LOCK_CREDENTIAL,
+        )
+    assert raised.value.operation == operation
+    calls = [req for req in transport.calls if req.operation != "acquire_vehicles"]
+    assert [req.operation for req in calls] == (
+        ["authorize_bean_tech_lock"] if operation == "authorize_bean_tech_lock"
+        else ["authorize_bean_tech_lock", "send_lock_command"]
+    )
+    assert all("T5" not in req.url for req in calls)
 
 
 @pytest.mark.asyncio

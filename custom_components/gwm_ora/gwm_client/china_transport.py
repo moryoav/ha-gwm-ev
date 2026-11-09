@@ -35,6 +35,7 @@ from .china_crypto import (
     decrypt_g_app,
     default_sign,
     format_china_timestamp,
+    valid_bean_tech_lock_credential,
 )
 from .china_gtsp import validate_status_request as validate_gtsp_status_request
 from .errors import (
@@ -68,6 +69,7 @@ type _ChinaOperation = Literal[
     "set_bean_tech_comfort_mode",
     "set_bean_tech_cabin_clean_appointment",
     "get_bean_tech_cabin_clean_appointment",
+    "authorize_bean_tech_lock",
     "send_lock_command",
     "send_close_windows_command",
     "send_vehicle_control_command",
@@ -114,6 +116,8 @@ _BEAN_TECH_CONFIG_QUERY_URL = "https://gw-app-gateway.gwmapp-h.com" + _BEAN_TECH
 
 _BEAN_TECH_TIMELY_PATH = "/app-api/api/v3.0/vehicle/remote-ctrl/timely"
 _BEAN_TECH_TIMELY_URL = "https://gw-app-gateway.gwmapp-h.com" + _BEAN_TECH_TIMELY_PATH
+_BEAN_TECH_LOCK_AUTH_PATH = "/app-api/api/v3.0/vehicle/security/generate-token"
+_BEAN_TECH_LOCK_AUTH_URL = "https://gw-app-gateway.gwmapp-h.com" + _BEAN_TECH_LOCK_AUTH_PATH
 _BEAN_TECH_RESULT_URL = (
     "https://gw-app-gateway.gwmapp-h.com/app-api/api/v1.0/vehicle/getRemoteCtrlResultT5"
 )
@@ -336,8 +340,13 @@ class _ChinaTransportRequest:
             _validate_bean_tech_subscribe_get_request(self, copied)
         elif self.operation == "save_climate_config":
             _validate_navinfo_climate_config_request(self, copied)
+        elif self.operation == "authorize_bean_tech_lock":
+            _validate_bean_tech_lock_authorization_request(self, copied)
         elif self.operation == "send_lock_command":
-            _validate_lock_window_command_request(self, copied, command_kind="lock")
+            if self.url == _BEAN_TECH_TIMELY_URL:
+                _validate_bean_tech_authorized_lock_request(self, copied)
+            else:
+                _validate_lock_window_command_request(self, copied, command_kind="lock")
         elif self.operation == "send_close_windows_command":
             _validate_lock_window_command_request(self, copied, command_kind="windows")
         elif self.operation == "send_vehicle_control_command":
@@ -1512,12 +1521,13 @@ def _valid_bean_tech_timely_envelope(
     sequence: object,
     raw_body: str | None,
     send_type: object,
+    required_headers: frozenset[str] = _BEAN_TECH_COMMAND_HEADERS,
 ) -> bool:
     return (
         request.service == "bean_tech"
         and request.method == "POST"
         and request.url == _BEAN_TECH_TIMELY_URL
-        and set(headers) == _BEAN_TECH_COMMAND_HEADERS
+        and set(headers) == required_headers
         and list(body) == ["vin", "seqNo", "sendType", "commands"]
         and _VIN.fullmatch(str(body.get("vin", ""))) is not None
         and body.get("vin") == headers.get("vin")
@@ -1538,6 +1548,53 @@ def _valid_bean_tech_timely_envelope(
             "json=" + raw_body,
         )
     )
+
+
+def _validate_bean_tech_lock_authorization_request(
+    request: _ChinaTransportRequest, headers: Mapping[str, str],
+) -> None:
+    raw_body = _utf8_body(request.body)
+    body = _decode_wire_object(raw_body) if raw_body is not None else None
+    if (
+        request.service != "bean_tech"
+        or request.method != "POST"
+        or request.url != _BEAN_TECH_LOCK_AUTH_URL
+        or set(headers) != _BEAN_TECH_COMMAND_HEADERS
+        or _VIN.fullmatch(headers.get("vin", "")) is None
+        or not isinstance(body, Mapping)
+        or set(body) != {"eventType", "securityPwd", "version"}
+        or type(body["eventType"]) is not int
+        or body["eventType"] != 2
+        or type(body["version"]) is not int
+        or body["version"] != 1
+        or not valid_bean_tech_lock_credential(body["securityPwd"])
+        or raw_body is None
+        or encode_dotnet_json(body) != raw_body
+        or headers.get("Content-Type") != "application/json; charset=UTF-8"
+        or not _valid_bean_tech_authenticated_headers(headers)
+        or headers.get("bt-auth-sign") != bean_tech_sign(
+            "POST", _BEAN_TECH_LOCK_AUTH_PATH, headers["bt-auth-nonce"],
+            headers["bt-auth-timestamp"], "json=" + raw_body,
+        )
+    ):
+        raise ValueError("route_invalid")
+
+
+def _validate_bean_tech_authorized_lock_request(
+    request: _ChinaTransportRequest, headers: Mapping[str, str],
+) -> None:
+    raw_body = _utf8_body(request.body)
+    body = _decode_wire_object(raw_body) if raw_body is not None else None
+    if (
+        not isinstance(body, Mapping)
+        or body.get("commands") not in ([{"controlType": "VEHICLE_LOCK"}], [{"controlType": "VEHICLE_UNLOCK"}])
+        or not _safe_wire_text(headers.get("securityToken"), maximum=16 * 1024)
+        or not _valid_bean_tech_timely_envelope(
+            request, headers, body=body, sequence=body.get("seqNo"), raw_body=raw_body, send_type=0,
+            required_headers=_BEAN_TECH_COMMAND_HEADERS | {"securityToken"},
+        )
+    ):
+        raise ValueError("route_invalid")
 
 def _validate_bean_tech_config_request(
     request: _ChinaTransportRequest,

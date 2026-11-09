@@ -214,6 +214,8 @@ class _ChinaReadClient(Protocol):
     async def send_lock_command(
         self,
         command: DoorLockCommand,
+        *,
+        bean_tech_lock_credential: str | None = None,
     ) -> RemoteCommandAcceptance: ...
 
     async def send_close_windows_command(
@@ -770,10 +772,16 @@ class GwmCloudClient:
         command: DoorLockCommand,
         *,
         security_password_hash: str | None = None,
+        bean_tech_lock_credential: str | None = None,
     ) -> RemoteCommandAcceptance:
         if self.region == REGION_CHINA:
+            client = cast(_ChinaReadClient, self._client)
+            if bean_tech_lock_credential is not None:
+                return await self._async_with_session_renewal(
+                    lambda: client.send_lock_command(command, bean_tech_lock_credential=bean_tech_lock_credential)
+                )
             return await self._async_with_session_renewal(
-                lambda: cast(_ChinaReadClient, self._client).send_lock_command(command)
+                lambda: client.send_lock_command(command)
             )
         if not isinstance(security_password_hash, str):
             raise GwmConfigurationError(operation="send_lock_command")

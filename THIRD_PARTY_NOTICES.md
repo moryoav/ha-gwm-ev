@@ -18,6 +18,8 @@ I use `LicenseRef-GWM-Protocol-Materials` as a label for the material described 
 
 GTSP read-only protocol behavior additionally uses contributor-supplied sanitized evidence from official package `com.gwm.fusion`, version `2.1.8`, version code `2180`, source artifact `basecc.apk`, SHA-256 `9b241836629c2aa5dbe49338b85e03017154f2b794616f5c56e80b07e66e0eaa` (277120066 bytes). The contributor reported extraction from the installed official app; the exact acquisition channel was not recorded. The September 19, 2026 follow-up supplies runtime environment getters. This change reuses the existing BeanTech signing constants; it adds no app-derived secrets, certificates, binaries, decompiled source, or private signing vectors. The broader protocol-material conditions above remain unchanged.
 
+BeanTech door authorization uses [the sanitized app trace in issue #53](https://github.com/moryoav/ha-gwm-ev/issues/53#issuecomment-6738622244). The offline preparation script accepts two verified APKs for `com.gwm.fusion`, 2.2.0 (2200) from the official TANK download and 2.2.2 (2220) from a mirror with the same verified GWM signer. The script records the supported APK hashes and reads the encoder from the local APK at runtime.
+
 The machine-readable file `custom_components/gwm_ora/resources/provenance.json` records exact resource hashes, certificate identities, source references, and renewal dates. It hashes canonical UTF-8 content with CRLF normalized to LF so Git checkout settings cannot change the audit result. I keep user-issued certificates, user private keys, account tokens, credentials, verification codes, VINs, locations, APKs, and raw captures out of the repository.
 
 ## Runtime Dependencies

@@ -6,6 +6,7 @@ import base64
 import binascii
 import hashlib
 import hmac
+import re
 import secrets
 from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
@@ -194,6 +195,11 @@ def md5_hex(value: str) -> str:
     """Return the app-compatible lowercase MD5 digest for UTF-8 text."""
 
     return hashlib.md5(value.encode("utf-8"), usedforsecurity=False).hexdigest()
+
+
+def valid_bean_tech_lock_credential(value: object) -> bool:
+    """Check the wire form of a locally prepared security password."""
+    return isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9+/]{64}", value) is not None
 
 
 def to_china_time(instant: datetime) -> datetime:

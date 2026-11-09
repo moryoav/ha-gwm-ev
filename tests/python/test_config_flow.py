@@ -24,6 +24,7 @@ from custom_components.gwm_ora.const import (
     CONF_ACCOUNT,
     CONF_ALLOW_SESSION_RECLAIM,
     CONF_AUTHENTICATION_METHOD,
+    CONF_BEAN_TECH_LOCK_CREDENTIAL,
     CONF_CONNECTION_TYPE,
     CONF_COUNTRY,
     CONF_ENABLE_CHARGING_CONTROL,
@@ -970,6 +971,7 @@ async def test_cloud_options_show_masked_pin_and_enforce_opt_in() -> None:
     flow.handler = entry.entry_id
 
     form = await flow.async_step_init()
+    assert CONF_BEAN_TECH_LOCK_CREDENTIAL not in form["data_schema"].schema
     assert form["data_schema"]({
         CONF_POLL_INTERVAL_SECONDS: 60,
         CONF_ENABLE_REMOTE_COMMANDS: False,
@@ -1017,6 +1019,45 @@ async def test_cloud_options_show_masked_pin_and_enforce_opt_in() -> None:
         }
     )
     assert required["errors"] == {CONF_SECURITY_PIN: "security_pin_required"}
+
+
+@pytest.mark.asyncio
+async def test_china_options_validate_and_clear_masked_lock_credential() -> None:
+    credential = "A" * 64
+    entry = _entry(
+        data={CONF_CONNECTION_TYPE: CONNECTION_TYPE_CLOUD, CONF_REGION: "cn"},
+        options={CONF_BEAN_TECH_LOCK_CREDENTIAL: credential},
+    )
+    flow = config_flow.GwmOptionsFlow()
+    flow.hass = _Hass(entry)  # type: ignore[assignment]
+    flow.handler = entry.entry_id
+    form = await flow.async_step_init()
+    fields = form["data_schema"].schema
+    assert CONF_SECURITY_PIN not in fields
+    assert fields[CONF_BEAN_TECH_LOCK_CREDENTIAL].config["type"] == "password"
+    assert fields[CONF_BEAN_TECH_LOCK_CREDENTIAL].config["autocomplete"] == "off"
+
+    enabled = {
+        CONF_POLL_INTERVAL_SECONDS: 60,
+        CONF_ENABLE_REMOTE_COMMANDS: True,
+        CONF_ENABLE_CHARGING_CONTROL: False,
+        CONF_LOG_LEVEL: "info",
+    }
+    invalid = await flow.async_step_init({**enabled, CONF_BEAN_TECH_LOCK_CREDENTIAL: "123456"})
+    assert invalid["errors"] == {CONF_BEAN_TECH_LOCK_CREDENTIAL: "bean_tech_lock_credential_invalid"}
+
+    replacement = "B" * 64
+    accepted = await flow.async_step_init({**enabled, CONF_BEAN_TECH_LOCK_CREDENTIAL: replacement})
+    assert accepted["type"] is FlowResultType.CREATE_ENTRY
+    assert accepted["data"][CONF_BEAN_TECH_LOCK_CREDENTIAL] == replacement
+    preserved = await flow.async_step_init(enabled)
+    assert preserved["data"][CONF_BEAN_TECH_LOCK_CREDENTIAL] == credential
+
+    cleared = await flow.async_step_init({**enabled, CONF_BEAN_TECH_LOCK_CREDENTIAL: ""})
+    assert cleared["type"] is FlowResultType.CREATE_ENTRY
+    assert CONF_BEAN_TECH_LOCK_CREDENTIAL not in cleared["data"]
+    disabled = await flow.async_step_init({**enabled, CONF_ENABLE_REMOTE_COMMANDS: False})
+    assert CONF_BEAN_TECH_LOCK_CREDENTIAL not in disabled["data"]
 
 
 @pytest.mark.asyncio

@@ -102,6 +102,7 @@
           "enable_remote_commands": "Enable remote commands",
           "enable_charging_control": "Enable charging control",
           "security_pin": "Vehicle security PIN",
+          "bean_tech_lock_credential": "BeanTech lock credential",
           "log_level": "Log level"
         },
         "data_description": {
@@ -109,12 +110,14 @@
           "enable_remote_commands": "Explicit opt-in for supported remote command controls.",
           "enable_charging_control": "Independent explicit opt-in for charging schedules.",
           "security_pin": "Required for remote commands outside mainland China. The stored value is shown in a masked password field and remains redacted from diagnostics.",
+          "bean_tech_lock_credential": "Optional for mainland-China BeanTech door lock and unlock. Paste the credential prepared locally from the GWM app.",
           "log_level": "Integration-specific diagnostic verbosity."
         }
       }
     },
     "error": {
-      "security_pin_required": "A vehicle security PIN is required when remote commands are enabled for this region."
+      "security_pin_required": "A vehicle security PIN is required when remote commands are enabled for this region.",
+      "bean_tech_lock_credential_invalid": "Enter the prepared BeanTech lock credential."
     },
     "abort": {
       "legacy_addon_entry": "The previous add-on based entry cannot be configured. Remove it and add GWM again."

@@ -36,6 +36,7 @@ from .china_crypto import (
     encrypt_g_app,
     format_china_timestamp,
     sha256_hex,
+    valid_bean_tech_lock_credential,
 )
 from .china_status import map_bean_tech_status, map_china_status
 from .china_transport import (
@@ -43,6 +44,7 @@ from .china_transport import (
     _ChinaAsyncTransport,
     _ChinaTransportRequest,
     _ChinaTransportResponse,
+    _safe_wire_text,
 )
 from .commands import (
     BEANTECH_BATTERY_HEAT_ACTIONS,
@@ -140,6 +142,7 @@ _BEAN_TECH_CONFIG_QUERY_URL = "https://gw-app-gateway.gwmapp-h.com" + _BEAN_TECH
 
 _BEAN_TECH_TIMELY_PATH = "/app-api/api/v3.0/vehicle/remote-ctrl/timely"
 _BEAN_TECH_TIMELY_URL = _BEAN_TECH_BASE.rstrip("/") + _BEAN_TECH_TIMELY_PATH
+_BEAN_TECH_LOCK_AUTH_PATH = "/app-api/api/v3.0/vehicle/security/generate-token"
 _BEAN_TECH_RESULT_PATH = "/app-api/api/v1.0/vehicle/getRemoteCtrlResultT5"
 _BEAN_TECH_RESULT_URL = _BEAN_TECH_BASE.rstrip("/") + _BEAN_TECH_RESULT_PATH
 _AUTO_AI_LOGIN_URL = _G_APP_BASE + "tsp/v1/proxy/navinfo/GW.M.APP_LOGIN"
@@ -690,12 +693,15 @@ class ChinaClient:
         self,
         command: DoorLockCommand,
         *,
+        bean_tech_lock_credential: str | None = None,
         timeout: float | None = None,
     ) -> RemoteCommandAcceptance:
-        """Send a platform-routed China lock or unlock command without a PIN."""
+        """Send a China door command, using v3 for BeanTech when configured."""
 
         operation: Literal["send_lock_command"] = "send_lock_command"
-        if type(command) is not DoorLockCommand:
+        if type(command) is not DoorLockCommand or (
+            bean_tech_lock_credential is not None and not valid_bean_tech_lock_credential(bean_tech_lock_credential)
+        ):
             raise GwmConfigurationError(operation=operation)
         return await self._run_read(
             operation,
@@ -704,6 +710,7 @@ class ChinaClient:
                 command,
                 operation=operation,
                 command_code=2 if command.lock else 1,
+                bean_tech_lock_credential=bean_tech_lock_credential,
                 deadline=deadline,
             ),
         )
@@ -1801,6 +1808,7 @@ class ChinaClient:
         operation: Literal["send_lock_command", "send_close_windows_command"],
         command_code: int,
         deadline: _Deadline,
+        bean_tech_lock_credential: str | None = None,
     ) -> RemoteCommandAcceptance:
         state = self._required_session(operation=operation)
         vehicle = self._vehicles.get(command.identifier.value.casefold())
@@ -1821,6 +1829,12 @@ class ChinaClient:
             ):
                 raise GwmConfigurationError(operation=operation)
             control_type, command_body = _bean_tech_lock_window_control(command_code)
+            if operation == "send_lock_command" and bean_tech_lock_credential is not None:
+                return await self._send_bean_tech_authorized_lock(
+                    state, command.identifier, control_type=control_type,
+                    sequence_number=sequence_number, credential=bean_tech_lock_credential,
+                    deadline=deadline,
+                )
             response = await self._send_locked(
                 self._build_bean_tech_command_request(
                     state,
@@ -1874,6 +1888,49 @@ class ChinaClient:
             raise
         except (RecursionError, OverflowError, TypeError, ValueError):
             raise GwmSchemaError(operation=operation) from None
+
+    async def _send_bean_tech_authorized_lock(
+        self,
+        state: ChinaAuthState,
+        identifier: VehicleIdentifier,
+        *,
+        control_type: str,
+        sequence_number: str,
+        credential: str,
+        deadline: _Deadline,
+    ) -> RemoteCommandAcceptance:
+        operation: Literal["authorize_bean_tech_lock"] = "authorize_bean_tech_lock"
+        body = encode_dotnet_json({"eventType": 2, "securityPwd": credential, "version": 1})
+        headers = self._bean_tech_authenticated_headers(
+            state, identifier, operation=operation, method="POST",
+            path=_BEAN_TECH_LOCK_AUTH_PATH, parameter="json=" + body,
+        )
+        headers["Content-Type"] = "application/json; charset=UTF-8"
+        response = await self._send_locked(
+            _ChinaTransportRequest(
+                operation=operation, service="bean_tech", method="POST",
+                url=_BEAN_TECH_BASE.rstrip("/") + _BEAN_TECH_LOCK_AUTH_PATH,
+                headers=headers, body=body.encode("utf-8"),
+            ),
+            deadline=deadline,
+        )
+        token = _decode_g_app_envelope(
+            response, operation=operation, require_code=True, decrypt_data=False,
+        )
+        if not isinstance(token, str) or not _safe_wire_text(token, maximum=16 * 1024):
+            raise GwmSchemaError(operation=operation)
+
+        response = await self._send_locked(
+            self._build_bean_tech_timely_request_for_commands(
+                state, identifier, sequence_number=sequence_number, operation="send_lock_command",
+                commands=((control_type, None),), send_type=0, security_token=token,
+            ),
+            deadline=deadline,
+        )
+        _decode_g_app_envelope(
+            response, operation="send_lock_command", require_code=True, decrypt_data=False,
+        )
+        return RemoteCommandAcceptance(sequence_number, result_action="authorized_lock")
 
     async def _send_vehicle_control_command_locked(
         self,
@@ -2010,7 +2067,7 @@ class ChinaClient:
         platform = (vehicle.platform or "").strip().casefold()
         if platform not in {"navinfo", "beantech"}:
             raise GwmRoutePolicyError(operation=operation)
-        if control_action in BEANTECH_CHARGING_ACTIONS and platform != "beantech":
+        if platform != "beantech" and (control_action in BEANTECH_CHARGING_ACTIONS or control_action == "authorized_lock"):
             raise GwmRoutePolicyError(operation=operation)
         charge_result = control_action in BEANTECH_CHARGING_RESULT_ACTIONS
         timely = platform == "beantech" and control_action in BEANTECH_TIMELY_ACTIONS
@@ -2027,7 +2084,7 @@ class ChinaClient:
             deadline=deadline,
         )
         try:
-            data = _decode_g_app_envelope(response, operation=operation)
+            data = _decode_g_app_envelope(response, operation=operation, require_code=control_action == "authorized_lock")
             if timely:
                 return _parse_bean_tech_timely_results(data, command_id=command_id)
             return (
@@ -2362,9 +2419,11 @@ class ChinaClient:
             "set_bean_tech_comfort_mode",
             "set_bean_tech_battery_heating_appointment",
             "set_bean_tech_charge_soc",
+            "send_lock_command",
         ],
         commands: Sequence[tuple[str, Mapping[str, object] | None]],
         send_type: int,
+        security_token: str | None = None,
     ) -> _ChinaTransportRequest:
         command_list: list[dict[str, object]] = []
         for control_type, command_body in commands:
@@ -2389,6 +2448,8 @@ class ChinaClient:
             parameter="json=" + body,
         )
         headers["Content-Type"] = "application/json; charset=UTF-8"
+        if security_token is not None:
+            headers["securityToken"] = security_token
         return _ChinaTransportRequest(
             operation=operation,
             service="bean_tech",
@@ -4121,7 +4182,11 @@ def _optional_nonnegative_number(value: object) -> float | None:
 
 
 def _decode_g_app_envelope(
-    response: _ChinaTransportResponse, *, operation: str, require_code: bool = False,
+    response: _ChinaTransportResponse,
+    *,
+    operation: str,
+    require_code: bool = False,
+    decrypt_data: bool = True,
 ) -> object:
     root = _decode_json_response(response, operation=operation)
     try:
@@ -4139,7 +4204,7 @@ def _decode_g_app_envelope(
     data = _property(root, "data")
     if data is None:
         data = root
-    if isinstance(data, str) and data.startswith("G_A("):
+    if decrypt_data and isinstance(data, str) and data.startswith("G_A("):
         try:
             data = _decode_json_bytes(decrypt_g_app(data).encode("utf-8"))
         except (RecursionError, OverflowError, UnicodeError, ValueError):

@@ -34,6 +34,7 @@ from .const import (
     ATTR_END_TIME,
     ATTR_START_TIME,
     ATTR_VIN,
+    CONF_BEAN_TECH_LOCK_CREDENTIAL,
     CONF_CONNECTION_TYPE,
     CONF_ENABLE_CHARGING_CONTROL,
     CONF_ENABLE_REMOTE_COMMANDS,
@@ -212,6 +213,7 @@ async def _async_setup_cloud_entry(
         command_enabled = entry.options.get(CONF_ENABLE_REMOTE_COMMANDS) is True
         charging_enabled = entry.options.get(CONF_ENABLE_CHARGING_CONTROL) is True
         security_pin = entry.options.get(CONF_SECURITY_PIN)
+        bean_tech_lock_credential = entry.options.get(CONF_BEAN_TECH_LOCK_CREDENTIAL)
         commands_available = command_enabled and (
             entry.data.get(CONF_REGION) == REGION_CHINA
             or isinstance(security_pin, str)
@@ -240,6 +242,7 @@ async def _async_setup_cloud_entry(
             enabled=command_enabled,
             charging_enabled=charging_enabled,
             security_pin=security_pin if isinstance(security_pin, str) else None,
+            bean_tech_lock_credential=bean_tech_lock_credential if isinstance(bean_tech_lock_credential, str) else None,
         )
     except (TypeError, ValueError) as err:
         await cloud.aclose()

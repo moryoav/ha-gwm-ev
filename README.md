@@ -70,7 +70,7 @@ Before setting up the integration:
 4. Confirm that the new account can see the vehicle and that the controls you intend to use work in the app.
 5. Sign out of the new account on the phone. You can then return to your usual account on the phone. Keep the new account dedicated to the integration and use it for the installation and authentication steps below.
 
-**A vehicle security PIN is required to enable remote commands outside mainland China.** Enter the PIN in the integration options. Mainland-China remote commands and charging schedule control do not use a PIN.
+**A vehicle security PIN is required to enable remote commands outside mainland China.** Enter the PIN in the integration options. Some mainland-China BeanTech vehicles require a [separate lock credential](#beantech-door-lock-credential) for door lock and unlock.
 
 ## Installation
 
@@ -104,9 +104,9 @@ For Australia and New Zealand, select **Current GWM ANZ app login**, the recomme
 
 Current GWM ANZ app sessions are renewed automatically when GWM reports that the access token has expired. The integration privately stores rotated access and refresh tokens and retries the interrupted request once. If GWM rejects renewal or the account did not provide a refresh token, Home Assistant requests reauthentication instead of repeatedly using an expired session.
 
-Mainland-China accounts use the registered phone number and an SMS verification flow. They do not use an account password or vehicle security PIN in this integration. If GWM requests a risk-control challenge, complete it in the official app before trying again.
+Mainland-China accounts sign in with the registered phone number and an SMS verification code. If GWM requests a risk-control challenge, complete it in the official app before trying again.
 
-The integration privately stores the generated device identity and account-bound authentication state so it can resume after a Home Assistant restart. Passwords and the vehicle security PIN are redacted from diagnostics.
+The integration privately stores the generated device identity and account-bound authentication state so it can resume after a Home Assistant restart. Passwords, vehicle security PINs, and BeanTech lock credentials are redacted from diagnostics.
 
 ## Options
 
@@ -115,6 +115,7 @@ Open the GWM integration entry and select **Configure** to set:
 - **Polling interval**: 30 to 3600 seconds. The default is 60 seconds.
 - **Enable remote commands**: Off by default.
 - **Vehicle security PIN**: Required for remote commands outside mainland China.
+- **BeanTech lock credential**: Optional for mainland-China BeanTech door lock and unlock.
 - **Enable charging control**: Off by default and independent of remote commands.
 - **Log level**: Integration-specific diagnostic verbosity.
 
@@ -283,7 +284,7 @@ Restrictions vary by vehicle and region. These conditions do not apply to every 
 
 ## Mainland China
 
-Mainland China is available in the setup flow. The integration uses the registered phone number, SMS authentication, and separate G-App, BeanTech, and AutoAI sessions. Remote commands do not use a vehicle security PIN.
+Mainland China is available in the setup flow. The integration uses the registered phone number, SMS authentication, and separate G-App, BeanTech, and AutoAI sessions.
 
 If GWM returns session-expiry code `550004`, the integration renews the G-App and platform sessions, privately saves the replacement session, and retries the interrupted read once, as it does for EU, ANZ, and Russia. Commands are never resent automatically after renewal; a rejected command stays failed and can be submitted again manually. If renewal or the read retry rejects the session, Home Assistant asks you to sign in again. Background recovery does not request SMS codes.
 
@@ -300,6 +301,20 @@ Available features depend on the vehicle's platform:
 - BeanTech does not expose charging schedules, tailgate actions, or other sunroof positions.
 - GTSP vehicles have experimental, read-only battery SOC, electric range, location, odometer, tire pressure/temperature, and fuel measurements, plus provisional door, lock, and side-window states and optional raw diagnostics. Availability depends on the fields reported by the vehicle. Remote commands and charging controls are unavailable for GTSP. New telemetry still needs live validation; see the [GTSP testing guide](docs/GTSP_TESTING.md).
 - Missing or unknown China platforms fail closed instead of using another platform's route.
+
+### BeanTech door lock credential
+
+If the GWM app asks for the vehicle security PIN when you lock or unlock over the cloud, you can enable the same authorization flow in Home Assistant. You need the original mainland-China GWM Android APK and the PIN you use in that app. The helper supports 2.2.0 (2200) and 2.2.2 (2220). You can use the supported download even if your phone has a newer build. [Official TANK app download (2.2.0)](https://sapp-img.gwmapp-h.com/img/565d3a58b97943e6b131ce8f0f9102cb.apk)
+
+From this repository directory, run the helper in a terminal with `uv` installed. Replace `gwm.apk` with your downloaded file's path.
+
+```sh
+uv run --no-project --with unicorn==2.1.4 python scripts/prepare_bean_tech_lock_credential.py "gwm.apk"
+```
+
+Enter your six-digit PIN at the hidden prompt. The helper reads the APK and prepares the credential locally. In Home Assistant, open the GWM integration options, turn on **Enable remote commands**, and paste the output into **BeanTech lock credential**. Keep the output private as you would the PIN. If the PIN changes, run the helper again and replace the stored credential.
+
+With the credential set, Home Assistant requests a fresh security token for each BeanTech door command and polls for the vehicle result. To return to the previous door-command route, clear the credential in the options.
 
 Start with remote commands and charging control disabled. Compare read-only values with the official app before enabling any operation that affects the vehicle.
 

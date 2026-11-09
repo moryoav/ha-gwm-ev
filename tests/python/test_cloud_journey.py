@@ -13,13 +13,27 @@ from homeassistant.const import STATE_OFF, STATE_ON, STATE_UNAVAILABLE, STATE_UN
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry, entity_registry
 from homeassistant.helpers.entity_platform import EntityPlatform
+from support.china import (
+    BEAN_COMMAND_ID,
+    BEAN_VIN,
+    CLOCK,
+    FIXTURE,
+    _client,
+    _complete_state,
+    _credentials,
+    _FakeTransport,
+)
 from support.overseas import _default_context, _QueueTransport, _response
 
 from custom_components.gwm_ora import binary_sensor, sensor
 from custom_components.gwm_ora.binary_sensor import async_setup_entry as setup_binary_sensors
+from custom_components.gwm_ora.cloud_auth import GwmCloudCredentials, cloud_entry_data, cloud_unique_id
+from custom_components.gwm_ora.cloud_commands import GwmCommandApi
 from custom_components.gwm_ora.cloud_runtime import GwmCloudClient
+from custom_components.gwm_ora.cloud_storage import cloud_state_store
 from custom_components.gwm_ora.coordinator import GwmDataUpdateCoordinator
 from custom_components.gwm_ora.gwm_client import GwmClient, GwmClientConfig, GwmNetworkError, GwmSession
+from custom_components.gwm_ora.lock import GwmDoorLock
 from custom_components.gwm_ora.sensor import async_setup_entry as setup_sensors
 
 VIN = "LGWTEST0000000001"
@@ -135,3 +149,72 @@ async def test_wire_poll_reaches_entities_clears_missing_values_and_recovers_fro
         for platform in platforms:
             await platform.async_reset()
         await runtime.aclose()
+
+
+@pytest.mark.asyncio
+async def test_beantech_lock_entity_resumes_v3_polling_after_restart(tmp_path):
+    wire_credentials = _credentials()
+    credentials = GwmCloudCredentials(
+        "cn", "CN", wire_credentials.phone, device_id=wire_credentials.device_id,
+    )
+    unique_id = cloud_unique_id(credentials)
+    entry_data = cloud_entry_data(credentials)
+    discovery = FIXTURE["responses"]["discovery"]
+    state = _complete_state(wire_credentials)
+    first_store = cloud_state_store(HomeAssistant(str(tmp_path)), unique_id)
+    await first_store.async_save_auth_state(credentials, state)
+    first_wire = _FakeTransport(
+        acquire_vehicles=[discovery],
+        authorize_bean_tech_lock=[{"code": "000000", "data": "synthetic-security-token"}],
+        send_lock_command=[{"code": "000000"}],
+    )
+    first_client = _client(first_wire)
+    await first_client.authenticate(wire_credentials, state=state)
+    first_runtime = GwmCloudClient("cn", first_client)
+    first = GwmCommandApi(
+        first_runtime, first_store, credentials, enabled=True, security_pin=None,
+        bean_tech_lock_credential="A" * 64, clock=lambda: CLOCK,
+    )
+    tracked = []
+    try:
+        entity = GwmDoorLock(first, SimpleNamespace(async_track_command=tracked.append), BEAN_VIN)
+        await entity.async_lock()
+        assert len(tracked) == 1 and tracked[0]["state"] == "in_progress"
+        command_id = str(tracked[0]["id"])
+        assert [request.operation for request in first_wire.calls] == [
+            "acquire_vehicles", "authorize_bean_tech_lock", "send_lock_command",
+        ]
+    finally:
+        await first_runtime.aclose()
+
+    second_store = cloud_state_store(HomeAssistant(str(tmp_path)), unique_id)
+    saved = await second_store.async_load_auth_state(entry_data)
+    assert saved == state
+    second_wire = _FakeTransport(
+        acquire_vehicles=[discovery],
+        get_remote_command_result=[
+            {"code": "000000", "data": {"messageList": [{"messageData": {"resultCode": code}}]}}
+            for code in ("2", "0")
+        ],
+    )
+    second_client = _client(second_wire)
+    await second_client.authenticate(wire_credentials, state=saved)
+    second_runtime = GwmCloudClient("cn", second_client)
+    second = GwmCommandApi(
+        second_runtime, second_store, credentials, enabled=True, security_pin=None, clock=lambda: CLOCK,
+    )
+    try:
+        assert [item["id"] for item in await second.async_restore(entry_data)] == [command_id]
+        assert (await second.async_get_command(command_id))["state"] == "in_progress"
+        assert (await second.async_get_command(command_id))["state"] == "completed"
+        assert [request.operation for request in second_wire.calls] == [
+            "acquire_vehicles", "get_remote_command_result", "get_remote_command_result",
+        ]
+        for request in second_wire.calls[1:]:
+            assert "/api/v3.0/vehicle/remote-ctrl/result?" in request.url
+            assert f"seqNo={BEAN_COMMAND_ID}" in request.url
+            assert "securityToken" not in request.headers
+        persisted = await second_store.async_get_command_journal(entry_data)
+        assert len(persisted) == 1 and persisted[0].state == "completed"
+    finally:
+        await second_runtime.aclose()

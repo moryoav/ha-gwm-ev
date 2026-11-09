@@ -102,6 +102,7 @@
           "enable_remote_commands": "启用远程命令",
           "enable_charging_control": "启用充电控制",
           "security_pin": "车辆安全 PIN",
+          "bean_tech_lock_credential": "BeanTech 车门锁凭据",
           "log_level": "日志级别"
         },
         "data_description": {
@@ -109,12 +110,14 @@
           "enable_remote_commands": "明确选择启用支持的远程命令控制。",
           "enable_charging_control": "定时充电的独立明确开关。",
           "security_pin": "中国大陆以外的远程命令需要此 PIN。已存储的值会显示在带掩码的密码字段中，并在诊断信息中保持隐藏。",
+          "bean_tech_lock_credential": "用于中国大陆 BeanTech 车辆的车门上锁和解锁，可选。请粘贴根据长城汽车应用在本地生成的凭据。",
           "log_level": "此集成的诊断日志详细程度。"
         }
       }
     },
     "error": {
-      "security_pin_required": "为此区域启用远程命令时必须提供车辆安全 PIN。"
+      "security_pin_required": "为此区域启用远程命令时必须提供车辆安全 PIN。",
+      "bean_tech_lock_credential_invalid": "请输入已生成的 BeanTech 车门锁凭据。"
     },
     "abort": {
       "legacy_addon_entry": "旧的加载项条目无法配置。请将其删除，然后重新添加 GWM。"

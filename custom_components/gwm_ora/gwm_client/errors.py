@@ -15,6 +15,7 @@ _SAFE_OPERATION_ALIASES: Final = frozenset(
     {
         _UNKNOWN_OPERATION,
         "acquire_vehicles",
+        "authorize_bean_tech_lock",
         "charging_info",
         "check_security_pin",
         "enroll_certificate",
