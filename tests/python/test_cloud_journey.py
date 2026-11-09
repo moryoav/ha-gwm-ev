@@ -33,6 +33,7 @@ from support.overseas import _default_context, _QueueTransport, _response
 from custom_components.gwm_ora import async_setup_entry, bean_tech_lock, binary_sensor, cloud_runtime, sensor
 from custom_components.gwm_ora import coordinator as coordinator_module
 from custom_components.gwm_ora.binary_sensor import async_setup_entry as setup_binary_sensors
+from custom_components.gwm_ora.button import GwmChinaRemoteButton, GwmCloseWindowsButton
 from custom_components.gwm_ora.cloud_auth import (
     GwmCloudAuthenticator,
     GwmCloudCredentials,
@@ -173,10 +174,16 @@ async def test_wire_poll_reaches_entities_clears_missing_values_and_recovers_fro
 
 
 @pytest.mark.asyncio
-async def test_beantech_lock_entity_resumes_v3_polling_after_restart(
+@pytest.mark.parametrize(("action", "auth_operation", "send_operation", "journal_name"), [
+    ("lock", "authorize_bean_tech_lock", "send_lock_command", "Authorized door lock"),
+    ("close_windows", "authorize_bean_tech_command", "send_close_windows_command", "Authorized window close"),
+    ("remote_start", "authorize_bean_tech_command", "send_vehicle_control_command", "Authorized remote start"),
+])
+async def test_beantech_pin_entity_resumes_v3_polling_after_restart(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    action: str, auth_operation: str, send_operation: str, journal_name: str,
 ) -> None:
-    """Prepare from the options PIN, authorize a lock, and resume its v3 result after restart."""
+    """Save the options PIN, send the entity command, and recover its v3 result after restart."""
     wire_credentials = _credentials()
     credentials = GwmCloudCredentials(
         "cn", "CN", wire_credentials.phone, device_id=wire_credentials.device_id,
@@ -187,8 +194,10 @@ async def test_beantech_lock_entity_resumes_v3_polling_after_restart(
     state = _complete_state(wire_credentials)
     first_wire = _FakeTransport(
         acquire_vehicles=[discovery],
-        authorize_bean_tech_lock=[{"code": "000000", "data": "synthetic-security-token"}],
-        send_lock_command=[{"code": "000000"}],
+        **{
+            auth_operation: [{"code": "000000", "data": "synthetic-security-token"}],
+            send_operation: [{"code": "000000"}],
+        },
     )
     first_client = _client(first_wire)
     await first_client.authenticate(wire_credentials, state=state)
@@ -228,15 +237,26 @@ async def test_beantech_lock_entity_resumes_v3_polling_after_restart(
     assert await async_setup_entry(hass, entry)
     runtime = entry.runtime_data
     try:
-        entity = GwmDoorLock(runtime.api, runtime.coordinator, BEAN_VIN)
-        await entity.async_lock()
+        if action == "lock":
+            await GwmDoorLock(runtime.api, runtime.coordinator, BEAN_VIN).async_lock()
+        elif action == "close_windows":
+            await GwmCloseWindowsButton(runtime.api, runtime.coordinator, BEAN_VIN).async_press()
+        else:
+            await GwmChinaRemoteButton(
+                runtime.api, runtime.coordinator, BEAN_VIN, "remote_start", "remote_start",
+            ).async_press()
         accepted, = await runtime.state_store.async_get_command_journal(entry_data)
         assert accepted.state == "accepted"
+        assert accepted.command_name == journal_name
         assert accepted.journal_id in runtime.coordinator._command_tasks
         assert [request.operation for request in first_wire.calls] == [
-            "acquire_vehicles", "authorize_bean_tech_lock", "send_lock_command",
+            "acquire_vehicles", auth_operation, send_operation,
         ]
         assert json.loads(first_wire.calls[1].body)["securityPwd"] == encoded
+        if action == "remote_start":
+            assert json.loads(first_wire.calls[2].body)["commands"] == [
+                {"controlType": "ENGINE_START", "cmdBody": {"operationTime": 900}}
+            ]
     finally:
         await runtime.coordinator.async_cancel_command_tasks()
         await runtime.cloud.aclose()

@@ -108,7 +108,7 @@
           "poll_interval_seconds": "账号级云轮询之间的秒数（30–3600）。",
           "enable_remote_commands": "明确选择启用支持的远程命令控制。",
           "enable_charging_control": "定时充电的独立明确开关。",
-          "security_pin": "中国大陆以外的远程命令需要此 PIN。中国大陆 BeanTech 车辆的车门上锁和解锁如需验证，请输入六位车辆安全 PIN。留空可保留已保存的凭据。",
+          "security_pin": "中国大陆以外的远程命令需要此 PIN。对于中国大陆的 BeanTech 车辆，如果应用在上锁、解锁、关闭车窗或单独远程启动时要求验证，请输入六位车辆安全 PIN。留空可保留已保存的凭据。",
           "log_level": "此集成的诊断日志详细程度。"
         }
       }

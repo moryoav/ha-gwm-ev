@@ -70,6 +70,7 @@ type _ChinaOperation = Literal[
     "set_bean_tech_cabin_clean_appointment",
     "get_bean_tech_cabin_clean_appointment",
     "authorize_bean_tech_lock",
+    "authorize_bean_tech_command",
     "send_lock_command",
     "send_close_windows_command",
     "send_vehicle_control_command",
@@ -116,8 +117,8 @@ _BEAN_TECH_CONFIG_QUERY_URL = "https://gw-app-gateway.gwmapp-h.com" + _BEAN_TECH
 
 _BEAN_TECH_TIMELY_PATH = "/app-api/api/v3.0/vehicle/remote-ctrl/timely"
 _BEAN_TECH_TIMELY_URL = "https://gw-app-gateway.gwmapp-h.com" + _BEAN_TECH_TIMELY_PATH
-_BEAN_TECH_LOCK_AUTH_PATH = "/app-api/api/v3.0/vehicle/security/generate-token"
-_BEAN_TECH_LOCK_AUTH_URL = "https://gw-app-gateway.gwmapp-h.com" + _BEAN_TECH_LOCK_AUTH_PATH
+_BEAN_TECH_AUTH_PATH = "/app-api/api/v3.0/vehicle/security/generate-token"
+_BEAN_TECH_AUTH_URL = "https://gw-app-gateway.gwmapp-h.com" + _BEAN_TECH_AUTH_PATH
 _BEAN_TECH_RESULT_URL = (
     "https://gw-app-gateway.gwmapp-h.com/app-api/api/v1.0/vehicle/getRemoteCtrlResultT5"
 )
@@ -341,13 +342,16 @@ class _ChinaTransportRequest:
             _validate_bean_tech_subscribe_get_request(self, copied)
         elif self.operation == "save_climate_config":
             _validate_navinfo_climate_config_request(self, copied)
-        elif self.operation == "authorize_bean_tech_lock":
-            _validate_bean_tech_lock_authorization_request(self, copied)
+        elif self.operation in {"authorize_bean_tech_lock", "authorize_bean_tech_command"}:
+            _validate_bean_tech_authorization_request(self, copied)
+        elif (
+            self.operation in {"send_lock_command", "send_close_windows_command", "send_vehicle_control_command"}
+            and self.url == _BEAN_TECH_TIMELY_URL
+            and "securityToken" in copied
+        ):
+            _validate_bean_tech_authorized_command_request(self, copied)
         elif self.operation == "send_lock_command":
-            if self.url == _BEAN_TECH_TIMELY_URL:
-                _validate_bean_tech_authorized_lock_request(self, copied)
-            else:
-                _validate_lock_window_command_request(self, copied, command_kind="lock")
+            _validate_lock_window_command_request(self, copied, command_kind="lock")
         elif self.operation == "send_close_windows_command":
             _validate_lock_window_command_request(self, copied, command_kind="windows")
         elif self.operation == "send_vehicle_control_command":
@@ -1552,16 +1556,16 @@ def _valid_bean_tech_timely_envelope(
     )
 
 
-def _validate_bean_tech_lock_authorization_request(
+def _validate_bean_tech_authorization_request(
     request: _ChinaTransportRequest, headers: Mapping[str, str],
 ) -> None:
-    """Restrict the lock credential to the signed BeanTech token request."""
+    """Restrict the encoded PIN to the signed BeanTech token request."""
     raw_body = _utf8_body(request.body)
     body = _decode_wire_object(raw_body) if raw_body is not None else None
     if (
         request.service != "bean_tech"
         or request.method != "POST"
-        or request.url != _BEAN_TECH_LOCK_AUTH_URL
+        or request.url != _BEAN_TECH_AUTH_URL
         or set(headers) != _BEAN_TECH_COMMAND_HEADERS
         or _VIN.fullmatch(headers.get("vin", "")) is None
         or not isinstance(body, Mapping)
@@ -1576,22 +1580,21 @@ def _validate_bean_tech_lock_authorization_request(
         or headers.get("Content-Type") != "application/json; charset=UTF-8"
         or not _valid_bean_tech_authenticated_headers(headers)
         or headers.get("bt-auth-sign") != bean_tech_sign(
-            "POST", _BEAN_TECH_LOCK_AUTH_PATH, headers["bt-auth-nonce"],
+            "POST", _BEAN_TECH_AUTH_PATH, headers["bt-auth-nonce"],
             headers["bt-auth-timestamp"], "json=" + raw_body,
         )
     ):
         raise ValueError("route_invalid")
 
 
-def _validate_bean_tech_authorized_lock_request(
+def _validate_bean_tech_authorized_command_request(
     request: _ChinaTransportRequest, headers: Mapping[str, str],
 ) -> None:
-    """Allow the security token only on one v3 door lock or unlock action."""
+    """Allow the token only on one supported v3 command with the matching operation."""
     raw_body = _utf8_body(request.body)
     body = _decode_wire_object(raw_body) if raw_body is not None else None
     if (
         not isinstance(body, Mapping)
-        or body.get("commands") not in ([{"controlType": "VEHICLE_LOCK"}], [{"controlType": "VEHICLE_UNLOCK"}])
         or not _safe_wire_text(headers.get("securityToken"), maximum=16 * 1024)
         or not _valid_bean_tech_timely_envelope(
             request, headers, body=body, sequence=body.get("seqNo"), raw_body=raw_body, send_type=0,
@@ -1599,6 +1602,44 @@ def _validate_bean_tech_authorized_lock_request(
         )
     ):
         raise ValueError("route_invalid")
+    commands = body.get("commands")
+    if not isinstance(commands, list) or len(commands) != 1 or not isinstance(commands[0], dict):
+        raise ValueError("route_invalid")
+    command = commands[0]
+    if request.operation == "send_lock_command":
+        valid_command = command in ({"controlType": "VEHICLE_LOCK"}, {"controlType": "VEHICLE_UNLOCK"})
+    elif request.operation == "send_close_windows_command":
+        valid_command = _valid_bean_tech_window_close_command(command)
+    else:
+        valid_command = _valid_bean_tech_engine_start_command(command)
+    if not valid_command:
+        raise ValueError("route_invalid")
+
+
+def _valid_bean_tech_window_close_command(command: Mapping[str, object]) -> bool:
+    window_body = command.get("cmdBody")
+    return (
+        list(command) == ["controlType", "cmdBody"]
+        and command.get("controlType") == "WINDOW_CLOSE"
+        and isinstance(window_body, Mapping)
+        and set(window_body) == {"leftFront", "leftBack", "rightFront", "rightBack"}
+        and all(type(value) is int and value == 0 for value in window_body.values())
+    )
+
+
+def _valid_bean_tech_engine_start_command(command: Mapping[str, object]) -> bool:
+    engine_body = command.get("cmdBody")
+    if not isinstance(engine_body, Mapping):
+        return False
+    operation_time = engine_body.get("operationTime")
+    return (
+        list(command) == ["controlType", "cmdBody"]
+        and command.get("controlType") == "ENGINE_START"
+        and list(engine_body) == ["operationTime"]
+        and type(operation_time) is int
+        and 300 <= operation_time <= 1800
+        and operation_time % 60 == 0
+    )
 
 def _validate_bean_tech_config_request(
     request: _ChinaTransportRequest,
@@ -1844,25 +1885,11 @@ def _valid_bean_tech_command_request(
             and command.get("cmdBody") is None
         )
     elif command_kind == "windows":
-        valid_command = (
-            valid_command_shape
-            and command.get("controlType") == "WINDOW_CLOSE"
-            and command.get("cmdBody")
-            == {"leftFront": 0, "leftBack": 0, "rightFront": 0, "rightBack": 0}
-        )
+        valid_command = _valid_bean_tech_window_close_command(command)
     else:
         control_type = command.get("controlType")
         if control_type == "ENGINE_START":
-            engine_body = command.get("cmdBody")
-            valid_command = (
-                valid_command_shape
-                and isinstance(engine_body, Mapping)
-                and list(engine_body) == ["operationTime"]
-                and isinstance(engine_body.get("operationTime"), int)
-                and not isinstance(engine_body.get("operationTime"), bool)
-                and 300 <= int(engine_body["operationTime"]) <= 1800
-                and int(engine_body["operationTime"]) % 60 == 0
-            )
+            valid_command = _valid_bean_tech_engine_start_command(command)
         else:
             expected_bodies: dict[str, object] = {
                 "ENGINE_STOP": None,

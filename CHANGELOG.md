@@ -10,7 +10,7 @@ This project follows semantic versioning. HACS uses the latest GitHub release ta
 
 ### Fixed
 
-- Added opt-in BeanTech door lock and unlock authorization for mainland-China vehicles, with PIN entry in Home Assistant, bundled credential encoding, and restart-safe result polling.
+- Added opt-in BeanTech PIN authorization for door lock and unlock, window closing, and standalone remote start, with bundled credential encoding and restart-safe result polling.
 
 ## [0.17.14] - 2026-11-05
 
