@@ -216,7 +216,9 @@ class _ChinaReadClient(Protocol):
         command: DoorLockCommand,
         *,
         bean_tech_lock_credential: str | None = None,
-    ) -> RemoteCommandAcceptance: ...
+    ) -> RemoteCommandAcceptance:
+        """Send one China door command with optional BeanTech authorization."""
+        ...
 
     async def send_close_windows_command(
         self,
@@ -774,6 +776,7 @@ class GwmCloudClient:
         security_password_hash: str | None = None,
         bean_tech_lock_credential: str | None = None,
     ) -> RemoteCommandAcceptance:
+        """Use the account's regional lock API with the matching credential."""
         if self.region == REGION_CHINA:
             client = cast(_ChinaReadClient, self._client)
             if bean_tech_lock_credential is not None:

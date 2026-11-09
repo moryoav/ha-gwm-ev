@@ -53,6 +53,7 @@ _SYNTHETIC_LOCK_CREDENTIAL = "A" * 64
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("lock", "control_type"), [(True, "VEHICLE_LOCK"), (False, "VEHICLE_UNLOCK")])
 async def test_beantech_authorized_lock_follows_the_observed_v3_sequence(lock: bool, control_type: str) -> None:
+    """Correlate one token and sequence across authorization, submission, and polling."""
     token = "G_A(synthetic-opaque-token)"
     transport = _FakeTransport(
         acquire_vehicles=[FIXTURE["responses"]["discovery"]],
@@ -104,13 +105,16 @@ async def test_beantech_authorized_lock_follows_the_observed_v3_sequence(lock: b
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("operation", "response", "error"), [
     ("authorize_bean_tech_lock", {"code": "550002"}, GwmApiError),
+    ("authorize_bean_tech_lock", {"data": "synthetic-security-token"}, GwmSchemaError),
     ("authorize_bean_tech_lock", {"code": "000000", "data": {"token": "nested"}}, GwmSchemaError),
     ("authorize_bean_tech_lock", {"code": "000000", "data": "bad\r\nheader"}, GwmSchemaError),
     ("send_lock_command", {"code": "550002"}, GwmApiError),
+    ("send_lock_command", {"data": None}, GwmSchemaError),
 ])
 async def test_beantech_authorized_lock_does_not_fall_back_or_resend(
     operation: str, response: dict[str, object], error: type[GwmClientError],
 ) -> None:
+    """Stop after the failed stage without sending a replacement command."""
     replies = {"authorize_bean_tech_lock": [{"code": "000000", "data": "synthetic-security-token"}]}
     replies[operation] = [response]
     transport = _FakeTransport(acquire_vehicles=[FIXTURE["responses"]["discovery"]], **replies)
@@ -128,6 +132,25 @@ async def test_beantech_authorized_lock_does_not_fall_back_or_resend(
         else ["authorize_bean_tech_lock", "send_lock_command"]
     )
     assert all("T5" not in req.url for req in calls)
+
+
+@pytest.mark.asyncio
+async def test_beantech_authorized_lock_rejects_result_without_envelope_code() -> None:
+    """Require a successful envelope before using a completed result."""
+    transport = _FakeTransport(
+        acquire_vehicles=[FIXTURE["responses"]["discovery"]],
+        get_remote_command_result=[
+            {"data": {"messageList": [{"messageData": {"resultCode": "0"}}]}},
+        ],
+    )
+    client = _client(transport)
+    await client.authenticate(_credentials(), state=_complete_state())
+
+    with pytest.raises(GwmSchemaError) as raised:
+        await client.get_remote_command_results(
+            VehicleIdentifier(BEAN_VIN), BEAN_COMMAND_ID, control_action="authorized_lock",
+        )
+    assert raised.value.operation == "get_remote_command_result"
 
 
 @pytest.mark.asyncio
@@ -318,6 +341,7 @@ async def test_unknown_platform_climate_is_rejected_before_command_transport() -
 
 @pytest.mark.asyncio
 async def test_navinfo_lock_unlock_close_windows_and_result_need_no_pin() -> None:
+    """Keep NavInfo on AutoAI even when the entry has a BeanTech credential."""
     transactions = ("TX-LOCK-1", "TX-UNLOCK-2", "TX-WINDOW-3")
     transport = _FakeTransport(
         acquire_vehicles=[FIXTURE["responses"]["discovery"]],

@@ -1,8 +1,10 @@
-"""Real client-to-entity polling with only the HTTP boundary replaced."""
+"""Integration journeys through real cloud clients and Home Assistant entities."""
 
 import logging
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from types import MappingProxyType, SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -16,7 +18,6 @@ from homeassistant.helpers.entity_platform import EntityPlatform
 from support.china import (
     BEAN_COMMAND_ID,
     BEAN_VIN,
-    CLOCK,
     FIXTURE,
     _client,
     _complete_state,
@@ -25,14 +26,21 @@ from support.china import (
 )
 from support.overseas import _default_context, _QueueTransport, _response
 
-from custom_components.gwm_ora import binary_sensor, sensor
+from custom_components.gwm_ora import async_setup_entry, binary_sensor, cloud_runtime, sensor
 from custom_components.gwm_ora.binary_sensor import async_setup_entry as setup_binary_sensors
 from custom_components.gwm_ora.cloud_auth import GwmCloudCredentials, cloud_entry_data, cloud_unique_id
 from custom_components.gwm_ora.cloud_commands import GwmCommandApi
-from custom_components.gwm_ora.cloud_runtime import GwmCloudClient
+from custom_components.gwm_ora.cloud_runtime import GwmCloudBootstrap, GwmCloudClient, stage_cloud_bootstrap
 from custom_components.gwm_ora.cloud_storage import cloud_state_store
+from custom_components.gwm_ora.const import CONF_BEAN_TECH_LOCK_CREDENTIAL, CONF_ENABLE_REMOTE_COMMANDS
 from custom_components.gwm_ora.coordinator import GwmDataUpdateCoordinator
-from custom_components.gwm_ora.gwm_client import GwmClient, GwmClientConfig, GwmNetworkError, GwmSession
+from custom_components.gwm_ora.gwm_client import (
+    ChinaAuthenticated,
+    GwmClient,
+    GwmClientConfig,
+    GwmNetworkError,
+    GwmSession,
+)
 from custom_components.gwm_ora.lock import GwmDoorLock
 from custom_components.gwm_ora.sensor import async_setup_entry as setup_sensors
 
@@ -152,7 +160,10 @@ async def test_wire_poll_reaches_entities_clears_missing_values_and_recovers_fro
 
 
 @pytest.mark.asyncio
-async def test_beantech_lock_entity_resumes_v3_polling_after_restart(tmp_path):
+async def test_beantech_lock_entity_resumes_v3_polling_after_restart(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Use the saved option for the first command and the journal for later polls."""
     wire_credentials = _credentials()
     credentials = GwmCloudCredentials(
         "cn", "CN", wire_credentials.phone, device_id=wire_credentials.device_id,
@@ -161,8 +172,6 @@ async def test_beantech_lock_entity_resumes_v3_polling_after_restart(tmp_path):
     entry_data = cloud_entry_data(credentials)
     discovery = FIXTURE["responses"]["discovery"]
     state = _complete_state(wire_credentials)
-    first_store = cloud_state_store(HomeAssistant(str(tmp_path)), unique_id)
-    await first_store.async_save_auth_state(credentials, state)
     first_wire = _FakeTransport(
         acquire_vehicles=[discovery],
         authorize_bean_tech_lock=[{"code": "000000", "data": "synthetic-security-token"}],
@@ -170,14 +179,26 @@ async def test_beantech_lock_entity_resumes_v3_polling_after_restart(tmp_path):
     )
     first_client = _client(first_wire)
     await first_client.authenticate(wire_credentials, state=state)
-    first_runtime = GwmCloudClient("cn", first_client)
-    first = GwmCommandApi(
-        first_runtime, first_store, credentials, enabled=True, security_pin=None,
-        bean_tech_lock_credential="A" * 64, clock=lambda: CLOCK,
+    hass = HomeAssistant(str(tmp_path))
+    hass.config_entries = ConfigEntries(hass, {})
+    entry = ConfigEntry(
+        data=entry_data, discovery_keys=MappingProxyType({}), domain="gwm_ora",
+        entry_id="synthetic-beantech", minor_version=1,
+        options={CONF_ENABLE_REMOTE_COMMANDS: True, CONF_BEAN_TECH_LOCK_CREDENTIAL: "A" * 64},
+        source="user", subentries_data=None, title="GWM China test", unique_id=unique_id, version=1,
     )
+    hass.config_entries._entries[entry.entry_id] = entry
+    bootstrap = GwmCloudBootstrap.from_authentication(credentials, ChinaAuthenticated(state))
+    stage_cloud_bootstrap(hass, unique_id, bootstrap)
+    monkeypatch.setattr(cloud_runtime, "ChinaClient", lambda *args, **kwargs: first_client)
+    monkeypatch.setattr(ConfigEntries, "async_forward_entry_setups", AsyncMock())
+    monkeypatch.setattr(GwmDataUpdateCoordinator, "async_config_entry_first_refresh", AsyncMock())
     tracked = []
+    monkeypatch.setattr(GwmDataUpdateCoordinator, "async_track_command", lambda _, command: tracked.append(command))
     try:
-        entity = GwmDoorLock(first, SimpleNamespace(async_track_command=tracked.append), BEAN_VIN)
+        assert await async_setup_entry(hass, entry)
+        runtime = entry.runtime_data
+        entity = GwmDoorLock(runtime.api, runtime.coordinator, BEAN_VIN)
         await entity.async_lock()
         assert len(tracked) == 1 and tracked[0]["state"] == "in_progress"
         command_id = str(tracked[0]["id"])
@@ -185,7 +206,7 @@ async def test_beantech_lock_entity_resumes_v3_polling_after_restart(tmp_path):
             "acquire_vehicles", "authorize_bean_tech_lock", "send_lock_command",
         ]
     finally:
-        await first_runtime.aclose()
+        await first_client.aclose()
 
     second_store = cloud_state_store(HomeAssistant(str(tmp_path)), unique_id)
     saved = await second_store.async_load_auth_state(entry_data)
@@ -201,7 +222,7 @@ async def test_beantech_lock_entity_resumes_v3_polling_after_restart(tmp_path):
     await second_client.authenticate(wire_credentials, state=saved)
     second_runtime = GwmCloudClient("cn", second_client)
     second = GwmCommandApi(
-        second_runtime, second_store, credentials, enabled=True, security_pin=None, clock=lambda: CLOCK,
+        second_runtime, second_store, credentials, enabled=True, security_pin=None,
     )
     try:
         assert [item["id"] for item in await second.async_restore(entry_data)] == [command_id]

@@ -648,6 +648,7 @@ async def test_removing_cloud_entry_removes_its_private_state(tmp_path: Any) -> 
 
 @pytest.mark.asyncio
 async def test_cloud_diagnostics_redact_current_and_future_account_state() -> None:
+    """Exclude account, command credential, and vehicle secrets from diagnostics."""
     secrets = {
         CONF_SECURITY_PIN: "private-pin",
         CONF_BEAN_TECH_LOCK_CREDENTIAL: "private-lock-credential",

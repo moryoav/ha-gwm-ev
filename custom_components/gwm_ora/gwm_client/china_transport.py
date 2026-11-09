@@ -296,6 +296,7 @@ class _ChinaTransportRequest:
     body: bytes | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
+        """Validate the request against its operation before any transport I/O."""
         copied = _validated_headers(self.headers)
         if self.service == "gtsp":
             validate_gtsp_status_request(
@@ -1523,6 +1524,7 @@ def _valid_bean_tech_timely_envelope(
     send_type: object,
     required_headers: frozenset[str] = _BEAN_TECH_COMMAND_HEADERS,
 ) -> bool:
+    """Check the shared v3 command shape, vehicle binding, and signature."""
     return (
         request.service == "bean_tech"
         and request.method == "POST"
@@ -1553,6 +1555,7 @@ def _valid_bean_tech_timely_envelope(
 def _validate_bean_tech_lock_authorization_request(
     request: _ChinaTransportRequest, headers: Mapping[str, str],
 ) -> None:
+    """Restrict the lock credential to the signed BeanTech token request."""
     raw_body = _utf8_body(request.body)
     body = _decode_wire_object(raw_body) if raw_body is not None else None
     if (
@@ -1583,6 +1586,7 @@ def _validate_bean_tech_lock_authorization_request(
 def _validate_bean_tech_authorized_lock_request(
     request: _ChinaTransportRequest, headers: Mapping[str, str],
 ) -> None:
+    """Allow the security token only on one v3 door lock or unlock action."""
     raw_body = _utf8_body(request.body)
     body = _decode_wire_object(raw_body) if raw_body is not None else None
     if (

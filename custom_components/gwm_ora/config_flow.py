@@ -189,6 +189,7 @@ def _verification_schema() -> vol.Schema:
 
 
 def _cloud_options_schema(entry: ConfigEntry, defaults: dict[str, Any] | None = None) -> vol.Schema:
+    """Show the polling and control options applicable to this region."""
     current = {**entry.options, **(defaults or {})}
     region = str(entry.data.get(CONF_REGION, ""))
     fields: dict[vol.Marker, object] = {
@@ -792,6 +793,7 @@ class GwmOptionsFlow(config_entries.OptionsFlowWithReload):
         self,
         user_input: dict[str, Any] | None = None,
     ) -> ConfigFlowResult:
+        """Validate the regional command credential before saving the options."""
         entry = self.config_entry
         if not _is_cloud(entry):
             return self.async_abort(reason="legacy_addon_entry")

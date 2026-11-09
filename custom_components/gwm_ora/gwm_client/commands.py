@@ -222,6 +222,7 @@ class RemoteCommandAcceptance:
     result_action: Literal["authorized_lock"] | None = None
 
     def __post_init__(self) -> None:
+        """Check the provider ID and the optional nondefault result route."""
         if not isinstance(self.command_id, str) or _COMMAND_IDENTIFIER.fullmatch(self.command_id) is None:
             raise ValueError("command_acceptance_invalid")
         if self.result_action not in (None, "authorized_lock"):

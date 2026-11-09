@@ -1810,6 +1810,7 @@ class ChinaClient:
         deadline: _Deadline,
         bean_tech_lock_credential: str | None = None,
     ) -> RemoteCommandAcceptance:
+        """Route the requested door or window action to the vehicle platform."""
         state = self._required_session(operation=operation)
         vehicle = self._vehicles.get(command.identifier.value.casefold())
         if vehicle is None:
@@ -1899,6 +1900,7 @@ class ChinaClient:
         credential: str,
         deadline: _Deadline,
     ) -> RemoteCommandAcceptance:
+        """Obtain one opaque token and send one authorized v3 door command."""
         operation: Literal["authorize_bean_tech_lock"] = "authorize_bean_tech_lock"
         body = encode_dotnet_json({"eventType": 2, "securityPwd": credential, "version": 1})
         headers = self._bean_tech_authenticated_headers(
@@ -2059,6 +2061,7 @@ class ChinaClient:
         control_action: ChinaRemoteCommandAction | None = None,
         deadline: _Deadline,
     ) -> tuple[RemoteCommandResultItem, ...]:
+        """Poll the platform and command family that accepted the provider ID."""
         operation = "get_remote_command_result"
         state = self._required_session(operation=operation)
         vehicle = self._vehicles.get(identifier.value.casefold())
@@ -2425,6 +2428,7 @@ class ChinaClient:
         send_type: int,
         security_token: str | None = None,
     ) -> _ChinaTransportRequest:
+        """Build and sign an ordered batch for the BeanTech v3 command route."""
         command_list: list[dict[str, object]] = []
         for control_type, command_body in commands:
             command: dict[str, object] = {"controlType": control_type}
@@ -4188,6 +4192,7 @@ def _decode_g_app_envelope(
     require_code: bool = False,
     decrypt_data: bool = True,
 ) -> object:
+    """Validate the response code and optionally unwrap encrypted G-App data."""
     root = _decode_json_response(response, operation=operation)
     try:
         code = _scalar_text(_property(root, "code"))

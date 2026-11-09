@@ -82,6 +82,7 @@ class GwmCommandApi:
         bean_tech_lock_credential: str | None = None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
+        """Bind command options and the journal to one authenticated account."""
         if (
             type(state_store) is not GwmCloudStateStore
             or type(credentials) is not GwmCloudCredentials
@@ -1020,6 +1021,7 @@ def _vehicle_identifier(vin: object, *, command_name: str) -> VehicleIdentifier:
 
 
 def _expected_remote_type(command_name: str) -> str:
+    """Map a journaled command family to its expected provider result type."""
     if command_name in {_SMART_CHARGE_COMMAND_NAME, _CHARGE_WINDOW_COMMAND_NAME}:
         return "charge"
     if command_name in {_CHARGE_SOC_COMMAND_NAME, _BATTERY_APPOINTMENT_COMMAND_NAME}:

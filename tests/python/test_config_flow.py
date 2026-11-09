@@ -962,6 +962,7 @@ async def test_cloud_reconfigure_can_replace_overseas_account_with_china(
 
 @pytest.mark.asyncio
 async def test_cloud_options_show_masked_pin_and_enforce_opt_in() -> None:
+    """Preserve the existing PIN rules for overseas accounts."""
     entry = _entry(
         data={CONF_CONNECTION_TYPE: CONNECTION_TYPE_CLOUD, CONF_REGION: "eu"},
         options={CONF_SECURITY_PIN: "existing-pin"},
@@ -1023,6 +1024,7 @@ async def test_cloud_options_show_masked_pin_and_enforce_opt_in() -> None:
 
 @pytest.mark.asyncio
 async def test_china_options_validate_and_clear_masked_lock_credential() -> None:
+    """Accept, preserve, or clear the masked option according to the input."""
     credential = "A" * 64
     entry = _entry(
         data={CONF_CONNECTION_TYPE: CONNECTION_TYPE_CLOUD, CONF_REGION: "cn"},
