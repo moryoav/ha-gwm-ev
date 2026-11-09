@@ -102,22 +102,21 @@
           "enable_remote_commands": "Enable remote commands",
           "enable_charging_control": "Enable charging control",
           "security_pin": "Vehicle security PIN",
-          "bean_tech_lock_credential": "BeanTech lock credential",
           "log_level": "Log level"
         },
         "data_description": {
           "poll_interval_seconds": "Seconds between account-level cloud polls (30-3600).",
           "enable_remote_commands": "Explicit opt-in for supported remote command controls.",
           "enable_charging_control": "Independent explicit opt-in for charging schedules.",
-          "security_pin": "Required for remote commands outside mainland China. The stored value is shown in a masked password field and remains redacted from diagnostics.",
-          "bean_tech_lock_credential": "Optional for mainland-China BeanTech door lock and unlock. Paste the credential prepared locally from the GWM app.",
+          "security_pin": "Required for remote commands outside mainland China. In mainland China, enter your six-digit PIN for BeanTech door lock and unlock if required. Leave it blank to keep the saved credential.",
           "log_level": "Integration-specific diagnostic verbosity."
         }
       }
     },
     "error": {
       "security_pin_required": "A vehicle security PIN is required when remote commands are enabled for this region.",
-      "bean_tech_lock_credential_invalid": "Enter the prepared BeanTech lock credential."
+      "bean_tech_lock_pin_invalid": "Enter the six-digit vehicle security PIN used in the GWM app.",
+      "bean_tech_lock_preparation_failed": "Home Assistant could not prepare the BeanTech lock credential. Check that the integration files are up to date and try again."
     },
     "abort": {
       "legacy_addon_entry": "The previous add-on based entry cannot be configured. Remove it and add GWM again."

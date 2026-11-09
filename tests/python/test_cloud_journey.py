@@ -1,5 +1,7 @@
 """Integration journeys through real cloud clients and Home Assistant entities."""
 
+import hashlib
+import json
 import logging
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -13,6 +15,7 @@ pytest.importorskip("homeassistant")
 from homeassistant.config_entries import ConfigEntries, ConfigEntry
 from homeassistant.const import STATE_OFF, STATE_ON, STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import HomeAssistant
+from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.helpers import device_registry, entity_registry
 from homeassistant.helpers.entity_platform import EntityPlatform
 from support.china import (
@@ -26,13 +29,18 @@ from support.china import (
 )
 from support.overseas import _default_context, _QueueTransport, _response
 
-from custom_components.gwm_ora import async_setup_entry, binary_sensor, cloud_runtime, sensor
+from custom_components.gwm_ora import async_setup_entry, bean_tech_lock, binary_sensor, cloud_runtime, sensor
 from custom_components.gwm_ora.binary_sensor import async_setup_entry as setup_binary_sensors
 from custom_components.gwm_ora.cloud_auth import GwmCloudCredentials, cloud_entry_data, cloud_unique_id
 from custom_components.gwm_ora.cloud_commands import GwmCommandApi
 from custom_components.gwm_ora.cloud_runtime import GwmCloudBootstrap, GwmCloudClient, stage_cloud_bootstrap
 from custom_components.gwm_ora.cloud_storage import cloud_state_store
-from custom_components.gwm_ora.const import CONF_BEAN_TECH_LOCK_CREDENTIAL, CONF_ENABLE_REMOTE_COMMANDS
+from custom_components.gwm_ora.config_flow import GwmOptionsFlow
+from custom_components.gwm_ora.const import (
+    CONF_BEAN_TECH_LOCK_CREDENTIAL,
+    CONF_ENABLE_REMOTE_COMMANDS,
+    CONF_SECURITY_PIN,
+)
 from custom_components.gwm_ora.coordinator import GwmDataUpdateCoordinator
 from custom_components.gwm_ora.gwm_client import (
     ChinaAuthenticated,
@@ -163,7 +171,7 @@ async def test_wire_poll_reaches_entities_clears_missing_values_and_recovers_fro
 async def test_beantech_lock_entity_resumes_v3_polling_after_restart(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Use the saved option for the first command and the journal for later polls."""
+    """Prepare from the options PIN, authorize a lock, and resume its v3 result after restart."""
     wire_credentials = _credentials()
     credentials = GwmCloudCredentials(
         "cn", "CN", wire_credentials.phone, device_id=wire_credentials.device_id,
@@ -184,10 +192,25 @@ async def test_beantech_lock_entity_resumes_v3_polling_after_restart(
     entry = ConfigEntry(
         data=entry_data, discovery_keys=MappingProxyType({}), domain="gwm_ora",
         entry_id="synthetic-beantech", minor_version=1,
-        options={CONF_ENABLE_REMOTE_COMMANDS: True, CONF_BEAN_TECH_LOCK_CREDENTIAL: "A" * 64},
+        options={CONF_ENABLE_REMOTE_COMMANDS: True},
         source="user", subentries_data=None, title="GWM China test", unique_id=unique_id, version=1,
     )
     hass.config_entries._entries[entry.entry_id] = entry
+    install_emulator = AsyncMock()
+    monkeypatch.setattr(bean_tech_lock, "async_process_requirements", install_emulator)
+    options = GwmOptionsFlow()
+    options.hass = hass
+    options.handler = entry.entry_id
+    form = await options.async_step_init()
+    result = await options.async_step_init(form["data_schema"]({CONF_SECURITY_PIN: "000123"}))
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert CONF_SECURITY_PIN not in result["data"]
+    encoded = result["data"][CONF_BEAN_TECH_LOCK_CREDENTIAL]
+    assert hashlib.sha256(encoded.encode("ascii")).hexdigest() == (
+        "f9ec3538c5ca1328d085ff0340cebb4008d379b66b735bc6885e7cc57432808b"
+    )
+    install_emulator.assert_awaited_once_with(hass, "gwm_ora", ["unicorn==2.1.4"], is_built_in=False)
+    hass.config_entries.async_update_entry(entry, options=result["data"])
     bootstrap = GwmCloudBootstrap.from_authentication(credentials, ChinaAuthenticated(state))
     stage_cloud_bootstrap(hass, unique_id, bootstrap)
     monkeypatch.setattr(cloud_runtime, "ChinaClient", lambda *args, **kwargs: first_client)
@@ -205,6 +228,7 @@ async def test_beantech_lock_entity_resumes_v3_polling_after_restart(
         assert [request.operation for request in first_wire.calls] == [
             "acquire_vehicles", "authorize_bean_tech_lock", "send_lock_command",
         ]
+        assert json.loads(first_wire.calls[1].body)["securityPwd"] == encoded
     finally:
         await first_client.aclose()
 

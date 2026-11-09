@@ -66,11 +66,11 @@ Before setting up the integration:
 
 1. Create a new GWM account for the integration.
 2. From the vehicle owner's account in the official GWM app, invite the new user and share access to the vehicle. Accept the invitation with the new account.
-3. Sign in to the official GWM app on a phone with the new account once. Complete any required verification and set up a vehicle security PIN for remote controls outside mainland China.
+3. Sign in to the official GWM app on a phone with the new account once. Complete any required verification and set up the vehicle security PIN if your remote controls require one.
 4. Confirm that the new account can see the vehicle and that the controls you intend to use work in the app.
 5. Sign out of the new account on the phone. You can then return to your usual account on the phone. Keep the new account dedicated to the integration and use it for the installation and authentication steps below.
 
-**A vehicle security PIN is required to enable remote commands outside mainland China.** Enter the PIN in the integration options. Some mainland-China BeanTech vehicles require a [separate lock credential](#beantech-door-lock-credential) for door lock and unlock.
+**A vehicle security PIN is required to enable remote commands outside mainland China.** Enter the PIN in the integration options. Some mainland-China BeanTech vehicles use the same PIN field for [door lock and unlock](#beantech-door-lock-credential).
 
 ## Installation
 
@@ -114,8 +114,7 @@ Open the GWM integration entry and select **Configure** to set:
 
 - **Polling interval**: 30 to 3600 seconds. The default is 60 seconds.
 - **Enable remote commands**: Off by default.
-- **Vehicle security PIN**: Required for remote commands outside mainland China.
-- **BeanTech lock credential**: Optional for mainland-China BeanTech door lock and unlock.
+- **Vehicle security PIN** is required for remote commands outside mainland China and optional for mainland-China BeanTech door lock and unlock.
 - **Enable charging control**: Off by default and independent of remote commands.
 - **Log level**: Integration-specific diagnostic verbosity.
 
@@ -269,7 +268,7 @@ Authentication diagnostics never log credentials, verification codes, token valu
 ### Remote controls are unavailable
 
 - Enable remote commands in the integration options.
-- Enter the correct vehicle security PIN outside mainland China.
+- Enter the correct vehicle security PIN for your region or for BeanTech door commands that require it.
 - Reload the integration after changing options.
 - Confirm read-only polling works before testing a command.
 
@@ -304,17 +303,9 @@ Available features depend on the vehicle's platform:
 
 ### BeanTech door lock credential
 
-If the GWM app asks for the vehicle security PIN when you lock or unlock over the cloud, you can enable the same authorization flow in Home Assistant. You need the original mainland-China GWM Android APK and the PIN you use in that app. The helper supports 2.2.0 (2200) and 2.2.2 (2220). You can use the supported download even if your phone has a newer build. [Official TANK app download (2.2.0)](https://sapp-img.gwmapp-h.com/img/565d3a58b97943e6b131ce8f0f9102cb.apk)
+If the GWM app asks for a PIN when you lock or unlock over the cloud, enter the same six-digit **Vehicle security PIN** in the GWM integration options with **Enable remote commands** on. Home Assistant uses the bundled encoder to prepare and save the credential locally. Home Assistant installs the optional emulator automatically on first use.
 
-From this repository directory, run the helper in a terminal with `uv` installed. Replace `gwm.apk` with your downloaded file's path.
-
-```sh
-uv run --no-project --with unicorn==2.1.4 python scripts/prepare_bean_tech_lock_credential.py "gwm.apk"
-```
-
-Enter your six-digit PIN at the hidden prompt. The helper reads the APK and prepares the credential locally. In Home Assistant, open the GWM integration options, turn on **Enable remote commands**, and paste the output into **BeanTech lock credential**. Keep the output private as you would the PIN. If the PIN changes, run the helper again and replace the stored credential.
-
-With the credential set, Home Assistant requests a fresh security token for each BeanTech door command and polls for the vehicle result. To return to the previous door-command route, clear the credential in the options.
+On later edits, leave the PIN field blank to keep the saved credential, or enter a new PIN to replace it. Turning off remote commands clears the credential. For each authorized door command, Home Assistant requests a fresh security token and polls for the vehicle result.
 
 Start with remote commands and charging control disabled. Compare read-only values with the official app before enabling any operation that affects the vehicle.
 

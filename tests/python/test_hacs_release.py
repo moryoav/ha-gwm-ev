@@ -15,6 +15,7 @@ MANIFEST = ROOT / "custom_components" / "gwm_ora" / "manifest.json"
 
 
 def test_release_zip_has_integration_files_at_root(tmp_path: Path) -> None:
+    """Install the built archive and encode a PIN using its bundled component."""
     manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
     tag = f"v{manifest['version']}"
     result = subprocess.run(
@@ -39,6 +40,7 @@ def test_release_zip_has_integration_files_at_root(tmp_path: Path) -> None:
             "gwm_client/client.py",
             "gwm_client/china_client.py",
             "gwm_client/py.typed",
+            "resources/beantech_lock_encoder.bin",
         }.issubset(names)
         assert "gwm_ora/manifest.json" not in names
         assert json.loads(archive.read("manifest.json")) == manifest
@@ -58,6 +60,7 @@ def test_release_zip_has_integration_files_at_root(tmp_path: Path) -> None:
             "-c",
             textwrap.dedent(
                 """
+                import hashlib
                 import importlib
                 import os
                 from pathlib import Path
@@ -67,7 +70,7 @@ def test_release_zip_has_integration_files_at_root(tmp_path: Path) -> None:
                 sys.path.insert(0, os.getcwd())
                 sys.modules["gwm_client"] = None
                 import custom_components.gwm_ora as integration
-                from custom_components.gwm_ora import cloud_auth, gwm_client
+                from custom_components.gwm_ora import bean_tech_lock, cloud_auth, gwm_client
                 from custom_components.gwm_ora.gwm_client import live_poc
 
                 installed = Path.cwd() / "custom_components" / "gwm_ora"
@@ -78,6 +81,11 @@ def test_release_zip_has_integration_files_at_root(tmp_path: Path) -> None:
                 assert integration.GwmClientError is gwm_client.GwmClientError
                 assert cloud_auth._RESOURCE_DIRECTORY == installed / "resources"
                 assert live_poc._default_resource_dir() == installed / "resources"
+                assert bean_tech_lock._ENCODER.is_relative_to(installed / "resources")
+                encoded = bean_tech_lock._prepare_credential("000123")
+                assert hashlib.sha256(encoded.encode("ascii")).hexdigest() == (
+                    "f9ec3538c5ca1328d085ff0340cebb4008d379b66b735bc6885e7cc57432808b"
+                )
                 """
             ),
         ],

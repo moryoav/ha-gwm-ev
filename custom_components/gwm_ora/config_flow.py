@@ -10,6 +10,7 @@ from homeassistant import config_entries
 from homeassistant.config_entries import ConfigEntry, ConfigFlowResult
 from homeassistant.helpers import selector
 
+from .bean_tech_lock import BeanTechLockPreparationError, async_prepare_bean_tech_lock_credential
 from .cloud_auth import (
     CloudAuthenticationResult,
     CloudAuthState,
@@ -213,19 +214,13 @@ def _cloud_options_schema(entry: ConfigEntry, defaults: dict[str, Any] | None = 
             default=current.get(CONF_LOG_LEVEL, DEFAULT_LOG_LEVEL),
         ): vol.In(LOG_LEVELS),
     }
-    if region != REGION_CHINA:
-        fields[
-            vol.Optional(
-                CONF_SECURITY_PIN,
-                # The password selector masks this value while still allowing
-                # an administrator to reveal or replace the configured PIN.
-                default=current.get(CONF_SECURITY_PIN, ""),
-            )
-        ] = _password_selector(autocomplete="off")
-    else:
-        fields[
-            vol.Optional(CONF_BEAN_TECH_LOCK_CREDENTIAL, default=current.get(CONF_BEAN_TECH_LOCK_CREDENTIAL, ""))
-        ] = _password_selector(autocomplete="off")
+    fields[
+        vol.Optional(
+            CONF_SECURITY_PIN,
+            # China saves only the encoded credential and keeps the PIN field empty.
+            default="" if region == REGION_CHINA else current.get(CONF_SECURITY_PIN, ""),
+        )
+    ] = _password_selector(autocomplete="off")
     return vol.Schema(fields)
 
 
@@ -802,26 +797,29 @@ class GwmOptionsFlow(config_entries.OptionsFlowWithReload):
         if user_input is not None:
             normalized = dict(user_input)
             enabled = normalized.get(CONF_ENABLE_REMOTE_COMMANDS) is True
+            pin = normalized.pop(CONF_SECURITY_PIN, None)
+            normalized_pin = pin.strip() if isinstance(pin, str) else ""
+            normalized.pop(CONF_BEAN_TECH_LOCK_CREDENTIAL, None)
             if entry.data.get(CONF_REGION) == REGION_CHINA:
-                normalized.pop(CONF_SECURITY_PIN, None)
-                credential = normalized.get(CONF_BEAN_TECH_LOCK_CREDENTIAL, entry.options.get(CONF_BEAN_TECH_LOCK_CREDENTIAL))
-                if isinstance(credential, str):
-                    credential = credential.strip()
-                if not enabled or credential in (None, ""):
-                    normalized.pop(CONF_BEAN_TECH_LOCK_CREDENTIAL, None)
-                elif valid_bean_tech_lock_credential(credential):
-                    normalized[CONF_BEAN_TECH_LOCK_CREDENTIAL] = credential
-                else:
-                    errors[CONF_BEAN_TECH_LOCK_CREDENTIAL] = "bean_tech_lock_credential_invalid"
-            else:
-                normalized.pop(CONF_BEAN_TECH_LOCK_CREDENTIAL, None)
-                pin = normalized.get(CONF_SECURITY_PIN)
-                normalized_pin = pin.strip() if isinstance(pin, str) else ""
+                if enabled and normalized_pin:
+                    try:
+                        normalized[CONF_BEAN_TECH_LOCK_CREDENTIAL] = await async_prepare_bean_tech_lock_credential(
+                            self.hass, normalized_pin,
+                        )
+                    except ValueError:
+                        errors[CONF_SECURITY_PIN] = "bean_tech_lock_pin_invalid"
+                    except BeanTechLockPreparationError:
+                        errors[CONF_SECURITY_PIN] = "bean_tech_lock_preparation_failed"
+                elif enabled:
+                    credential = entry.options.get(CONF_BEAN_TECH_LOCK_CREDENTIAL)
+                    if valid_bean_tech_lock_credential(credential):
+                        normalized[CONF_BEAN_TECH_LOCK_CREDENTIAL] = credential
+                    elif credential not in (None, ""):
+                        errors[CONF_SECURITY_PIN] = "bean_tech_lock_pin_invalid"
+            elif enabled:
                 existing_pin = entry.options.get(CONF_SECURITY_PIN)
                 preserved_pin = existing_pin.strip() if isinstance(existing_pin, str) else ""
-                if not enabled:
-                    normalized.pop(CONF_SECURITY_PIN, None)
-                elif normalized_pin or preserved_pin:
+                if normalized_pin or preserved_pin:
                     normalized[CONF_SECURITY_PIN] = normalized_pin or preserved_pin
                 else:
                     errors[CONF_SECURITY_PIN] = "security_pin_required"
