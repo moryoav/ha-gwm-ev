@@ -356,12 +356,15 @@ async def test_navinfo_lock_unlock_close_windows_and_result_need_no_pin() -> Non
     )
     identifier = VehicleIdentifier(VIN)
 
-    locked = await client.send_lock_command(DoorLockCommand(identifier, True))
+    locked = await client.send_lock_command(
+        DoorLockCommand(identifier, True), bean_tech_lock_credential=_SYNTHETIC_LOCK_CREDENTIAL,
+    )
     unlocked = await client.send_lock_command(DoorLockCommand(identifier, False))
     closed = await client.send_close_windows_command(CloseWindowsCommand(identifier))
     results = await client.get_remote_command_results(identifier, closed.command_id)
 
     assert (locked.command_id, unlocked.command_id, closed.command_id) == transactions
+    assert locked.result_action is None
     requests = [
         request
         for request in transport.calls
