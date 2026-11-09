@@ -1,5 +1,6 @@
 """Integration journeys through real cloud clients and Home Assistant entities."""
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -30,11 +31,15 @@ from support.china import (
 from support.overseas import _default_context, _QueueTransport, _response
 
 from custom_components.gwm_ora import async_setup_entry, bean_tech_lock, binary_sensor, cloud_runtime, sensor
+from custom_components.gwm_ora import coordinator as coordinator_module
 from custom_components.gwm_ora.binary_sensor import async_setup_entry as setup_binary_sensors
-from custom_components.gwm_ora.cloud_auth import GwmCloudCredentials, cloud_entry_data, cloud_unique_id
-from custom_components.gwm_ora.cloud_commands import GwmCommandApi
+from custom_components.gwm_ora.cloud_auth import (
+    GwmCloudAuthenticator,
+    GwmCloudCredentials,
+    cloud_entry_data,
+    cloud_unique_id,
+)
 from custom_components.gwm_ora.cloud_runtime import GwmCloudBootstrap, GwmCloudClient, stage_cloud_bootstrap
-from custom_components.gwm_ora.cloud_storage import cloud_state_store
 from custom_components.gwm_ora.config_flow import GwmOptionsFlow
 from custom_components.gwm_ora.const import (
     CONF_BEAN_TECH_LOCK_CREDENTIAL,
@@ -189,12 +194,16 @@ async def test_beantech_lock_entity_resumes_v3_polling_after_restart(
     await first_client.authenticate(wire_credentials, state=state)
     hass = HomeAssistant(str(tmp_path))
     hass.config_entries = ConfigEntries(hass, {})
-    entry = ConfigEntry(
-        data=entry_data, discovery_keys=MappingProxyType({}), domain="gwm_ora",
-        entry_id="synthetic-beantech", minor_version=1,
-        options={CONF_ENABLE_REMOTE_COMMANDS: True},
-        source="user", subentries_data=None, title="GWM China test", unique_id=unique_id, version=1,
-    )
+    def new_entry() -> ConfigEntry:
+        """Construct the same account entry in each Home Assistant process."""
+        return ConfigEntry(
+            data=entry_data, discovery_keys=MappingProxyType({}), domain="gwm_ora",
+            entry_id="synthetic-beantech", minor_version=1,
+            options={CONF_ENABLE_REMOTE_COMMANDS: True},
+            source="user", subentries_data=None, title="GWM China test", unique_id=unique_id, version=1,
+        )
+
+    entry = new_entry()
     hass.config_entries._entries[entry.entry_id] = entry
     install_emulator = AsyncMock()
     monkeypatch.setattr(bean_tech_lock, "async_process_requirements", install_emulator)
@@ -216,25 +225,26 @@ async def test_beantech_lock_entity_resumes_v3_polling_after_restart(
     monkeypatch.setattr(cloud_runtime, "ChinaClient", lambda *args, **kwargs: first_client)
     monkeypatch.setattr(ConfigEntries, "async_forward_entry_setups", AsyncMock())
     monkeypatch.setattr(GwmDataUpdateCoordinator, "async_config_entry_first_refresh", AsyncMock())
-    tracked = []
-    monkeypatch.setattr(GwmDataUpdateCoordinator, "async_track_command", lambda _, command: tracked.append(command))
+    assert await async_setup_entry(hass, entry)
+    runtime = entry.runtime_data
     try:
-        assert await async_setup_entry(hass, entry)
-        runtime = entry.runtime_data
         entity = GwmDoorLock(runtime.api, runtime.coordinator, BEAN_VIN)
         await entity.async_lock()
-        assert len(tracked) == 1 and tracked[0]["state"] == "in_progress"
-        command_id = str(tracked[0]["id"])
+        accepted, = await runtime.state_store.async_get_command_journal(entry_data)
+        assert accepted.state == "accepted"
+        assert accepted.journal_id in runtime.coordinator._command_tasks
         assert [request.operation for request in first_wire.calls] == [
             "acquire_vehicles", "authorize_bean_tech_lock", "send_lock_command",
         ]
         assert json.loads(first_wire.calls[1].body)["securityPwd"] == encoded
     finally:
-        await first_client.aclose()
+        await runtime.coordinator.async_cancel_command_tasks()
+        await runtime.cloud.aclose()
 
-    second_store = cloud_state_store(HomeAssistant(str(tmp_path)), unique_id)
-    saved = await second_store.async_load_auth_state(entry_data)
-    assert saved == state
+    restarted_hass = HomeAssistant(str(tmp_path))
+    restarted_hass.config_entries = ConfigEntries(restarted_hass, {})
+    restarted_entry = new_entry()
+    restarted_hass.config_entries._entries[restarted_entry.entry_id] = restarted_entry
     second_wire = _FakeTransport(
         acquire_vehicles=[discovery],
         get_remote_command_result=[
@@ -243,15 +253,23 @@ async def test_beantech_lock_entity_resumes_v3_polling_after_restart(
         ],
     )
     second_client = _client(second_wire)
-    await second_client.authenticate(wire_credentials, state=saved)
-    second_runtime = GwmCloudClient("cn", second_client)
-    second = GwmCommandApi(
-        second_runtime, second_store, credentials, enabled=True, security_pin=None,
+    await second_client.authenticate(wire_credentials, state=state)
+    resume_session = AsyncMock(return_value=ChinaAuthenticated(state))
+    monkeypatch.setattr(GwmCloudAuthenticator, "async_authenticate", resume_session)
+    monkeypatch.setattr(cloud_runtime, "ChinaClient", lambda *args, **kwargs: second_client)
+    monkeypatch.setattr(
+        coordinator_module, "asyncio", SimpleNamespace(sleep=lambda _: asyncio.sleep(0), gather=asyncio.gather),
     )
+    monkeypatch.setattr(GwmDataUpdateCoordinator, "_async_refresh_after_completed_command", AsyncMock())
+    assert await async_setup_entry(restarted_hass, restarted_entry)
+    restarted = restarted_entry.runtime_data
     try:
-        assert [item["id"] for item in await second.async_restore(entry_data)] == [command_id]
-        assert (await second.async_get_command(command_id))["state"] == "in_progress"
-        assert (await second.async_get_command(command_id))["state"] == "completed"
+        resume_session.assert_awaited_once_with(
+            credentials, state=state, allow_session_reclaim=False, allow_password_login=False,
+        )
+        task = restarted.coordinator._command_tasks[accepted.journal_id]
+        result = await asyncio.wait_for(task, timeout=5)
+        assert result["state"] == "completed"
         assert [request.operation for request in second_wire.calls] == [
             "acquire_vehicles", "get_remote_command_result", "get_remote_command_result",
         ]
@@ -259,7 +277,8 @@ async def test_beantech_lock_entity_resumes_v3_polling_after_restart(
             assert "/api/v3.0/vehicle/remote-ctrl/result?" in request.url
             assert f"seqNo={BEAN_COMMAND_ID}" in request.url
             assert "securityToken" not in request.headers
-        persisted = await second_store.async_get_command_journal(entry_data)
+        persisted = await restarted.state_store.async_get_command_journal(entry_data)
         assert len(persisted) == 1 and persisted[0].state == "completed"
     finally:
-        await second_runtime.aclose()
+        await restarted.coordinator.async_cancel_command_tasks()
+        await restarted.cloud.aclose()
