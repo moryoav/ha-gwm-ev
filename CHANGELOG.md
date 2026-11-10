@@ -8,20 +8,27 @@ This project follows semantic versioning. The Marketplace installs GWM from publ
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-11-10
+
 ### Added
 
-- Added vehicle discovery diagnostics for overseas accounts, including response type, numeric GWM codes, and gateway hints for HTTP failures. Kept raw response data out of logs.
-
 - Added Asia-Pacific setup, vehicle discovery, status polling, and session restoration for Pakistan, Thailand, Malaysia, and Indonesia.
-- Added Asia-Pacific vehicle commands and direct charging start and stop as separate opt-ins that require the vehicle security PIN.
+- Added separate Asia-Pacific opt-ins for supported vehicle commands and direct charging start and stop. Both use the vehicle security PIN.
+- Added sanitized diagnostics for overseas vehicle discovery failures, including HTTP status, response type, numeric GWM codes, and gateway hints.
 
 ### Changed
 
-- Bundled the shared APAC authentication files for standard installation and sign-in.
+- Bundled the shared Asia-Pacific authentication files for standard installation and sign-in.
+- Updated installation, update, and removal instructions for the Home Assistant Marketplace.
+- Reorganized regression tests around regional protocols, Home Assistant setup and restart recovery, and installation from the release ZIP.
 
 ### Fixed
 
-- Added opt-in BeanTech PIN authorization for door lock and unlock, window closing, and standalone remote start, with bundled credential encoding and restart-safe result polling.
+- Added BeanTech PIN authorization for door lock and unlock, window closing, and standalone remote start. The integration encodes the PIN locally and tracks command results across restarts.
+
+### Known validation limitation
+
+- Retained the EU bootstrap certificate and its renewal guard. The renewal check still fails because the October 6, 2026 deadline passed. The certificate remains valid until January 4, 2027.
 
 ## [0.17.14] - 2026-11-05
 

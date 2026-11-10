@@ -87,6 +87,8 @@ async def test_wire_poll_reaches_entities_clears_missing_values_and_recovers_fro
     )
     runtime = GwmCloudClient("aus", client, clock=lambda: datetime(2026, 11, 5, tzinfo=UTC))
     hass = HomeAssistant(str(tmp_path))
+    hass.config_entries = ConfigEntries(hass, {})
+    await hass.config_entries.async_initialize()
     # Newer HA releases separate registry creation from loading.
     if setup_registry := getattr(device_registry, "async_setup", None):
         setup_registry(hass)
@@ -99,7 +101,6 @@ async def test_wire_poll_reaches_entities_clears_missing_values_and_recovers_fro
         unique_id="synthetic-journey", version=1,
     )
     entry.runtime_data = SimpleNamespace(coordinator=coordinator)
-    hass.config_entries = ConfigEntries(hass, {})
     # The journey starts with an existing entry and authenticated HTTP session.
     hass.config_entries._entries[entry.entry_id] = entry
     platforms = []
