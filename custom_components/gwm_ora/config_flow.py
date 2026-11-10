@@ -98,7 +98,7 @@ _REGION_OPTIONS = [
     {"value": REGION_ANZ, "label": "Australia / New Zealand"},
     {"value": REGION_RUSSIA, "label": "Russia"},
     {"value": REGION_CHINA, "label": "Mainland China"},
-    {"value": REGION_APAC, "label": "Asia-Pacific (experimental)"},
+    {"value": REGION_APAC, "label": "Asia-Pacific"},
 ]
 _ANZ_AUTHENTICATION_OPTIONS = [
     {

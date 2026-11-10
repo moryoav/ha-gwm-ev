@@ -26,7 +26,7 @@ I receive a tiny commission on purchases made through The GWM Garage's AliExpres
 
 This custom integration connects Home Assistant directly to supported regional GWM cloud services. It discovers vehicles on the account, creates native Home Assistant entities, polls vehicle status, and provides explicitly enabled remote controls.
 
-Europe, Australia and New Zealand, Russia, and mainland China are available in the setup flow.
+Europe, Australia and New Zealand, Russia, mainland China, and Asia-Pacific are available in the setup flow.
 
 ## Roadmap and Feedback
 
@@ -42,7 +42,7 @@ The setup flow currently offers:
 - Australia and New Zealand.
 - Russia.
 - Mainland China, using the phone number registered in the official GWM app.
-- Asia-Pacific (development branch): Pakistan, Thailand, Malaysia and Indonesia. Read-only access is the default; experimental climate and vehicle commands use the Vehicle controls opt-in, while direct start/stop charging uses a separate Charging control opt-in. See [APAC development setup](docs/apac-read-only-draft.md).
+- Asia-Pacific, including Pakistan (`PK`), Thailand (`TH`), Malaysia (`MY`), and Indonesia (`ID`).
 
 The account region must match the region used by the official GWM app. It is not based on the vehicle's current location.
 
@@ -54,6 +54,7 @@ The project has been tested with these vehicles:
 - GWM ORA 1, Russia model.
 - WEY VV6, mainland-China NavInfo platform.
 - Tank 300 Hi4-T, mainland-China BeanTech platform.
+- Haval H6 PHEV, model year 2026, Asia-Pacific model.
 
 Other compatible GWM vehicles may also work. If you test another model, please [open an issue](https://github.com/moryoav/ha-gwm-ev/issues/new/choose) with the model, account region, and features you verified. Never include credentials, tokens, verification codes, VINs, or exact locations.
 
@@ -91,6 +92,8 @@ GWM is available in the default HACS catalog, so no custom repository setup is r
 
 Enter the dedicated account details prepared under [Prerequisites](#prerequisites). Make sure this account is signed out of the official GWM app on all phones. The integration authenticates directly with the selected GWM cloud.
 
+For Asia-Pacific accounts, choose **Asia-Pacific** and select the country where the My GWM account was registered. The installation includes the files needed to sign in.
+
 **European account passwords:** I recommend using a strong, unique password with **fewer than 20 characters** and avoiding special characters. Use English letters and numbers. Long passwords may cause sign-in error `308001` before a verification email is requested, even if they work in the official app. See [issue #41](https://github.com/moryoav/ha-gwm-ev/issues/41).
 
 GWM may send a one-time verification code during first setup or reauthentication. Enter the code in the Home Assistant flow. Verification codes are not stored.
@@ -118,6 +121,8 @@ Open the GWM integration entry and select **Configure** to set:
 - **Vehicle security PIN**: Required for remote commands outside mainland China.
 - **Enable charging control**: Off by default and independent of remote commands.
 - **Log level**: Integration-specific diagnostic verbosity.
+
+For Asia-Pacific, **Vehicle controls** enables supported climate, lock, window, seat, and other vehicle commands. **Charging control** separately enables starting and stopping charging. Both options are off by default and require the vehicle security PIN.
 
 Start with both control options disabled. Confirm read-only vehicle data first. Enable one control family at a time only while the vehicle is parked somewhere safe and visible.
 
@@ -154,9 +159,9 @@ Remote operations can affect a real vehicle. Test them manually before using the
 
 ## Charging Schedule Control
 
-Charging control has its own opt-in. It does not use the vehicle security PIN.
+Charging schedules have their own opt-in and can be managed without the vehicle security PIN.
 
-For mainland-China BeanTech vehicles, use the [BeanTech charging controls](#beantech-charging-and-battery-heating) below. The scheduled-charging switch and `gwm_ora.set_charging_plan` service described in this section apply to supported overseas and mainland-China NavInfo vehicles.
+The scheduled-charging switch and `gwm_ora.set_charging_plan` service apply to supported vehicles in Europe, Australia and New Zealand, and Russia, plus mainland-China NavInfo vehicles. For mainland-China BeanTech vehicles, see the [BeanTech charging controls](#beantech-charging-and-battery-heating).
 
 The **Scheduled charging** switch is a convenience control:
 
@@ -268,7 +273,7 @@ Authentication diagnostics never log credentials, verification codes, token valu
 
 ### Remote controls are unavailable
 
-- Enable remote commands in the integration options.
+- Turn on **Vehicle controls** for Asia-Pacific accounts or **Enable remote commands** for other accounts.
 - Enter the correct vehicle security PIN outside mainland China.
 - Reload the integration after changing options.
 - Confirm read-only polling works before testing a command.
@@ -333,6 +338,8 @@ Special thanks to [zivillian](https://github.com/zivillian) and [zivillian/ora2m
 Thanks to [AlexandrErohin](https://github.com/AlexandrErohin) for the initial model-specific sensors and Russia support.
 
 Deep thanks to [wilberforce](https://github.com/wilberforce) for the Australia and New Zealand authentication and signing work, vehicle status mappings, and live validation.
+
+Thanks to [Afshaal](https://github.com/Afshaal) for contributing and testing Asia-Pacific support.
 
 [hacs-badge]: https://img.shields.io/badge/HACS-41BDF5.svg?style=flat-square
 [hacs-url]: #installation

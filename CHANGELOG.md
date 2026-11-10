@@ -12,9 +12,8 @@ This project follows semantic versioning. HACS uses the latest GitHub release ta
 
 - Added vehicle discovery diagnostics for overseas accounts, including response type, numeric GWM codes, and gateway hints for HTTP failures. Kept raw response data out of logs.
 
-- Added experimental APAC climate and vehicle commands under Vehicle controls, with a separate Charging control opt-in for direct start/stop. This implementation requires live validation; APAC charging schedules remain unavailable.
-
-- Added APAC read-only setup, private session storage, refresh, discovery and status for Pakistan, Thailand, Malaysia and Indonesia. Vehicle commands and charging writes are disabled by default.
+- Added Asia-Pacific setup, vehicle discovery, status polling, and session restoration for Pakistan, Thailand, Malaysia, and Indonesia.
+- Added Asia-Pacific vehicle commands and direct charging start and stop as separate opt-ins that require the vehicle security PIN.
 
 ### Changed
 
