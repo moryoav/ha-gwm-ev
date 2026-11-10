@@ -6,17 +6,13 @@ The setup flow supports Europe, Australia and New Zealand, Russia, mainland Chin
 
 ## Setup
 
-1. Install the integration files under `/config/custom_components/gwm_ora`.
-2. Restart Home Assistant.
-3. Open **Settings** > **Devices & services** > **Add integration**.
-4. Search for **GWM**.
-5. Select the account region and complete the sign-in and verification flow.
+Install **GWM** from **Settings > Marketplace**. In the setup form, select your account region and complete sign-in and verification. [Installation steps](https://github.com/moryoav/ha-gwm-ev#installation)
 
 For Australia and New Zealand, use **Current GWM ANZ app login** for a new setup. Choose **Legacy add-on-compatible login** only when the same account previously worked with the retired add-on.
 
 Existing add-on entries are not migrated. Remove the previous entry and add GWM again. No password, token, certificate, or add-on state is imported.
 
-See the repository [README](https://github.com/moryoav/ha-gwm-ev/blob/main/README.md) for HACS installation instructions, account-region guidance, safety notes, and troubleshooting.
+See the repository README for account-region guidance, safety notes, and troubleshooting. [GWM README](https://github.com/moryoav/ha-gwm-ev)
 
 ## Options
 

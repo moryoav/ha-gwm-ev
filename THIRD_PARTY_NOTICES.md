@@ -24,7 +24,7 @@ The machine-readable file `custom_components/gwm_ora/resources/provenance.json` 
 
 ## Runtime Dependencies
 
-The bundled client uses the runtime dependencies already provided by Home Assistant. I do not bundle copies of these libraries in the HACS ZIP.
+The bundled client uses the runtime libraries provided by Home Assistant.
 
 | Dependency | Constraint | Upstream license metadata | Reason |
 | --- | --- | --- | --- |
@@ -32,7 +32,7 @@ The bundled client uses the runtime dependencies already provided by Home Assist
 | [`cryptography`](https://pypi.org/project/cryptography/) | `>=46.0.2` | Apache-2.0 OR BSD-3-Clause | X.509, RSA, and AES operations |
 | [`yarl`](https://pypi.org/project/yarl/) | `>=1.22.0,<2` | Apache-2.0 | Direct URL construction and validation |
 
-These lower bounds match the versions in Home Assistant 2026.1.0, which is the current minimum in `hacs.json`. Home Assistant already requires all three libraries. The integration includes the matching GWM client source in its HACS ZIP.
+These lower bounds match the versions in Home Assistant 2026.1.0, which is the current minimum in `hacs.json`. Home Assistant already requires all three libraries. The integration includes the matching GWM client source in the `gwm.zip` release asset.
 
 Home Assistant installs the optional Unicorn 2.1.4 emulator when a mainland-China BeanTech PIN is first prepared. The emulator runs the verified encoder in local emulated memory. [Unicorn project and license information](https://pypi.org/project/unicorn/2.1.4/)
 

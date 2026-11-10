@@ -21,7 +21,7 @@ When reporting a bug, please include:
 
 - The GWM for Home Assistant version.
 - Your Home Assistant version.
-- Whether you installed through HACS, manually, or from a development branch.
+- Whether you installed through the Home Assistant Marketplace, manually, or from a development branch.
 - Your architecture, such as `amd64`, `aarch64`, or `armv7`.
 - Clear steps to reproduce the issue.
 - Relevant Home Assistant logs.
@@ -206,14 +206,14 @@ Use plain, direct language and include Home Assistant examples where they make t
 
 ## Releases
 
-HACS uses GitHub releases for update detection. Release pull requests should:
+The Marketplace uses GitHub releases for updates. Follow these steps for a release pull request.
 
 - Move `CHANGELOG.md` entries from `Unreleased` into the target version.
 - Set the version in `custom_components/gwm_ora/manifest.json` to `X.Y.Z`.
 - Keep the client source inside the integration so it ships in the same `gwm.zip` asset.
 - Push a `vX.Y.Z` tag after the release commit lands.
 
-The release workflow checks the tag against the manifest, runs HACS and Hassfest validation, and packages `custom_components/gwm_ora/` as `gwm.zip` with its files at the ZIP root. It verifies that the bundled client and license notices are included, then publishes the ZIP with release notes from the matching changelog section. I use this GitHub release asset for HACS downloads and download counts; a separate client package is not needed.
+The release workflow checks the tag against the manifest, runs validation with `hacs/action` and Hassfest, and packages `custom_components/gwm_ora/` as `gwm.zip` with its files at the ZIP root. It verifies that the bundled client and license notices are included, then publishes the ZIP with release notes from the matching changelog section. The Marketplace installs GWM from that asset, and GitHub tracks its downloads.
 
 ## Code of Conduct
 

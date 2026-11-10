@@ -9,9 +9,9 @@ options are enabled.
 
 ## First test
 
-1. Install v0.17.9 or newer through HACS and restart Home Assistant. Use the
-   published files without local patches. The integration manifest installs the
-   matching client version automatically.
+1. Install GWM v0.17.9 or later from the Marketplace and follow the setup prompts.
+   Use the published release, which includes the matching GWM client.
+   [Installation steps](../README.md#installation)
 2. Keep **Enable remote commands** and charging control disabled. Use the
    dedicated account with the shared vehicle and the normal China SMS sign-in.
 3. Compare battery SOC, electric range, odometer, and the location tracker with

@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-This project follows semantic versioning. HACS uses the latest GitHub release tag as the remote version, so every released version must have both a tag and a GitHub release.
+This project follows semantic versioning. The Marketplace installs GWM from published GitHub releases, so each released version needs a tag and a GitHub release.
 
 <!-- Use direct release-note language. Do not begin changelog bullets with first-person "I". -->
 

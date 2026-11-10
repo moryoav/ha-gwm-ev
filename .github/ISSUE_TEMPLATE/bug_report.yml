@@ -31,7 +31,7 @@ body:
     attributes:
       label: Installation method
       options:
-        - HACS custom integration
+        - Home Assistant Marketplace
         - Manual custom integration install
         - Development branch
         - Other

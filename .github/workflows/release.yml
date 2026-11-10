@@ -23,7 +23,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Check tag and build HACS ZIP
+      - name: Check tag and build Marketplace ZIP
         id: package
         shell: bash
         run: |
@@ -65,7 +65,7 @@ jobs:
           print(notes)
           PY
 
-      - name: Publish GitHub release with HACS ZIP
+      - name: Publish GitHub release with Marketplace ZIP
         env:
           GH_TOKEN: ${{ github.token }}
           ASSET: ${{ steps.package.outputs.asset }}

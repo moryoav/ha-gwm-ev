@@ -2,11 +2,11 @@
 
 This repository tracks Home Assistant Integration Quality Scale progress in `custom_components/gwm_ora/quality_scale.yaml`.
 
-The goal is Gold-level behavior for users while this remains a custom integration distributed through HACS.
+The goal is Gold-level behavior for users of this custom integration in the Home Assistant Marketplace.
 
 ## Current Position
 
-- Bronze: implemented or exempted. I bundle the client source in the integration and HACS ZIP, with no separate GWM client requirement.
+- **Bronze** is implemented or exempted. I bundle the GWM client source in the `gwm.zip` release asset.
 - Silver: implemented except measured >95% Python module coverage.
 - Gold: implemented or documented, with one safety exemption for automatic stale-device deletion.
 - Platinum: partly implemented; strict typing enforcement is still future work.

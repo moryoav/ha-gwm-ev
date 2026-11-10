@@ -10,7 +10,7 @@ rules:
   config-flow: done
   dependency-transparency:
     status: done
-    comment: The client source ships inside the integration and its HACS ZIP. Its aiohttp, cryptography, and yarl dependencies are already provided by Home Assistant; no separate GWM client package is installed.
+    comment: The GWM client source ships in the release ZIP. Home Assistant provides its aiohttp, cryptography, and yarl dependencies.
   docs-actions: done
   docs-high-level-description: done
   docs-installation-instructions: done

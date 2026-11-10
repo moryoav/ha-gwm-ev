@@ -1,7 +1,7 @@
 # GWM for Home Assistant
 
 [![Release][release-badge]][release-url]
-[![HACS][hacs-badge]][hacs-url]
+[![Marketplace][marketplace-badge]][marketplace-url]
 [![License][license-badge]][license-url]
 
 ---
@@ -76,17 +76,19 @@ Before setting up the integration:
 
 ## Installation
 
-### HACS
+### Home Assistant Marketplace
 
-[![Open the GWM HACS repository](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=moryoav&repository=ha-gwm-ev&category=integration)
+[![Open GWM in the Home Assistant Marketplace](https://my.home-assistant.io/badges/marketplace_repository.svg)](https://my.home-assistant.io/redirect/marketplace_repository/?owner=moryoav&repository=ha-gwm-ev&category=integration)
 
-GWM is available in the default HACS catalog, so no custom repository setup is required.
+GWM is listed in the Marketplace catalog.
 
-1. Select the button above, or open HACS and search for **GWM** under **Integrations**.
-2. Select **GWM** and choose **Download**.
-3. Restart Home Assistant.
-4. Add the integration from **Settings** -> **Devices & services** -> **Add integration** -> **GWM**.
-5. Select the account region and complete authentication with the dedicated account prepared under [Prerequisites](#prerequisites).
+1. Select the button above, or go to **Settings > Marketplace** and search for **GWM**. Accept the Marketplace notice if prompted.
+2. On the **GWM** page, select **Install**, review the version, and select **Install** again.
+3. In the GWM setup form, select your account region and sign in with the dedicated account you prepared under [Prerequisites](#prerequisites).
+
+If the setup form does not open, restart Home Assistant if prompted, then select **GWM** under **Settings > Devices & services > Add integration**.
+
+GWM updates appear under **Settings > Updates**. Restart Home Assistant after installing an update to load the new version.
 
 ## Authentication
 
@@ -317,9 +319,11 @@ Start with remote commands and charging control disabled. Compare read-only valu
 
 ## Removal
 
-1. Remove the **GWM** integration entry from Home Assistant.
-2. Remove the integration from HACS, or delete `/config/custom_components/gwm_ora`.
-3. Restart Home Assistant.
+1. Open **GWM** in **Settings > Marketplace**.
+2. Open the three-dot menu and select **Uninstall**. If Home Assistant lists existing GWM setups, choose **Delete and uninstall** to remove the setups and files together.
+3. Confirm the removal and restart Home Assistant if prompted.
+
+For a manual installation, remove the **GWM** entry from **Settings > Devices & services**, delete `/config/custom_components/gwm_ora`, and restart Home Assistant.
 
 Removing the entry also removes its private integration-owned authentication and command state.
 
@@ -347,8 +351,8 @@ Deep thanks to [wilberforce](https://github.com/wilberforce) for the Australia a
 
 Thanks to [Afshaal](https://github.com/Afshaal) for contributing and testing Asia-Pacific support.
 
-[hacs-badge]: https://img.shields.io/badge/HACS-41BDF5.svg?style=flat-square
-[hacs-url]: #installation
+[marketplace-badge]: https://img.shields.io/badge/Marketplace-41BDF5.svg?style=flat-square
+[marketplace-url]: #installation
 [release-badge]: https://img.shields.io/github/v/release/moryoav/ha-gwm-ev?style=flat-square
 [release-url]: https://github.com/moryoav/ha-gwm-ev/releases/latest
 [license-badge]: https://img.shields.io/github/license/moryoav/ha-gwm-ev?style=flat-square
