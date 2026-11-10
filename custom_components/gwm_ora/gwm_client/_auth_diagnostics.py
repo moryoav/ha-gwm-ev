@@ -12,7 +12,6 @@ import asyncio
 import itertools
 import json
 import logging
-import math
 import re
 import ssl
 import sys
@@ -21,23 +20,27 @@ from collections.abc import Iterator, Mapping
 from contextlib import contextmanager, suppress
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
-from email.utils import parsedate_to_datetime
 from urllib.parse import urlsplit
 
 import aiohttp
 
-from ._diagnostics import _check_depth, _json_type, _reject_constant, _ShapeError, _unique_object
+from ._diagnostics import (
+    _MAX_HEADER_CHARS,
+    _check_depth,
+    _header_shape,
+    _json_type,
+    _milliseconds,
+    _reject_constant,
+    _ShapeError,
+    _unique_object,
+)
 from ._protocol import _TransportRequest
 from .errors import GwmClientError, _safe_http_status, _safe_operation, _safe_retry_after
 
 _LOGGER = logging.getLogger(__name__)
 _MAX_BODY_BYTES = 256 * 1024
-_MAX_HEADER_CHARS = 4096
-_MAX_CLOCK_SKEW_SECONDS = 7 * 24 * 60 * 60
 _API_CODE = re.compile(r"-?[0-9]{1,6}\Z")
 _VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+(?:[abrc]+[0-9]+)?\Z")
-_METHODS = frozenset({"GET", "POST", "HEAD", "OPTIONS", "PUT", "PATCH", "DELETE", "TRACE", "CONNECT"})
 _OPERATIONS = frozenset({"login", "refresh_token", "request_verification", "verify_code", "get_user_info", "enroll_certificate"})
 _PATHS = {
     "userAuth/loginWithPassword": ("login", "password_login", "POST"),
@@ -77,7 +80,6 @@ _AUTH_FIELDS = (
 )
 _ENVELOPE_FIELDS = ("code", "data", "message", "msg", "description", "desc", "error", "error_description", "success", "status")
 _TEXT_FIELDS = ("message", "msg", "description", "desc", "error", "error_description")
-_REQUEST_IDS = frozenset({"x-request-id", "x-trace-id", "x-aliyun-request-id", "x-acs-request-id", "traceid", "request-id"})
 _ATTEMPT_IDS = itertools.count(1)
 _REQUEST_IDS_LOCAL = itertools.count(1)
 _CURRENT_ATTEMPT: ContextVar[AuthAttempt | None] = ContextVar("gwm_auth_diagnostic_attempt", default=None)
@@ -103,10 +105,6 @@ def _api_code(value: object) -> str | None:
     if type(value) is int and -99_999 <= value <= 999_999:
         return str(value)
     return value if type(value) is str and len(value) <= 7 and _API_CODE.fullmatch(value) else None
-
-
-def _milliseconds(seconds: float) -> int | None:
-    return round(seconds * 1000) if math.isfinite(seconds) and 0 <= seconds <= 24 * 60 * 60 else None
 
 
 def _failure_fields(error: BaseException) -> dict[str, object]:
@@ -249,74 +247,6 @@ def begin_request(request: _TransportRequest, *, connect_timeout: float, read_ti
         _emit(logging.DEBUG, "request_start", fields)
         return exchange
     return None
-
-
-def _header(headers: Mapping[str, str], name: str) -> str | None:
-    for key, value in headers.items():
-        if key.lower() == name and type(value) is str:
-            return value if len(value) <= _MAX_HEADER_CHARS else None
-    return None
-
-
-def _content_type(value: str | None) -> str:
-    if value is None:
-        return "missing_or_oversized"
-    mime = value.partition(";")[0].strip().lower()
-    if mime == "application/json" or mime.endswith("+json"):
-        return "json"
-    return {"text/html": "html", "text/plain": "text", "application/xml": "xml", "text/xml": "xml",
-            "application/octet-stream": "binary", "": "empty"}.get(mime, "other")
-
-
-def _server_family(value: str | None) -> str:
-    if value is None:
-        return "missing_or_oversized"
-    lower = value.lower()
-    for marker, label in (("aliyun", "alibaba"), ("tengine", "tengine"), ("cloudflare", "cloudflare"),
-                          ("nginx", "nginx"), ("envoy", "envoy"), ("apache", "apache"), ("microsoft-iis", "iis")):
-        if marker in lower:
-            return label
-    return "other"
-
-
-def _date_shape(value: str | None) -> tuple[str, int | None]:
-    if value is None:
-        return "missing_or_oversized", None
-    try:
-        parsed = parsedate_to_datetime(value)
-        if parsed.tzinfo is None:
-            return "timezone_missing", None
-        skew = round((parsed - datetime.now(UTC)).total_seconds())
-    except (TypeError, ValueError, OverflowError):
-        return "invalid", None
-    return ("valid", skew) if abs(skew) <= _MAX_CLOCK_SKEW_SECONDS else ("outside_clock_window", None)
-
-
-def _header_shape(headers: Mapping[str, str]) -> dict[str, object]:
-    names = {name.lower() for name in headers}
-    allow = _header(headers, "allow")
-    methods = {part.strip().upper() for part in allow.split(",")} if allow is not None else set()
-    encoding = _header(headers, "content-encoding")
-    normalized_encoding = encoding.strip().lower() if encoding is not None else "missing"
-    content_length = _header(headers, "content-length")
-    length = int(content_length) if content_length and re.fullmatch(r"[0-9]{1,9}", content_length) else None
-    retry_after = _header(headers, "retry-after")
-    retry_seconds = int(retry_after) if retry_after and re.fullmatch(r"[0-9]{1,5}", retry_after) else None
-    server_date, skew = _date_shape(_header(headers, "date"))
-    cookies = [value[:_MAX_HEADER_CHARS].lower() for name, value in headers.items() if name.lower() == "set-cookie" and type(value) is str]
-    return {
-        "content_type": _content_type(_header(headers, "content-type")),
-        "content_encoding": normalized_encoding if normalized_encoding in {"missing", "identity", "gzip", "br", "deflate"} else "other",
-        "declared_body_bytes": length, "content_length_present": "content-length" in names,
-        "allow_present": "allow" in names, "allow_methods": ",".join(sorted(methods & _METHODS)) or "none",
-        "allow_unknown_methods": bool(methods - _METHODS), "server_family": _server_family(_header(headers, "server")),
-        "server_date": server_date, "clock_skew_seconds": skew,
-        "retry_after_present": "retry-after" in names, "retry_after_seconds": _safe_retry_after(retry_seconds),
-        "location_present": "location" in names, "via_present": "via" in names,
-        "request_id_present": bool(names & _REQUEST_IDS), "set_cookie_present": "set-cookie" in names,
-        "waf_cookie_hint": any(re.search(r"(?:^|[,;]\s*)(?:acw_tc|acw_sc__v[23]|ssxmod_itna[123]?|__cf_bm|cf_clearance)=", value) for value in cookies),
-        "waf_header_hint": bool(names & {"cf-ray", "x-sucuri-id", "x-waf-action", "x-aliyun-waf", "x-aliyun-waf-action"}),
-    }
 
 
 def response_headers(exchange: AuthExchange | None, *, status: int, headers: Mapping[str, str], version: object = None) -> None:

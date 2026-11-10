@@ -6,6 +6,12 @@ This project follows semantic versioning. HACS uses the latest GitHub release ta
 
 <!-- Use direct release-note language. Do not begin changelog bullets with first-person "I". -->
 
+## [Unreleased]
+
+### Added
+
+- Added vehicle discovery diagnostics for overseas accounts, including response type, numeric GWM codes, and gateway hints for HTTP failures. Kept raw response data out of logs.
+
 ## [0.17.14] - 2026-11-05
 
 ### Fixed
