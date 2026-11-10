@@ -19,7 +19,7 @@ from email.utils import parsedate_to_datetime
 from urllib.parse import urlsplit
 
 from ._protocol import _TransportRequest, _TransportResponse
-from .errors import GwmClientError, _safe_api_code, _safe_operation, _safe_retry_after
+from .errors import GwmClientError, _safe_api_code, _safe_http_status, _safe_operation, _safe_retry_after
 from .regions import GatewayRole, Region, get_region_protocol
 
 _LOGGER = logging.getLogger(__name__)
@@ -45,7 +45,6 @@ _STAGES = (
     ("/userAuth/checkSecurityPassword", "security_check"),
     ("/vehicle/T5/sendCmd", "command_send"),
     ("/vehicle/getRemoteCtrlResultT5", "command_result"),
-    ("/globalapp/vehicle/acquireVehicles", "vehicle_discovery"),
     ("/vehicle/vehicleBasicsInfo", "vehicle_basics"),
     ("/vehicle/getLastStatus", "vehicle_status"),
     ("/vehicleCharge/getChargingInfos", "charging_plan_read"),
@@ -236,9 +235,10 @@ def _context(request: _TransportRequest, *, level: int = logging.DEBUG) -> tuple
     if not _LOGGER.isEnabledFor(level) or request.operation not in _OPERATIONS:
         return None
     path = urlsplit(request.url).path
-    discovery = request.operation == "acquire_vehicles"
+    if request.operation == "acquire_vehicles":
+        return ("acquire_vehicles", "vehicle_discovery") if path.endswith("/globalapp/vehicle/acquireVehicles") else None
     for suffix, stage in _STAGES:
-        if discovery == (stage == "vehicle_discovery") and path.endswith(suffix):
+        if path.endswith(suffix):
             return _safe_operation(request.operation), stage
     return None
 
@@ -249,6 +249,21 @@ def log_request(request: _TransportRequest) -> None:
         context = _context(request)
         if context is not None:
             _LOGGER.debug("GWM request diagnostic: operation=%s stage=%s", *context)
+
+
+def _discovery_fields(
+    request: _TransportRequest,
+    headers: Mapping[str, str],
+    elapsed_seconds: float | None,
+) -> dict[str, object]:
+    """Classify the known route and headers without copying their values."""
+    region, tls_mode = _DISCOVERY_GATEWAYS.get(urlsplit(request.url).hostname, ("unknown", "unknown"))
+    return {
+        "region": region, "gateway": "app_v1" if region != "unknown" else "unknown",
+        "method": request.method, "tls_mode": tls_mode,
+        "elapsed_ms": _milliseconds(elapsed_seconds) if elapsed_seconds is not None else None,
+        **_header_shape(headers),
+    }
 
 
 def log_response(
@@ -277,17 +292,35 @@ def log_response(
             shape.data_type, shape.reason,
         )
         if discovery:
-            region, tls_mode = _DISCOVERY_GATEWAYS.get(urlsplit(request.url).hostname, ("unknown", "unknown"))
-            fields = _header_shape(response.headers if headers is None else headers)
-            fields.update(
-                region=region, gateway="app_v1" if region != "unknown" else "unknown",
-                method=request.method, tls_mode=tls_mode,
-                elapsed_ms=_milliseconds(elapsed_seconds) if elapsed_seconds is not None else None,
-                html_hint=response.body[:256].lstrip().lower().startswith((b"<!doctype html", b"<html", b"<head", b"<body")),
+            fields = _discovery_fields(request, response.headers if headers is None else headers, elapsed_seconds)
+            fields["html_hint"] = response.body[:256].lstrip().lower().startswith(
+                (b"<!doctype html", b"<html", b"<head", b"<body")
             )
             message += " " + " ".join(f"{name}=%s" for name in fields)
             values += tuple(fields.values())
         _LOGGER.log(level, message, *values)
+
+
+def log_discovery_rejection(
+    request: _TransportRequest,
+    error: GwmClientError,
+    *,
+    status: int,
+    headers: Mapping[str, str],
+    elapsed_seconds: float,
+) -> None:
+    """Report headers already received when transport rejects the response."""
+    with suppress(Exception):
+        context = _context(request, level=logging.WARNING)
+        if context != ("acquire_vehicles", "vehicle_discovery"):
+            return
+        category = error.category if error.category in _FAILURE_CATEGORIES else "unknown"
+        fields = _discovery_fields(request, headers, elapsed_seconds)
+        message = (
+            "GWM response diagnostic: operation=%s stage=%s http_status=%s "
+            "response_rejected=True category=%s "
+        ) + " ".join(f"{name}=%s" for name in fields)
+        _LOGGER.warning(message, *context, _safe_http_status(status), category, *fields.values())
 
 
 def log_failure(request: _TransportRequest, error: GwmClientError) -> None:

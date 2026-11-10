@@ -25,7 +25,15 @@ from custom_components.gwm_ora.gwm_client import (
 )
 from custom_components.gwm_ora.gwm_client import _diagnostics as diagnostics
 from custom_components.gwm_ora.gwm_client._protocol import _Deadline, _TransportRequest, _TransportResponse
-from custom_components.gwm_ora.gwm_client.errors import GwmApiError, GwmHttpError, GwmNetworkError, GwmSchemaError
+from custom_components.gwm_ora.gwm_client.errors import (
+    GwmApiError,
+    GwmHttpError,
+    GwmNetworkError,
+    GwmProtocolError,
+    GwmRedirectError,
+    GwmResponseTooLargeError,
+    GwmSchemaError,
+)
 from custom_components.gwm_ora.gwm_client.tls import LEGACY_CIPHER_STRING
 from custom_components.gwm_ora.gwm_client.transport import AiohttpTransport
 
@@ -308,6 +316,43 @@ async def test_russia_discovery_400_logs_safe_metadata_and_preserves_http_error(
     assert SECRET not in repr(record.args)
     assert SECRET not in message
     assert "gwmcloud.com" not in message
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("status", "headers", "error_type", "expected"),
+    [
+        (302, {"Location": f"https://example.invalid/{SECRET}"}, GwmRedirectError, "location_present=True"),
+        (400, {"Content-Encoding": "gzip"}, GwmProtocolError, "content_encoding=gzip"),
+        (400, {"Content-Length": "999999999"}, GwmResponseTooLargeError, "declared_body_bytes=999999999"),
+        (400, {"Content-Length": SECRET}, GwmProtocolError, "declared_body_bytes=None"),
+    ],
+)
+async def test_rejected_discovery_logs_headers_without_reading_body(caplog, status, headers, error_type, expected):
+    """Keep HTTP metadata when transport rejects a discovery response before reading."""
+    caplog.set_level(logging.WARNING, logger=LOGGER)
+    context = _ResponseContext(
+        SECRET.encode(), status=status, headers={**headers, "Content-Type": "text/html", "X-Request-ID": SECRET},
+    )
+    context.iter_chunked = Mock(side_effect=AssertionError("rejected body must not be read"))
+    transport, session = _transport(context)
+    request = _request("acquire_vehicles", "globalapp/vehicle/acquireVehicles", "GET")
+    with pytest.raises(error_type) as raised:
+        await transport.execute(
+            request, deadline=_Deadline(asyncio.get_running_loop().time() + 10),
+            connect_timeout=3, read_timeout=3,
+        )
+    session.request.assert_called_once()
+    context.iter_chunked.assert_not_called()
+    (record,) = (record for record in caplog.records if record.name == LOGGER)
+    assert record.levelno == logging.WARNING
+    message = record.getMessage()
+    assert f"operation=acquire_vehicles stage=vehicle_discovery http_status={status}" in message
+    assert f"response_rejected=True category={raised.value.category}" in message
+    assert "content_type=html" in message
+    assert "request_id_present=True" in message
+    assert expected in message
+    assert SECRET not in repr(record.args)
 
 
 def test_successful_discovery_remains_opt_in(caplog, monkeypatch):
