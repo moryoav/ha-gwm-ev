@@ -282,26 +282,6 @@ async def test_real_transport_preserves_bytes_request_count_and_failure(caplog, 
             json.dumps({"code": 550004, "description": SECRET, "data": {"vin": SECRET}}).encode(),
             ("content_type=json", "root_type=object", "api_code=550004 api_code_type=integer", "html_hint=False"),
         ),
-        (
-            "text/html",
-            f"<!DOCTYPE html><html>{SECRET}</html>".encode(),
-            ("content_type=html", "api_code=None", "envelope_reason=invalid_json", "html_hint=True", "html_error_hints=unknown"),
-        ),
-        (
-            "text/html",
-            f"<html><head><title>400 The SSL certificate error</title></head><body>{SECRET}</body></html>".encode(),
-            ("html_error_hints=client_certificate_rejected", "html_scan_truncated=False"),
-        ),
-        (
-            "text/plain",
-            f"<html><center>No required SSL certificate was sent</center><p>{SECRET}</p></html>".encode(),
-            ("content_type=text", "html_hint=True", "html_error_hints=client_certificate_missing"),
-        ),
-        (
-            "text/html",
-            f"<html><center>Request Header Or Cookie Too Large</center><p>{SECRET}</p></html>".encode(),
-            ("html_error_hints=request_headers_too_large",),
-        ),
     ],
 )
 async def test_russia_discovery_400_logs_safe_metadata_and_preserves_http_error(caplog, mime, body, expected):
@@ -347,20 +327,46 @@ async def test_russia_discovery_400_logs_safe_metadata_and_preserves_http_error(
     assert "gwmcloud.com" not in message
 
 
-def test_html_error_hints_ignore_hidden_and_out_of_bounds_text():
-    """Only bounded, visible diagnostic phrases can generate a label."""
-    body = (
-        '<html title="client certificate required"><!-- invalid token -->'
-        '<script>invalid signature</script><style>request blocked</style>'
-        '<h1>400 Bad Request</h1><p>' + " " * (64 * 1024) + "certificate revoked</p></html>"
-    ).encode()
-    assert diagnostics._html_error_hints(body) == "generic_bad_request"
+def test_issue54_html_capture_logs_entire_page_once(caplog, monkeypatch):
+    """Capture the exact first Russian discovery page without enabling debug logging."""
+    monkeypatch.setattr(diagnostics, "_ISSUE54_HTML_LOGGED", False)
+    caplog.set_level(logging.WARNING, logger=LOGGER)
+    request = _TransportRequest(
+        operation="acquire_vehicles",
+        url="https://rus-app-gateway.gwmcloud.com/app-api/api/v1.0/globalapp/vehicle/acquireVehicles",
+        headers={"accessToken": SECRET},
+        ssl_context=_default_context(),
+    )
+    body = b"<html>\r\n<title>400 The SSL certificate error</title>\n<p>\xff</p>\n</html>"
+    diagnostics.log_response(request, _TransportResponse(400, {"content-type": "text/html"}, body))
+    diagnostics.log_response(request, _TransportResponse(400, {"content-type": "text/html"}, body))
+    first, second = (record.getMessage() for record in caplog.records if record.name == LOGGER)
+    assert f"html_capture=full html_body={body!r}" in first
+    assert "\n" not in first
+    assert "html_capture=already_logged" in second
+    assert "html_body=" not in second
+    assert SECRET not in caplog.text
 
 
-def test_html_error_hints_keep_multiple_distinct_signals():
-    """Keep explicit certificate details without publishing the message."""
-    body = b"<html><p>Client certificate verification failed: certificate has expired</p></html>"
-    assert diagnostics._html_error_hints(body) == "client_certificate_rejected,certificate_expired"
+@pytest.mark.parametrize(("status", "body", "expected"), [
+    (400, b'{"data":"private-json"}', None),
+    (403, b"<html>denied</html>", None),
+    (400, b"<html>" + b"x" * (64 * 1024), "html_capture=size_limit"),
+])
+def test_issue54_html_capture_skips_unrelated_or_large_responses(caplog, monkeypatch, status, body, expected):
+    """Keep raw output limited to small HTML pages from the expected failure."""
+    monkeypatch.setattr(diagnostics, "_ISSUE54_HTML_LOGGED", False)
+    caplog.set_level(logging.WARNING, logger=LOGGER)
+    request = _TransportRequest(
+        operation="acquire_vehicles",
+        url="https://rus-app-gateway.gwmcloud.com/app-api/api/v1.0/globalapp/vehicle/acquireVehicles",
+        headers={}, ssl_context=_default_context(),
+    )
+    diagnostics.log_response(request, _TransportResponse(status, {"content-type": "text/html"}, body))
+    assert "html_body=" not in caplog.text
+    if expected is not None:
+        assert expected in caplog.text
+    assert not diagnostics._ISSUE54_HTML_LOGGED
 
 
 def test_russia_discovery_connection_fields_are_allowlisted(caplog):
