@@ -8,6 +8,17 @@ This project follows semantic versioning. HACS uses the latest GitHub release ta
 
 ## [Unreleased]
 
+### Added
+
+- Added vehicle discovery diagnostics for overseas accounts, including response type, numeric GWM codes, and gateway hints for HTTP failures. Kept raw response data out of logs.
+
+- Added Asia-Pacific setup, vehicle discovery, status polling, and session restoration for Pakistan, Thailand, Malaysia, and Indonesia.
+- Added Asia-Pacific vehicle commands and direct charging start and stop as separate opt-ins that require the vehicle security PIN.
+
+### Changed
+
+- Bundled the shared APAC authentication files for standard installation and sign-in.
+
 ### Fixed
 
 - Added opt-in BeanTech PIN authorization for door lock and unlock, window closing, and standalone remote start, with bundled credential encoding and restart-safe result polling.

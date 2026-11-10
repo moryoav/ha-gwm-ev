@@ -59,6 +59,7 @@ async def async_setup_entry(
     """Set up GWM buttons."""
 
     def entities_for_vehicle(vehicle):
+        """Build vehicle buttons for the supported regional platform."""
         vin = vehicle["vin"]
         entities = [
             GwmCloseWindowsButton(
@@ -72,6 +73,23 @@ async def async_setup_entry(
                 vin,
             ),
         ]
+        if entry.runtime_data.coordinator.region == "ap" and str(vehicle.get("platform") or "").strip().casefold() in {"beantech", "navinfo"}:
+            entities.extend(
+                GwmApacControlButton(entry.runtime_data.api, entry.runtime_data.coordinator, vin, action, translation_key)
+                for action, translation_key in (
+                    ("tailgate_open", "open_tailgate"), ("tailgate_close", "close_tailgate"),
+                    ("charge_now", "apac_charge_start"), ("charge_off", "apac_charge_stop"),
+                    ("horn", "sound_horn"), ("flash_lights", "flash_lights"), ("horn_and_lights", "horn_and_lights"),
+                    ("remote_start", "remote_start"), ("remote_stop", "remote_stop"),
+                    ("sunroof_close", "close_sunroof"),
+                    ("defrost_back_start", "apac_rear_defrost_on"), ("defrost_back_stop", "apac_rear_defrost_off"),
+                )
+            )
+            if str(vehicle.get("platform") or "").strip().casefold() == "beantech":
+                entities.extend(
+                    GwmClimatePresetButton(entry.runtime_data.api, entry.runtime_data.coordinator, vin, temperature, key)
+                    for temperature, key in ((17, "fast_cool"), (31, "fast_heat"))
+                )
         if entry.runtime_data.coordinator.region == "cn":
             entities.extend(
                 GwmChinaRemoteButton(
@@ -141,6 +159,32 @@ class GwmCloseWindowsButton(GwmEntity, ButtonEntity):
     async def async_press(self) -> None:
         """Close windows."""
         command = await async_call_gwm_api(self._api.async_close_windows(self.vin))
+        self.coordinator.async_track_command(command)
+
+
+class GwmApacControlButton(GwmEntity, ButtonEntity):
+    """One explicitly enabled APAC control, with charging consent separate."""
+
+    def __init__(self, api, coordinator, vin: str, action: str, translation_key: str) -> None:
+        """Bind a button to its vehicle and a fixed regional action."""
+        super().__init__(coordinator, vin)
+        self._api = api
+        self._action = action
+        if action in {"horn", "flash_lights", "horn_and_lights", "sunroof_close", "defrost_back_start", "defrost_back_stop"}:
+            self._attr_entity_registry_enabled_default = False
+        self._attr_translation_key = translation_key
+        self._attr_unique_id = f"{vin}_{action}"
+
+    @property
+    def available(self) -> bool:
+        """Require the correct opt-in before exposing a supported action."""
+        capabilities = (self.vehicle or {}).get("capabilities") or {}
+        key = "apac_direct_charging" if self._action in {"charge_now", "charge_off"} else "apac_remote_controls"
+        return super().available and capabilities.get(key) is True
+
+    async def async_press(self) -> None:
+        """Submit and track one user-requested action."""
+        command = await async_call_gwm_api(self._api.async_apac_control(self.vin, self._action))
         self.coordinator.async_track_command(command)
 
 
@@ -265,10 +309,11 @@ class GwmClimatePresetButton(GwmEntity, ButtonEntity):
 
     @property
     def available(self) -> bool:
+        """Require the regional climate capability and a supported BeanTech vehicle."""
         return (
             super().available
             and self.climate_commands_available
-            and self.is_china_beantech
+            and (self.is_china_beantech or self.coordinator.region == "ap" and str((self.vehicle or {}).get("platform") or "").strip().casefold() == "beantech")
         )
 
     async def async_press(self) -> None:

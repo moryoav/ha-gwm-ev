@@ -4,9 +4,11 @@ on:
   push:
     branches:
       - main
+      - feature/apac
   pull_request:
     branches:
       - main
+      - feature/apac
   workflow_dispatch:
   workflow_call:
 

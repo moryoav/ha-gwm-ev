@@ -2,7 +2,7 @@
 
 This custom integration connects Home Assistant directly to supported GWM cloud regions. It does not require the retired Docker add-on.
 
-The setup flow supports Europe, Australia and New Zealand, Russia, and mainland China. Mainland-China accounts use their registered phone number and SMS verification.
+The setup flow supports Europe, Australia and New Zealand, Russia, mainland China, and Asia-Pacific. Mainland-China accounts use their registered phone number and SMS verification. Asia-Pacific accounts use the standard sign-in flow and select Pakistan (`PK`), Thailand (`TH`), Malaysia (`MY`), or Indonesia (`ID`). The installation includes the Asia-Pacific authentication files.
 
 ## Setup
 
@@ -28,6 +28,8 @@ The integration options provide:
 - Independent charging-control opt-in.
 - Integration log level.
 
+For Asia-Pacific, **Vehicle controls** and **Charging control** are separate options and both require the vehicle security PIN. **Charging control** starts and stops charging directly.
+
 Keep command options disabled until read-only polling and entity values have been checked against the official GWM app.
 
 ## Platforms
@@ -43,7 +45,7 @@ Keep command options disabled until read-only polling and entity values have bee
 
 Vehicle models and regions expose different values. Missing signals remain unavailable without interrupting other entities. Optional model-specific diagnostic entities are disabled by default where appropriate.
 
-The optional **Scheduled charging** switch and `gwm_ora.set_charging_plan` and `gwm_ora.clear_charging_plan` actions require charging control to be enabled in the integration options.
+For supported vehicles in Europe, Australia and New Zealand, and Russia, plus mainland-China NavInfo vehicles, enable charging control to use the **Scheduled charging** switch and the `gwm_ora.set_charging_plan` and `gwm_ora.clear_charging_plan` actions.
 
 On supported overseas vehicles, I expose a **Front defroster** switch and a **Start air circulation** button when the matching status signals are present. Front defrost runs for 15 minutes unless it is stopped early. Air circulation runs the official app's fixed 60-second external-air cabin-clean cycle and cannot be stopped once started.
 

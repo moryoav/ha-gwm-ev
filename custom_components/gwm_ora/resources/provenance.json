@@ -4,6 +4,21 @@
   "license_reference": "LicenseRef-GWM-Protocol-Materials",
   "content_canonicalization": "utf8_lf",
   "renewal_lead_days": 90,
+  "sources": {
+    "official-my-gwm-apac-android-3.0.9": {
+      "package": "com.gwm.tha",
+      "version": "3.0.9",
+      "version_code": 36,
+      "acquisition": "APKPure XAPK matched the contributor's archive and base APK checksums",
+      "source_url": "https://apkpure.net/my-gwm/com.gwm.tha",
+      "xapk_sha256": "e4c7a8e75439e34fa2fba06fc1278e22866e53bb7e71100b915b6009595a0ba3",
+      "base_apk_sha256": "30a8c162314f9542fa683af66452ab9994e5e13703b6db5b87a3609073440dd7",
+      "arm64_split_apk_sha256": "71fa30efc2a38be1c47acc7f0bde9b620e7c0a9c5ff9d6d149dd3d7332379f4b",
+      "apk_signer_sha256": "08c70ab68fce152ffed72d730af1597540496fe589b252c30420aaec4ba31583",
+      "reviewed_at": "2026-11-08",
+      "review_decision": "Bundle the shared app files by maintainer direction. GWM redistribution permission remains unresolved."
+    }
+  },
   "resources": [
     {
       "path": "gwm_general.cer",
@@ -115,6 +130,56 @@
         {"member": "lib/arm64-v8a/libsapp_crypto_tool.so", "offset": 0, "bytes": 235552}
       ],
       "redistribution_permission": "unresolved"
+    },
+    {
+      "path": "apac/bootstrap.cer",
+      "region": "ap",
+      "role": "shared_bootstrap_client_certificate",
+      "bytes": 1529,
+      "sha256": "dd525a458253fcbfb01f4433de5930ddbc7bea1e521868a9d9cedb7ae8e222ef",
+      "source_id": "official-my-gwm-apac-android-3.0.9",
+      "apk_entry": "assets/pki_release/gwm_general.cer",
+      "certificate": {
+        "serial_hex": "410a84cac622f0ddb68633cd666cbdc1c786866c",
+        "subject_common_name": "LGWGWM-AD-TH-GENERAL",
+        "subject_country": "TH",
+        "issuer_common_name": "IOV APP General SubCA",
+        "not_before": "2025-04-21T08:44:40Z",
+        "not_after": "2030-04-21T08:44:40Z",
+        "renew_by": "2030-01-21T08:44:40Z",
+        "spki_sha256": "67b877c7cf15f43590aa5c15f7b03060c5eb1ebe6395949fa6a48334e51f9917"
+      }
+    },
+    {
+      "path": "apac/bootstrap.key",
+      "region": "ap",
+      "role": "shared_transformed_rsa_private_key",
+      "bytes": 728,
+      "sha256": "177f979899aa36a351e8f37315ed8c711624390bb6bab46fbe14c383def2c8b7",
+      "source_id": "official-my-gwm-apac-android-3.0.9",
+      "apk_entry": "assets/pki_release/gwm_general.key",
+      "paired_certificate": "apac/bootstrap.cer",
+      "rsa_bits": 2048
+    },
+    {
+      "path": "apac/ca.pem",
+      "region": "ap",
+      "role": "regional_ca_bundle",
+      "bytes": 5988,
+      "sha256": "7c092608eec70d500a86c8682c9896adf4dca98e1fe4380eb5e1b82913f5a3b0",
+      "source_id": "official-my-gwm-apac-android-3.0.9",
+      "apk_entry": "assets/pki_release/gwm_root.pem",
+      "certificate_count": 4
+    },
+    {
+      "path": "apac/signing.json",
+      "region": "ap",
+      "role": "shared_request_signing_values",
+      "bytes": 76,
+      "sha256": "570a5bdc82073666955643a455063f6de83e8127d791939fe5fb30bf70b4281d",
+      "source_id": "official-my-gwm-apac-android-3.0.9",
+      "apk_entry": "lib/arm64-v8a/libapp.so",
+      "source_details": "Production APAC host configuration in the arm64 APK split"
     }
   ]
 }

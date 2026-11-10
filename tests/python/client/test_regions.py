@@ -38,6 +38,8 @@ def test_public_enum_wire_values_are_stable() -> None:
         "eu_bootstrap_mtls",
         "eu_issued_mtls",
         "russia_bootstrap_mtls",
+        "apac_bootstrap_mtls",
+        "apac_issued_mtls",
     ]
 
 

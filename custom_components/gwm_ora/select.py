@@ -16,7 +16,7 @@ from homeassistant.util import dt as dt_util
 
 from . import GwmConfigEntry
 from .beantech_charging import BeanTechChargingEntity
-from .entity import GwmEntity, async_call_gwm_api, setup_vehicle_entities
+from .entity import GwmEntity, async_call_gwm_api, setup_vehicle_entities, vehicle_value
 from .errors import GwmCommandError
 from .gwm_client import GwmClientError
 
@@ -55,6 +55,21 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Register charging and appointment selectors for China BeanTech vehicles."""
+    def selectors(vehicle):
+        """Add APAC seat levels without altering China charging selectors."""
+        if entry.runtime_data.coordinator.region == "ap" and str(vehicle.get("platform") or "").strip().casefold() == "beantech":
+            return tuple(
+                GwmApacSeatLevelSelect(entry.runtime_data.api, entry.runtime_data.coordinator, vehicle["vin"], state, prefix)
+                for state, prefix in (
+                    ("front_driver_seat_heater_level", "seat_heating"),
+                    ("front_passenger_seat_heater_level", "seat_heating_passenger"),
+                    ("front_driver_seat_vent_level", "seat_ventilation"),
+                    ("front_passenger_seat_vent_level", "seat_ventilation_passenger"),
+                )
+            )
+        return ()
+
+    setup_vehicle_entities(entry, async_add_entities, selectors)
     setup_vehicle_entities(
         entry, async_add_entities,
         lambda vehicle: (
@@ -72,6 +87,47 @@ async def async_setup_entry(
             else ()
         ),
     )
+
+
+class GwmApacSeatLevelSelect(GwmEntity, SelectEntity):
+    """Select a seat heating or ventilation level using the APAC contract."""
+
+    _attr_options = ["Off", "Level 1", "Level 2", "Level 3"]
+
+    def __init__(self, api, coordinator, vin: str, state_key: str, action_prefix: str) -> None:
+        """Bind the selector to a vehicle and known seat mapping."""
+        super().__init__(coordinator, vin)
+        self._api = api
+        self._state_key = state_key
+        self._action_prefix = action_prefix
+        self._attr_translation_key = state_key
+        self._attr_unique_id = f"{vin}_{state_key}_select"
+
+    @property
+    def available(self) -> bool:
+        """Require explicit APAC consent and a recognized driver-side mapping."""
+        return super().available and ((self.vehicle or {}).get("capabilities") or {}).get("apac_seat_controls") is True
+
+    @property
+    def current_option(self) -> str | None:
+        """Display the last reported seat level, leaving unknown values unknown."""
+        value = vehicle_value(self.vehicle, self._state_key)
+        try:
+            level = int(value)
+        except (TypeError, ValueError):
+            return None
+        return "Off" if level == 0 else f"Level {level}" if level in {1, 2, 3} else None
+
+    async def async_select_option(self, option: str) -> None:
+        """Submit one supported level, preserving the previous stop behavior."""
+        if option not in self._attr_options:
+            raise HomeAssistantError("Unsupported seat level")
+        if option == "Off":
+            action = self._action_prefix.replace("_passenger", "") + "_stop" + ("_passenger" if "_passenger" in self._action_prefix else "")
+        else:
+            action = f"{self._action_prefix}_level_{option[-1]}"
+        command = await async_call_gwm_api(self._api.async_apac_control(self.vin, action))
+        self.coordinator.async_track_command(command)
 
 
 class GwmChargeWindowSelect(BeanTechChargingEntity, SelectEntity):
