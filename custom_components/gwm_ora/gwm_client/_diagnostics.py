@@ -11,11 +11,14 @@ import json
 import logging
 import math
 import re
+import ssl
+import sys
 from collections.abc import Mapping
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
+from html.parser import HTMLParser
 from urllib.parse import urlsplit
 
 from ._protocol import _TransportRequest, _TransportResponse
@@ -34,6 +37,35 @@ _DISCOVERY_GATEWAYS = {
     for region in Region
     for gateway in (get_region_protocol(region).gateway(GatewayRole.APP_V1),)
 }
+# Fixed labels only. The first three phrases come from Tengine's built-in error pages.
+_HTML_ERROR_HINTS = (
+    ("client_certificate_missing", (
+        "no required ssl certificate was sent", "client certificate required", "client certificate is required",
+        "client certificate not provided", "сертификат клиента не предоставлен",
+    )),
+    ("client_certificate_rejected", (
+        "the ssl certificate error", "client certificate verification failed", "invalid client certificate",
+        "client certificate rejected", "ошибка проверки сертификата клиента",
+    )),
+    ("request_headers_too_large", (
+        "request header or cookie too large", "request header too large", "request header fields too large",
+    )),
+    ("certificate_expired", ("certificate has expired", "certificate expired")),
+    ("certificate_not_yet_valid", ("certificate is not yet valid", "certificate not yet valid")),
+    ("certificate_revoked", ("certificate revoked", "certificate has been revoked")),
+    ("certificate_untrusted", ("unknown ca", "untrusted certificate", "self-signed certificate")),
+    ("http_sent_to_https", ("plain http request was sent to https port",)),
+    ("malformed_request", ("malformed request", "invalid request header", "invalid host header", "invalid request line")),
+    ("method_not_allowed", ("method not allowed", "invalid request method")),
+    ("signature_rejected", ("invalid signature", "signature verification failed", "signature mismatch", "签名错误")),
+    ("session_rejected", ("invalid token", "token expired", "session expired", "token失效", "登录过期")),
+    ("security_challenge", ("web application firewall", "captcha", "javascript challenge", "request blocked")),
+    ("access_denied", ("access denied", "forbidden", "unauthorized", "访问被拒绝")),
+    ("rate_limited", ("too many requests", "rate limit")),
+)
+_RUSSIA_DISCOVERY_HOST = urlsplit(get_region_protocol(Region.RUSSIA).gateway(GatewayRole.APP_V1).base_url).hostname
+_RUSSIA_SIGNING_HEADERS = {"gwm-auth-appkey", "gwm-auth-sign", "gwm-auth-timestamp", "gwm-auth-nonce"}
+_TLS_VERSIONS = {"SSLv3", "TLSv1", "TLSv1.1", "TLSv1.2", "TLSv1.3"}
 _OPERATIONS = frozenset({
     "acquire_vehicles", "get_vehicle_basics", "get_last_status", "get_charging_plan",
     "update_climate_defaults", "send_climate_command", "send_lock_command",
@@ -258,6 +290,100 @@ def log_request(request: _TransportRequest) -> None:
             _LOGGER.debug("GWM request diagnostic: operation=%s stage=%s", *context)
 
 
+class _ErrorPageText(HTMLParser):
+    """Collect bounded text without inspecting attributes, comments, or scripts."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.parts: list[str] = []
+        self._ignored_tag: str | None = None
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag in {"script", "style", "template"} and self._ignored_tag is None:
+            self._ignored_tag = tag
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == self._ignored_tag:
+            self._ignored_tag = None
+
+    def handle_data(self, data: str) -> None:
+        if self._ignored_tag is None:
+            self.parts.append(data)
+
+
+def _html_error_hints(body: bytes) -> str:
+    """Classify visible error text using fixed labels; never return input text."""
+    parser = _ErrorPageText()
+    try:
+        parser.feed(body[:_MAX_DIAGNOSTIC_BYTES].decode("utf-8-sig", errors="replace"))
+        parser.close()
+    except (ValueError, AssertionError):
+        return "unparseable_html"
+    text = " ".join(" ".join(parser.parts).casefold().split())
+    labels = [label for label, phrases in _HTML_ERROR_HINTS if any(phrase in text for phrase in phrases)]
+    if labels:
+        return ",".join(labels)
+    return "generic_bad_request" if "400 bad request" in text else "unknown"
+
+
+def _russia_request_fields(request: _TransportRequest) -> dict[str, object]:
+    """Describe the prepared request without logging its URL or header values."""
+    names = {name.lower() for name in request.headers}
+    sizes = [len(name) + len(value) + 4 for name, value in request.headers.items()]
+    return {
+        "diagnostic_profile": "issue54",
+        "prepared_header_count": len(sizes),
+        "prepared_header_bytes": sum(sizes),
+        "largest_prepared_header_bytes": max(sizes, default=0),
+        "access_header_present": "accesstoken" in names,
+        "device_header_present": "deviceid" in names,
+        "country_headers_complete": {"country", "regioncode"}.issubset(names),
+        "accept_header_present": "accept" in names,
+        "user_agent_present": "user-agent" in names,
+        "signing_headers_complete": _RUSSIA_SIGNING_HEADERS.issubset(names),
+        "base_headers_complete": {"terminal", "brand", "cver", "appid", "channel"}.issubset(names),
+        "query_present": bool(urlsplit(request.url).query),
+        "request_body_present": request.body is not None,
+        "tls_server_verify_required": request.ssl_context.verify_mode == ssl.CERT_REQUIRED,
+        "tls_hostname_check": request.ssl_context.check_hostname is True,
+        "tls_config_min": request.ssl_context.minimum_version.name,
+        "tls_config_max": request.ssl_context.maximum_version.name,
+        "python": ".".join(str(part) for part in sys.version_info[:3]),
+        "openssl": ".".join(str(part) for part in ssl.OPENSSL_VERSION_INFO[:3]),
+    }
+
+
+def discovery_connection_fields(
+    request: _TransportRequest, response: object, *, elapsed_seconds: float,
+) -> dict[str, object]:
+    """Observe public HTTP/TLS metadata while the response connection is available."""
+    fields: dict[str, object] = {}
+    with suppress(Exception):
+        if (
+            urlsplit(request.url).hostname != _RUSSIA_DISCOVERY_HOST
+            or _context(request, level=logging.WARNING) != ("acquire_vehicles", "vehicle_discovery")
+        ):
+            return fields
+        fields["response_headers_ms"] = _milliseconds(elapsed_seconds)
+        version = getattr(response, "version", None)
+        major, minor = getattr(version, "major", None), getattr(version, "minor", None)
+        fields["http_version"] = f"{major}.{minor}" if type(major) is int and type(minor) is int and 0 <= major <= 3 and 0 <= minor <= 9 else "unknown"
+        fields.update(negotiated_tls="unknown", negotiated_alpn="unknown", negotiated_cipher_bits=None)
+        transport = getattr(getattr(response, "connection", None), "transport", None)
+        if transport is None:
+            return fields
+        tls = transport.get_extra_info("ssl_object")
+        if isinstance(tls, (ssl.SSLObject, ssl.SSLSocket)):
+            protocol = tls.version()
+            alpn = tls.selected_alpn_protocol()
+            cipher = tls.cipher()
+            fields["negotiated_tls"] = protocol if protocol in _TLS_VERSIONS else "unknown"
+            fields["negotiated_alpn"] = alpn if alpn in {"h2", "http/1.1"} else "none" if alpn is None else "unknown"
+            if cipher and type(cipher[2]) is int and 0 < cipher[2] <= 512:
+                fields["negotiated_cipher_bits"] = cipher[2]
+    return fields
+
+
 def _discovery_fields(
     request: _TransportRequest,
     headers: Mapping[str, str],
@@ -265,12 +391,15 @@ def _discovery_fields(
 ) -> dict[str, object]:
     """Classify the known route and headers without copying their values."""
     region, tls_mode = _DISCOVERY_GATEWAYS.get(urlsplit(request.url).hostname, ("unknown", "unknown"))
-    return {
+    fields = {
         "region": region, "gateway": "app_v1" if region != "unknown" else "unknown",
         "method": request.method, "tls_mode": tls_mode,
         "elapsed_ms": _milliseconds(elapsed_seconds) if elapsed_seconds is not None else None,
         **_header_shape(headers),
     }
+    if region == "rus":
+        fields.update(_russia_request_fields(request))
+    return fields
 
 
 def log_response(
@@ -279,6 +408,7 @@ def log_response(
     *,
     headers: Mapping[str, str] | None = None,
     elapsed_seconds: float | None = None,
+    connection_fields: Mapping[str, object] | None = None,
 ) -> None:
     """Summarize a bounded response without accepting it or exposing its data."""
     with suppress(Exception):
@@ -303,6 +433,14 @@ def log_response(
             fields["html_hint"] = response.body[:256].lstrip().lower().startswith(
                 (b"<!doctype html", b"<html", b"<head", b"<body")
             )
+            if connection_fields is not None:
+                fields.update(connection_fields)
+            if fields["region"] == "rus" and level == logging.WARNING:
+                if fields["html_hint"] or fields["content_type"] == "html":
+                    fields["html_error_hints"] = _html_error_hints(response.body)
+                    fields["html_scan_truncated"] = len(response.body) > _MAX_DIAGNOSTIC_BYTES
+                else:
+                    fields["html_error_hints"] = "not_html"
             message += " " + " ".join(f"{name}=%s" for name in fields)
             values += tuple(fields.values())
         _LOGGER.log(level, message, *values)
@@ -315,6 +453,7 @@ def log_discovery_rejection(
     status: int,
     headers: Mapping[str, str],
     elapsed_seconds: float,
+    connection_fields: Mapping[str, object] | None = None,
 ) -> None:
     """Report headers already received when transport rejects the response."""
     with suppress(Exception):
@@ -323,6 +462,8 @@ def log_discovery_rejection(
             return
         category = error.category if error.category in _FAILURE_CATEGORIES else "unknown"
         fields = _discovery_fields(request, headers, elapsed_seconds)
+        if connection_fields is not None:
+            fields.update(connection_fields)
         message = (
             "GWM response diagnostic: operation=%s stage=%s http_status=%s "
             "response_rejected=True category=%s "

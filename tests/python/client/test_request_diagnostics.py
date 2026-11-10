@@ -227,7 +227,7 @@ class _ResponseContext:
         """Return response metadata and expose the synthetic body stream."""
         if self.error is not None:
             raise self.error
-        return SimpleNamespace(status=self.status, headers=self.headers, content=self)
+        return SimpleNamespace(status=self.status, headers=self.headers, content=self, version=aiohttp.HttpVersion11)
 
     async def __aexit__(self, *_args):
         return None
@@ -285,7 +285,22 @@ async def test_real_transport_preserves_bytes_request_count_and_failure(caplog, 
         (
             "text/html",
             f"<!DOCTYPE html><html>{SECRET}</html>".encode(),
-            ("content_type=html", "api_code=None", "envelope_reason=invalid_json", "html_hint=True"),
+            ("content_type=html", "api_code=None", "envelope_reason=invalid_json", "html_hint=True", "html_error_hints=unknown"),
+        ),
+        (
+            "text/html",
+            f"<html><head><title>400 The SSL certificate error</title></head><body>{SECRET}</body></html>".encode(),
+            ("html_error_hints=client_certificate_rejected", "html_scan_truncated=False"),
+        ),
+        (
+            "text/plain",
+            f"<html><center>No required SSL certificate was sent</center><p>{SECRET}</p></html>".encode(),
+            ("content_type=text", "html_hint=True", "html_error_hints=client_certificate_missing"),
+        ),
+        (
+            "text/html",
+            f"<html><center>Request Header Or Cookie Too Large</center><p>{SECRET}</p></html>".encode(),
+            ("html_error_hints=request_headers_too_large",),
         ),
     ],
 )
@@ -319,10 +334,58 @@ async def test_russia_discovery_400_logs_safe_metadata_and_preserves_http_error(
     assert "waf_cookie_hint=True" in message
     assert "request_id_present=True" in message
     assert "region=rus gateway=app_v1 method=GET tls_mode=russia_bootstrap_mtls" in message
+    assert "diagnostic_profile=issue54" in message
+    assert "signing_headers_complete=True" in message
+    assert "access_header_present=True" in message
+    assert "request_body_present=False" in message
+    assert "http_version=1.1" in message
+    assert "negotiated_tls=unknown" in message
+    assert "response_headers_ms=" in message
     assert all(value in message for value in expected)
     assert SECRET not in repr(record.args)
     assert SECRET not in message
     assert "gwmcloud.com" not in message
+
+
+def test_html_error_hints_ignore_hidden_and_out_of_bounds_text():
+    """Only bounded, visible diagnostic phrases can generate a label."""
+    body = (
+        '<html title="client certificate required"><!-- invalid token -->'
+        '<script>invalid signature</script><style>request blocked</style>'
+        '<h1>400 Bad Request</h1><p>' + " " * (64 * 1024) + "certificate revoked</p></html>"
+    ).encode()
+    assert diagnostics._html_error_hints(body) == "generic_bad_request"
+
+
+def test_html_error_hints_keep_multiple_distinct_signals():
+    """Keep explicit certificate details without publishing the message."""
+    body = b"<html><p>Client certificate verification failed: certificate has expired</p></html>"
+    assert diagnostics._html_error_hints(body) == "client_certificate_rejected,certificate_expired"
+
+
+def test_russia_discovery_connection_fields_are_allowlisted(caplog):
+    """Report the observed transport when available without copying arbitrary values."""
+    caplog.set_level(logging.WARNING, logger=LOGGER)
+    request = _TransportRequest(
+        operation="acquire_vehicles",
+        url="https://rus-app-gateway.gwmcloud.com/app-api/api/v1.0/globalapp/vehicle/acquireVehicles",
+        headers={}, ssl_context=_default_context(),
+    )
+    tls = Mock(spec=ssl.SSLObject)
+    tls.version.return_value = "TLSv1.3"
+    tls.selected_alpn_protocol.return_value = SECRET
+    tls.cipher.return_value = (SECRET, SECRET, 256)
+    response = SimpleNamespace(
+        version=aiohttp.HttpVersion11,
+        connection=SimpleNamespace(transport=Mock(get_extra_info=Mock(return_value=tls))),
+    )
+    assert diagnostics.discovery_connection_fields(request, response, elapsed_seconds=0.125) == {
+        "response_headers_ms": 125,
+        "http_version": "1.1",
+        "negotiated_tls": "TLSv1.3",
+        "negotiated_alpn": "unknown",
+        "negotiated_cipher_bits": 256,
+    }
 
 
 @pytest.mark.asyncio

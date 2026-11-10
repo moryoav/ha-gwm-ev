@@ -12,7 +12,7 @@ import aiohttp
 from yarl import URL
 
 from . import _auth_diagnostics as auth_diagnostics
-from ._diagnostics import log_discovery_rejection, log_failure, log_request, log_response
+from ._diagnostics import discovery_connection_fields, log_discovery_rejection, log_failure, log_request, log_response
 from ._protocol import _Deadline, _TransportRequest, _TransportResponse
 from .errors import (
     GwmClientError,
@@ -169,13 +169,17 @@ class AiohttpTransport:
                     auth_exchange, status=response.status, headers=response.headers,
                     version=getattr(response, "version", None),
                 )
+                connection_fields = (
+                    discovery_connection_fields(request, response, elapsed_seconds=loop.time() - discovery_started)
+                    if discovery_started is not None else None
+                )
                 try:
                     result = await self._read_response(response, operation=operation)
                 except GwmClientError as error:
                     if discovery_started is not None:
                         log_discovery_rejection(
                             request, error, status=response.status, headers=response.headers,
-                            elapsed_seconds=loop.time() - discovery_started,
+                            elapsed_seconds=loop.time() - discovery_started, connection_fields=connection_fields,
                         )
                     raise
                 if discovery_started is None:
@@ -183,6 +187,7 @@ class AiohttpTransport:
                 else:
                     log_response(
                         request, result, headers=response.headers, elapsed_seconds=loop.time() - discovery_started,
+                        connection_fields=connection_fields,
                     )
                 auth_diagnostics.response_body(auth_exchange, result.body)
                 return result
