@@ -160,10 +160,12 @@ def _envelope_shape(body: bytes) -> _EnvelopeShape:
 
 
 def _milliseconds(seconds: float) -> int | None:
+    """Convert a plausible duration to rounded milliseconds."""
     return round(seconds * 1000) if math.isfinite(seconds) and 0 <= seconds <= 24 * 60 * 60 else None
 
 
 def _header(headers: Mapping[str, str], name: str) -> str | None:
+    """Find a case-insensitive header within the diagnostic size limit."""
     for key, value in headers.items():
         if key.lower() == name and type(value) is str:
             return value if len(value) <= _MAX_HEADER_CHARS else None
@@ -171,6 +173,7 @@ def _header(headers: Mapping[str, str], name: str) -> str | None:
 
 
 def _content_type(value: str | None) -> str:
+    """Classify a media type without retaining its parameters."""
     if value is None:
         return "missing_or_oversized"
     mime = value.partition(";")[0].strip().lower()
@@ -181,6 +184,7 @@ def _content_type(value: str | None) -> str:
 
 
 def _server_family(value: str | None) -> str:
+    """Recognize known server families without logging banner text."""
     if value is None:
         return "missing_or_oversized"
     lower = value.lower()
@@ -192,6 +196,7 @@ def _server_family(value: str | None) -> str:
 
 
 def _date_shape(value: str | None) -> tuple[str, int | None]:
+    """Classify a server date and estimate clock skew within a bounded window."""
     if value is None:
         return "missing_or_oversized", None
     try:
@@ -205,6 +210,7 @@ def _date_shape(value: str | None) -> tuple[str, int | None]:
 
 
 def _header_shape(headers: Mapping[str, str]) -> dict[str, object]:
+    """Summarize response headers as fixed labels, flags, and bounded numbers."""
     names = {name.lower() for name in headers}
     allow = _header(headers, "allow")
     methods = {part.strip().upper() for part in allow.split(",")} if allow is not None else set()
@@ -232,6 +238,7 @@ def _header_shape(headers: Mapping[str, str]) -> dict[str, object]:
 
 
 def _context(request: _TransportRequest, *, level: int = logging.DEBUG) -> tuple[str, str] | None:
+    """Match a logged operation to a known path without retaining the URL."""
     if not _LOGGER.isEnabledFor(level) or request.operation not in _OPERATIONS:
         return None
     path = urlsplit(request.url).path

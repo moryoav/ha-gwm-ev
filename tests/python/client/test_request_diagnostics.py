@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import ssl
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import cast
 from unittest.mock import Mock
@@ -182,6 +183,7 @@ def test_disabled_debug_does_not_parse_or_log(caplog, monkeypatch):
     ("get_last_status", "globalapp/vehicle/acquireVehicles"),
 ])
 def test_authentication_and_unknown_routes_are_not_inspected(caplog, monkeypatch, operation, path):
+    """Skip authentication and mismatched routes before reading their bodies."""
     caplog.set_level(logging.DEBUG, logger=LOGGER)
     parser = Mock(side_effect=AssertionError("must not parse"))
     monkeypatch.setattr(diagnostics, "_envelope_shape", parser)
@@ -194,6 +196,7 @@ def test_authentication_and_unknown_routes_are_not_inspected(caplog, monkeypatch
 
 
 def test_logging_failure_is_nonfatal(monkeypatch, caplog):
+    """Keep diagnostic logger failures from escaping to the caller."""
     caplog.set_level(logging.DEBUG, logger=LOGGER)
     monkeypatch.setattr(diagnostics._LOGGER, "log", Mock(side_effect=RuntimeError(SECRET)))
     request = _request()
@@ -214,12 +217,14 @@ def test_transport_failure_does_not_log_exception_text_or_mutated_category(caplo
 
 class _ResponseContext:
     def __init__(self, body, error=None, *, status=200, headers=None):
+        """Prepare a synthetic response or an error entering its context."""
         self.body = body
         self.error = error
         self.status = status
         self.headers = {} if headers is None else headers
 
     async def __aenter__(self):
+        """Return response metadata and expose the synthetic body stream."""
         if self.error is not None:
             raise self.error
         return SimpleNamespace(status=self.status, headers=self.headers, content=self)
@@ -232,6 +237,7 @@ class _ResponseContext:
 
 
 def _transport(context):
+    """Create the real transport around a session with a controlled response."""
     session = SimpleNamespace(
         trust_env=False, headers={}, cookie_jar=aiohttp.DummyCookieJar(),
         _raise_for_status=False, _retry_connection=False, _middlewares=(), _trace_configs=[],
@@ -244,6 +250,7 @@ def _transport(context):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failure", [False, True])
 async def test_real_transport_preserves_bytes_request_count_and_failure(caplog, failure):
+    """Preserve payload bytes, request count, and sanitized network failures."""
     caplog.set_level(logging.DEBUG, logger=LOGGER)
     body = b'{"code":"000000"}'
     context = _ResponseContext(body, OSError(SECRET) if failure else None)
@@ -352,6 +359,37 @@ async def test_rejected_discovery_logs_headers_without_reading_body(caplog, stat
     assert "content_type=html" in message
     assert "request_id_present=True" in message
     assert expected in message
+    assert SECRET not in repr(record.args)
+
+
+@pytest.mark.parametrize(
+    ("headers", "declared_bytes", "server_date", "skew_seconds", "retry_seconds"),
+    [
+        (
+            {"Content-Length": "99", "Date": "Tue, 10 Nov 2026 08:00:15 GMT", "Retry-After": "003"},
+            99, "valid", 15, 3,
+        ),
+        ({}, None, "missing_or_oversized", None, None),
+        ({"Date": SECRET, "Retry-After": SECRET}, None, "invalid", None, None),
+    ],
+)
+def test_discovery_logs_bounded_header_and_timing_values(
+    caplog, monkeypatch, headers, declared_bytes, server_date, skew_seconds, retry_seconds,
+):
+    """Convert safe header and timing metadata without echoing invalid inputs."""
+    caplog.set_level(logging.WARNING, logger=LOGGER)
+    now = datetime(2026, 11, 10, 8, tzinfo=UTC)
+    monkeypatch.setattr(diagnostics, "datetime", SimpleNamespace(now=lambda _tz: now))
+    request = _request("acquire_vehicles", "globalapp/vehicle/acquireVehicles", "GET")
+    diagnostics.log_response(
+        request, _TransportResponse(400, {}, b"{}"), headers=headers, elapsed_seconds=0.125,
+    )
+    (record,) = (record for record in caplog.records if record.name == LOGGER)
+    message = record.getMessage()
+    assert "elapsed_ms=125" in message
+    assert f"declared_body_bytes={declared_bytes}" in message
+    assert f"server_date={server_date} clock_skew_seconds={skew_seconds}" in message
+    assert f"retry_after_seconds={retry_seconds}" in message
     assert SECRET not in repr(record.args)
 
 
