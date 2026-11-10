@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import timedelta
+from pathlib import Path
 
 import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
@@ -26,6 +28,7 @@ from .cloud_runtime import (
 )
 from .cloud_storage import (
     GwmCloudStateStore,
+    async_finish_apac_state_save,
     async_remove_cloud_state,
     cloud_state_store,
     credentials_for_auth_state,
@@ -35,6 +38,8 @@ from .const import (
     ATTR_START_TIME,
     ATTR_VIN,
     CONF_CONNECTION_TYPE,
+    CONF_ENABLE_APAC_CHARGING,
+    CONF_ENABLE_APAC_REMOTE,
     CONF_ENABLE_CHARGING_CONTROL,
     CONF_ENABLE_REMOTE_COMMANDS,
     CONF_POLL_INTERVAL_SECONDS,
@@ -45,6 +50,7 @@ from .const import (
     DOMAIN,
     MIN_CHARGE_WINDOW_MINUTES,
     PLATFORMS,
+    REGION_APAC,
     REGION_CHINA,
     SERVICE_CLEAR_CHARGING_PLAN,
     SERVICE_SET_CHARGING_PLAN,
@@ -62,6 +68,9 @@ from .gwm_client import (
     GwmHttpError,
     RussiaAuthenticated,
 )
+from .gwm_client.apac_flow import ApacAuthenticated
+from .gwm_client.apac_material import load_installed_apac_material
+from .gwm_client.apac_restore import ApacRestored
 
 
 @dataclass(slots=True)
@@ -181,14 +190,24 @@ async def async_unload_entry(hass: HomeAssistant, entry: GwmConfigEntry) -> bool
     unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if not unloaded:
         return False
-    await entry.runtime_data.coordinator.async_cancel_command_tasks()
     cloud = entry.runtime_data.cloud
-    if (
-        (bootstrap := cloud.reusable_bootstrap) is not None
-        and entry.unique_id is not None
-    ):
-        stage_cloud_bootstrap(hass, entry.unique_id, bootstrap)
-    await cloud.aclose()
+
+    async def finish_unload() -> None:
+        """Drain entry-owned work before disposing of the cloud transport."""
+        if cloud.region == REGION_APAC:
+            await entry.runtime_data.api.async_shutdown_apac_commands()
+        await entry.runtime_data.coordinator.async_cancel_command_tasks()
+        if (
+            (bootstrap := cloud.reusable_bootstrap) is not None
+            and entry.unique_id is not None
+        ):
+            stage_cloud_bootstrap(hass, entry.unique_id, bootstrap)
+        await cloud.aclose()
+
+    if cloud.region == REGION_APAC:
+        await async_finish_apac_state_save(finish_unload())
+    else:
+        await finish_unload()
     return True
 
 
@@ -209,9 +228,16 @@ async def _async_setup_cloud_entry(
     bootstrap = await _async_load_cloud_bootstrap(hass, entry, state_store)
 
     try:
-        command_enabled = entry.options.get(CONF_ENABLE_REMOTE_COMMANDS) is True
+        command_enabled = (
+            entry.options.get(CONF_ENABLE_APAC_REMOTE) is True
+            if entry.data.get(CONF_REGION) == REGION_APAC
+            else entry.options.get(CONF_ENABLE_REMOTE_COMMANDS) is True
+        )
         charging_enabled = entry.options.get(CONF_ENABLE_CHARGING_CONTROL) is True
         security_pin = entry.options.get(CONF_SECURITY_PIN)
+        apac_pin = isinstance(security_pin, str) and bool(security_pin.strip())
+        apac_remote = entry.data.get(CONF_REGION) == REGION_APAC and apac_pin and entry.options.get(CONF_ENABLE_APAC_REMOTE) is True
+        apac_charging = entry.data.get(CONF_REGION) == REGION_APAC and apac_pin and entry.options.get(CONF_ENABLE_APAC_CHARGING) is True
         commands_available = command_enabled and (
             entry.data.get(CONF_REGION) == REGION_CHINA
             or isinstance(security_pin, str)
@@ -223,6 +249,9 @@ async def _async_setup_cloud_entry(
             bootstrap,
             state_store=state_store,
             climate_commands_enabled=commands_available,
+            apac_climate_enabled=commands_available if entry.data.get(CONF_REGION) == REGION_APAC else False,
+            apac_remote_enabled=apac_remote,
+            apac_charging_enabled=apac_charging,
             lock_window_commands_enabled=commands_available,
             charging_control_enabled=charging_enabled,
         )
@@ -238,6 +267,9 @@ async def _async_setup_cloud_entry(
             state_store,
             credentials,
             enabled=command_enabled,
+            apac_climate_enabled=command_enabled if entry.data.get(CONF_REGION) == REGION_APAC else False,
+            apac_remote_enabled=apac_remote,
+            apac_charging_enabled=apac_charging,
             charging_enabled=charging_enabled,
             security_pin=security_pin if isinstance(security_pin, str) else None,
         )
@@ -269,18 +301,40 @@ async def _async_setup_cloud_entry(
         _async_register_services(hass)
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     except BaseException:
+        if entry.data.get(CONF_REGION) == REGION_APAC:
+            await api.async_shutdown_apac_commands()
         await coordinator.async_cancel_command_tasks()
         if (
             (reusable := cloud.reusable_bootstrap) is not None
             and entry.unique_id is not None
         ):
             stage_cloud_bootstrap(hass, entry.unique_id, reusable)
-        await cloud.aclose()
+        if entry.data.get(CONF_REGION) == REGION_APAC:
+            # Keep the coordinator's retryable failure if the pending save fails again.
+            # APAC cleanup still closes its transport and the store retains the revision.
+            with suppress(Exception):
+                await cloud.aclose()
+        else:
+            await cloud.aclose()
         raise
     return True
 
 
 async def _async_load_cloud_bootstrap(
+    hass: HomeAssistant,
+    entry: GwmConfigEntry,
+    state_store: GwmCloudStateStore,
+) -> GwmCloudBootstrap:
+    """Resume a session and keep APAC publication failures retryable at startup."""
+    try:
+        return await _async_load_cloud_bootstrap_once(hass, entry, state_store)
+    except OSError as error:
+        if entry.data.get(CONF_REGION) == REGION_APAC:
+            raise ConfigEntryNotReady("GWM APAC private state is temporarily unavailable") from error
+        raise
+
+
+async def _async_load_cloud_bootstrap_once(
     hass: HomeAssistant,
     entry: GwmConfigEntry,
     state_store: GwmCloudStateStore,
@@ -316,12 +370,26 @@ async def _async_load_cloud_bootstrap(
             "GWM cloud private state is temporarily unavailable"
         ) from err
 
+    async def save_apac_session(result: ApacRestored) -> None:
+        """Persist a token rotation before any later restoration read can fail."""
+        await async_finish_apac_state_save(state_store.async_save_auth_state(credentials, result.state))
+
     try:
-        result = await GwmCloudAuthenticator().async_authenticate(
+        authenticator = (
+            GwmCloudAuthenticator(
+                apac_material_loader=lambda: load_installed_apac_material(
+                    Path(hass.config.path(".storage", "gwm_apac_material"))
+                )
+            )
+            if credentials.region == REGION_APAC
+            else GwmCloudAuthenticator()
+        )
+        result = await authenticator.async_authenticate(
             credentials,
             state=auth_state,
             allow_session_reclaim=False,
             allow_password_login=False,
+            **({"apac_session_updated": save_apac_session} if credentials.region == REGION_APAC else {}),
         )
         if isinstance(result, ChinaInitializationRequired):
             await state_store.async_save_auth_state(credentials, result.state)
@@ -335,6 +403,7 @@ async def _async_load_cloud_bootstrap(
                 AnzAuthenticated,
                 RussiaAuthenticated,
                 ChinaAuthenticated,
+                ApacAuthenticated,
             ),
         ):
             await state_store.async_clear_auth_state(dict(entry.data))

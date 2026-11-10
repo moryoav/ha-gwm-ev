@@ -12,6 +12,13 @@ This project follows semantic versioning. HACS uses the latest GitHub release ta
 
 - Added vehicle discovery diagnostics for overseas accounts, including response type, numeric GWM codes, and gateway hints for HTTP failures. Kept raw response data out of logs.
 
+- Added Asia-Pacific setup, vehicle discovery, status polling, and session restoration for Pakistan, Thailand, Malaysia, and Indonesia.
+- Added Asia-Pacific vehicle commands and direct charging start and stop as separate opt-ins that require the vehicle security PIN.
+
+### Changed
+
+- Bundled the shared APAC authentication files for standard installation and sign-in.
+
 ## [0.17.14] - 2026-11-05
 
 ### Fixed

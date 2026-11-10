@@ -47,6 +47,8 @@ class TlsMode(StrEnum):
     EU_BOOTSTRAP_MTLS = "eu_bootstrap_mtls"
     EU_ISSUED_MTLS = "eu_issued_mtls"
     RUSSIA_BOOTSTRAP_MTLS = "russia_bootstrap_mtls"
+    APAC_BOOTSTRAP_MTLS = "apac_bootstrap_mtls"
+    APAC_ISSUED_MTLS = "apac_issued_mtls"
 
 
 @dataclass(frozen=True, slots=True)

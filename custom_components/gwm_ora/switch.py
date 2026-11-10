@@ -110,6 +110,7 @@ async def async_setup_entry(
     """Set up GWM switches."""
 
     def switches_for_vehicle(vehicle: dict) -> list[GwmEntity]:
+        """Build supported regional switches without granting command consent."""
         vin = vehicle["vin"]
         api = entry.runtime_data.api
         coordinator = entry.runtime_data.coordinator
@@ -120,6 +121,18 @@ async def async_setup_entry(
         existing = [
             GwmChargingScheduleSwitch(api, coordinator, vin),
         ]
+        if coordinator.region == "ap" and str(vehicle.get("platform") or "").strip().casefold() == "beantech":
+            specs = (
+                ("seat_heating_start", "seat_heating_stop", "front_driver_seat_heater_level", "seat_heating"),
+                ("seat_heating_start_passenger", "seat_heating_stop_passenger", "front_passenger_seat_heater_level", "seat_heating_passenger"),
+                ("seat_ventilation_start", "seat_ventilation_stop", "front_driver_seat_vent_level", "seat_ventilation"),
+                ("seat_ventilation_start_passenger", "seat_ventilation_stop_passenger", "front_passenger_seat_vent_level", "seat_ventilation_passenger"),
+                ("steering_wheel_heating", "steering_wheel_heatless", "steering_wheel_heater_active", "steering_wheel_heating"),
+            )
+            return existing + [GwmFrontDefrosterSwitch(api, coordinator, vin)] + [
+                GwmRemoteControlSwitch(api, coordinator, vin, turn_on_action=on, turn_off_action=off, state_key=state, translation_key=key)
+                for on, off, state, key in specs
+            ]
         if not is_beantech:
             return existing + [GwmFrontDefrosterSwitch(api, coordinator, vin)]
         return [
@@ -333,6 +346,11 @@ class GwmRemoteControlSwitch(GwmEntity, SwitchEntity):
 
     @property
     def available(self) -> bool:
+        """Require regional consent and a usable mapping for APAC seat controls."""
+        if self.coordinator.region == "ap":
+            capabilities = (self.vehicle or {}).get("capabilities") or {}
+            capability = "apac_seat_controls" if self._turn_on_action.startswith("seat_") else "apac_remote_controls"
+            return super().available and capabilities.get(capability) is True
         return (
             super().available
             and self.china_vehicle_commands_available
@@ -340,13 +358,13 @@ class GwmRemoteControlSwitch(GwmEntity, SwitchEntity):
         )
 
     async def async_turn_on(self, **kwargs: Any) -> None:
-        command = await async_call_gwm_api(
-            self._api.async_vehicle_control(self.vin, self._turn_on_action)
-        )
+        """Send and track one regional control without optimistic state changes."""
+        call = self._api.async_apac_control(self.vin, self._turn_on_action) if self.coordinator.region == "ap" else self._api.async_vehicle_control(self.vin, self._turn_on_action)
+        command = await async_call_gwm_api(call)
         self.coordinator.async_track_command(command)
 
     async def async_turn_off(self, **kwargs: Any) -> None:
-        command = await async_call_gwm_api(
-            self._api.async_vehicle_control(self.vin, self._turn_off_action)
-        )
+        """Send and track the paired regional stop action."""
+        call = self._api.async_apac_control(self.vin, self._turn_off_action) if self.coordinator.region == "ap" else self._api.async_vehicle_control(self.vin, self._turn_off_action)
+        command = await async_call_gwm_api(call)
         self.coordinator.async_track_command(command)
