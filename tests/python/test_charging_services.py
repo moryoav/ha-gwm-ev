@@ -1,104 +1,91 @@
-"""Charging-service validation tests."""
+"""Charging actions exercised through Home Assistant's service registry."""
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
 from types import SimpleNamespace
-from zoneinfo import ZoneInfo
+from unittest.mock import AsyncMock
 
 import pytest
 
 pytest.importorskip("homeassistant")
 
+import voluptuous as vol
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ServiceValidationError
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 
-from custom_components.gwm_ora import _async_register_services, _charging_window_epoch_ms
-from custom_components.gwm_ora.const import (
-    ATTR_VIN,
-    CONF_CONNECTION_TYPE,
-    CONNECTION_TYPE_CLOUD,
-    DOMAIN,
-    SERVICE_CLEAR_CHARGING_PLAN,
-)
+from custom_components.gwm_ora import _async_register_services
+from custom_components.gwm_ora.const import DOMAIN, SERVICE_CLEAR_CHARGING_PLAN, SERVICE_SET_CHARGING_PLAN
+from custom_components.gwm_ora.coordinator import GwmDataUpdateCoordinator
+from custom_components.gwm_ora.gwm_client import GwmApiError
 from custom_components.gwm_ora.switch import _charging_plan_is_active
 
-_UTC = ZoneInfo("UTC")
+VIN = "LGWTEST0000000001"
+WINDOW = {"vin": "DISPLAY-VIN", "start_time": "2026-01-01T02:00:00+02:00", "end_time": "2026-01-01T02:05:00+02:00"}
 
 
-def test_charging_window_converts_aware_datetimes_to_epoch_ms() -> None:
-    start = datetime(2026, 8, 22, 10, 0, tzinfo=_UTC)
-    end = start + timedelta(minutes=5)
-
-    start_ms, end_ms = _charging_window_epoch_ms(start, end)
-
-    assert end_ms - start_ms == 300_000
-
-
-def test_charging_window_rejects_less_than_five_minutes() -> None:
-    start = datetime(2026, 8, 22, 10, 0, tzinfo=_UTC)
-
-    with pytest.raises(ServiceValidationError, match="at least 5 minutes"):
-        _charging_window_epoch_ms(start, start + timedelta(minutes=4, seconds=59))
-
-
-@pytest.mark.parametrize(
-    ("response", "expected"),
-    [
-        ({"charge_plan_list": []}, False),
-        ({"charge_plan_list": [{"plan_type": "-1"}]}, False),
-        ({"charge_plan_list": [{"plan_type": "0"}]}, True),
-        ({"charge_plan_list": [{"plan_type": 0}]}, True),
-    ],
-)
-def test_charging_plan_active_state(response: dict, expected: bool) -> None:
-    assert _charging_plan_is_active(response) is expected
+def _services(tmp_path):
+    """Register real services and a real coordinator against an offline cloud API."""
+    hass = HomeAssistant(str(tmp_path))
+    api = SimpleNamespace(async_set_charging_plan=AsyncMock(return_value={}))
+    coordinator = GwmDataUpdateCoordinator(hass, api, cloud_client=SimpleNamespace())
+    coordinator.async_set_updated_data({"region": "eu", "vehicles": [{
+        "vin": VIN, "serial_number": "DISPLAY-VIN", "capabilities": {"charging_control": True},
+    }]})
+    entry = SimpleNamespace(runtime_data=SimpleNamespace(api=api, coordinator=coordinator))
+    hass.config_entries = SimpleNamespace(async_loaded_entries=lambda domain: [entry] if domain == DOMAIN else [])
+    _async_register_services(hass)
+    return hass, api, coordinator
 
 
 @pytest.mark.asyncio
-async def test_charging_service_resolves_a_cloud_vehicle(tmp_path) -> None:
-    calls: list[tuple[str, bool]] = []
-
-    class Api:
-        async def async_set_charging_plan(
-            self,
-            vin: str,
-            *,
-            enable: bool,
-        ) -> dict[str, object]:
-            calls.append((vin, enable))
-            return {}
-
-    class Coordinator:
-        def resolve_vehicle(self, identifier: str) -> dict[str, object] | None:
-            if identifier == "DISPLAY-VIN":
-                return {
-                    "vin": "LGWTEST0000000001",
-                    "capabilities": {"charging_control": True},
-                }
-            return None
-
-        def set_charging_plan_active(self, vin: str, active: bool) -> None:
-            calls.append((vin, active))
-
-    entry = SimpleNamespace(
-        data={CONF_CONNECTION_TYPE: CONNECTION_TYPE_CLOUD},
-        runtime_data=SimpleNamespace(api=Api(), coordinator=Coordinator()),
+async def test_charging_services_resolve_display_vin_and_publish_only_successful_changes(tmp_path):
+    hass, api, coordinator = _services(tmp_path)
+    await hass.services.async_call(DOMAIN, SERVICE_SET_CHARGING_PLAN, WINDOW, blocking=True)
+    api.async_set_charging_plan.assert_awaited_once_with(
+        VIN, enable=True, start_time=1767225600000, end_time=1767225900000, plan_type=0,
     )
-    hass = HomeAssistant(str(tmp_path))
-    hass.config_entries = SimpleNamespace(  # type: ignore[assignment]
-        async_loaded_entries=lambda domain: [entry] if domain == DOMAIN else []
-    )
-    _async_register_services(hass)
+    assert coordinator.charging_plan_active(VIN) is True
+    api.async_set_charging_plan.reset_mock()
+    await hass.services.async_call(DOMAIN, SERVICE_CLEAR_CHARGING_PLAN, {"vin": "DISPLAY-VIN"}, blocking=True)
+    api.async_set_charging_plan.assert_awaited_once_with(VIN, enable=False)
+    assert coordinator.charging_plan_active(VIN) is False
 
-    await hass.services.async_call(
-        DOMAIN,
-        SERVICE_CLEAR_CHARGING_PLAN,
-        {ATTR_VIN: "DISPLAY-VIN"},
-        blocking=True,
-    )
 
-    assert calls == [
-        ("LGWTEST0000000001", False),
-        ("LGWTEST0000000001", False),
-    ]
+@pytest.mark.asyncio
+@pytest.mark.parametrize("data", [
+    {key: value for key, value in WINDOW.items() if key != "vin"},
+    {key: value for key, value in WINDOW.items() if key != "start_time"},
+    {key: value for key, value in WINDOW.items() if key != "end_time"},
+    {**WINDOW, "start_time": "invalid-date"},
+    {**WINDOW, "end_time": "2026-01-01T02:04:59+02:00"},
+    {**WINDOW, "end_time": "2026-01-01T01:00:00+02:00"},
+    {**WINDOW, "vin": "UNKNOWN-VIN"},
+    {**WINDOW, "enable": False},
+], ids=["missing-vin", "missing-start", "missing-end", "invalid-date", "short-window", "reversed-window", "unknown-vin", "unexpected-enable"])
+async def test_invalid_charging_window_never_reaches_the_cloud(tmp_path, data):
+    hass, api, coordinator = _services(tmp_path)
+    with pytest.raises((vol.Invalid, ServiceValidationError)):
+        await hass.services.async_call(DOMAIN, SERVICE_SET_CHARGING_PLAN, data, blocking=True)
+    api.async_set_charging_plan.assert_not_called()
+    assert coordinator.charging_plan_active(VIN) is None
+
+
+@pytest.mark.asyncio
+async def test_rejected_charging_service_keeps_the_last_confirmed_state(tmp_path):
+    hass, api, coordinator = _services(tmp_path)
+    coordinator.set_charging_plan_active(VIN, False)
+    api.async_set_charging_plan.side_effect = GwmApiError(operation="set_charging_plan", api_code="550002")
+    with pytest.raises(HomeAssistantError) as raised:
+        await hass.services.async_call(DOMAIN, SERVICE_SET_CHARGING_PLAN, WINDOW, blocking=True)
+    assert raised.value.translation_key == "cloud_request_failed"
+    assert coordinator.charging_plan_active(VIN) is False
+
+
+@pytest.mark.parametrize("response,expected", [
+    ({"charge_plan_list": []}, False),
+    ({"charge_plan_list": [{"plan_type": "-1"}]}, False),
+    ({"charge_plan_list": [{"plan_type": "0"}]}, True),
+    ({"charge_plan_list": [{"plan_type": 0}]}, True),
+])
+def test_charging_plan_active_state(response, expected):
+    assert _charging_plan_is_active(response) is expected

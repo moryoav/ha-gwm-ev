@@ -8,7 +8,7 @@ from urllib.parse import urlsplit
 
 import pytest
 import pytest_asyncio
-from test_china_client import (
+from support.china import (
     BEAN_COMMAND_ID,
     BEAN_VIN,
     FIXTURE,
@@ -24,13 +24,29 @@ from custom_components.gwm_ora.gwm_client.china_crypto import bean_tech_sign
 from custom_components.gwm_ora.gwm_client.commands import ChinaVehicleControlCommand
 from custom_components.gwm_ora.gwm_client.models import VehicleIdentifier
 
+CHARGING_REQUEST_METHODS = {
+    "get_bean_tech_charge_setting": "GET",
+    "set_bean_tech_charging_mode": "POST",
+    "set_bean_tech_charge_window": "POST",
+    "get_bean_tech_battery_heating_appointment": "POST",
+    "get_bean_tech_switch_status": "GET",
+    "set_bean_tech_charge_soc": "POST",
+    "appointment_on": "POST",
+    "appointment_off": "POST",
+    "battery_gun_heat": "POST",
+    "battery_gun_heat_stop": "POST",
+    "battery_initiative_heat": "POST",
+    "battery_initiative_heat_stop": "POST",
+    "charge_result": "GET",
+}
+CHARGING_REQUEST_KINDS = list(CHARGING_REQUEST_METHODS)
+# The appointment read uses a signed POST, despite its Python method name.
+CHARGING_POST_KINDS = [
+    kind for kind, method in CHARGING_REQUEST_METHODS.items() if method == "POST"
+]
 
-@pytest_asyncio.fixture(params=[
-    "get_bean_tech_charge_setting", "set_bean_tech_charging_mode", "set_bean_tech_charge_window",
-    "get_bean_tech_battery_heating_appointment", "get_bean_tech_switch_status", "set_bean_tech_charge_soc",
-    "appointment_on", "appointment_off", "battery_gun_heat", "battery_gun_heat_stop",
-    "battery_initiative_heat", "battery_initiative_heat_stop", "charge_result",
-])
+
+@pytest_asyncio.fixture
 async def charging_request(request):
     kind = request.param
     transport = _FakeTransport(acquire_vehicles=[FIXTURE["responses"]["discovery"]],
@@ -54,10 +70,13 @@ async def charging_request(request):
         kwargs = {"set_bean_tech_charging_mode": {"enable": True}, "set_bean_tech_charge_soc": {"percent": 80},
             "set_bean_tech_charge_window": {"start_time": "21:00"}}.get(kind, {})
         await getattr(client, kind)(identifier, **kwargs)
-    return transport.calls[-1]
+    captured = transport.calls[-1]
+    assert captured.method == CHARGING_REQUEST_METHODS[kind]
+    return captured
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("charging_request", CHARGING_REQUEST_KINDS, indirect=True)
 @pytest.mark.parametrize("mutation", ["http", "host", "port", "path", "query", "fragment", "method", "service", "body", "signature", "pin", "vin", "nonce", "token", "content_type"])
 async def test_charging_transport_rejects_cross_route_and_authentication_mutations(charging_request, mutation):
     request = charging_request
@@ -99,14 +118,22 @@ def _resigned(request, body):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("charging_request", ["charge_result"], indirect=True)
+@pytest.mark.parametrize("query", [
+    "seqNo=x&msgType=charge",
+    "bad=x&vin=x&msgType=charge",
+    "seqNo=%FF&vin=x&msgType=charge",
+])
+async def test_charging_result_rejects_malformed_queries(charging_request, query):
+    with pytest.raises(ValueError):
+        replace(charging_request, url=charging_request.url.split("?")[0] + "?" + query)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("charging_request", CHARGING_POST_KINDS, indirect=True)
 async def test_charging_transport_rejects_signed_malformed_schemas(charging_request):
     request = charging_request
-    if request.body is None:
-        if request.operation == "get_remote_command_result":
-            for query in ("seqNo=x&msgType=charge", "bad=x&vin=x&msgType=charge", "seqNo=%FF&vin=x&msgType=charge"):
-                with pytest.raises(ValueError):
-                    replace(request, url=request.url.split("?")[0] + "?" + query)
-        return
+    assert request.body is not None
     original = json.loads(request.body)
     bad_bodies = [None, [], {}, {**original, "unexpected": 1}]
     for field in original:

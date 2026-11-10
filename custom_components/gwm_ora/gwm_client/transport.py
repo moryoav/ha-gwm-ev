@@ -12,7 +12,7 @@ import aiohttp
 from yarl import URL
 
 from . import _auth_diagnostics as auth_diagnostics
-from ._diagnostics import log_failure, log_request, log_response
+from ._diagnostics import log_discovery_rejection, log_failure, log_request, log_response
 from ._protocol import _Deadline, _TransportRequest, _TransportResponse
 from .errors import (
     GwmClientError,
@@ -143,6 +143,7 @@ class AiohttpTransport:
         auth_exchange = auth_diagnostics.begin_request(
             request, connect_timeout=connect_timeout, read_timeout=read_timeout, remaining=remaining,
         )
+        discovery_started = loop.time() if operation == "acquire_vehicles" else None
         failure: GwmClientError | None = None
         diagnostic_cause: BaseException | None = None
         try:
@@ -168,8 +169,21 @@ class AiohttpTransport:
                     auth_exchange, status=response.status, headers=response.headers,
                     version=getattr(response, "version", None),
                 )
-                result = await self._read_response(response, operation=operation)
-                log_response(request, result)
+                try:
+                    result = await self._read_response(response, operation=operation)
+                except GwmClientError as error:
+                    if discovery_started is not None:
+                        log_discovery_rejection(
+                            request, error, status=response.status, headers=response.headers,
+                            elapsed_seconds=loop.time() - discovery_started,
+                        )
+                    raise
+                if discovery_started is None:
+                    log_response(request, result)
+                else:
+                    log_response(
+                        request, result, headers=response.headers, elapsed_seconds=loop.time() - discovery_started,
+                    )
                 auth_diagnostics.response_body(auth_exchange, result.body)
                 return result
         except asyncio.CancelledError as error:

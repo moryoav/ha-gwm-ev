@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -14,20 +15,20 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import UpdateFailed
 
-from custom_components.gwm_ora.cloud_commands import GwmCommandApi
 from custom_components.gwm_ora.coordinator import GwmDataUpdateCoordinator
 from custom_components.gwm_ora.gwm_client import GwmApiError, GwmAuthenticationError, GwmNetworkError
 
 
 def _coordinator_with(vehicles: list[dict]) -> GwmDataUpdateCoordinator:
-    # Bypass __init__ (needs a real hass/api); resolve_vehicle only reads .data.
-    coordinator = GwmDataUpdateCoordinator.__new__(GwmDataUpdateCoordinator)
-    coordinator.data = {"vehicles": vehicles}
-    coordinator._charging_plan_active = {}
+    coordinator = GwmDataUpdateCoordinator(
+        HomeAssistant("synthetic-config"), SimpleNamespace(), cloud_client=SimpleNamespace(),
+    )
+    coordinator.async_set_updated_data({"vehicles": vehicles})
     return coordinator
 
 
-def test_resolve_vehicle_matches_encoded_vin_or_display_serial() -> None:
+@pytest.mark.asyncio
+async def test_resolve_vehicle_matches_encoded_vin_or_display_serial() -> None:
     coordinator = _coordinator_with(
         [{"vin": "ENCODED123", "serial_number": "LGWTEST00XX000001"}]
     )
@@ -42,7 +43,8 @@ def test_resolve_vehicle_matches_encoded_vin_or_display_serial() -> None:
     assert coordinator.resolve_vehicle("NOPE") is None
 
 
-def test_vehicle_lookup_stays_strict_on_encoded_vin() -> None:
+@pytest.mark.asyncio
+async def test_vehicle_lookup_stays_strict_on_encoded_vin() -> None:
     coordinator = _coordinator_with(
         [{"vin": "ENCODED123", "serial_number": "LGWTEST00XX000001"}]
     )
@@ -51,9 +53,9 @@ def test_vehicle_lookup_stays_strict_on_encoded_vin() -> None:
     assert coordinator.vehicle("LGWTEST00XX000001") is None
 
 
-def test_charging_plan_state_is_kept_per_vehicle() -> None:
+@pytest.mark.asyncio
+async def test_charging_plan_state_is_kept_per_vehicle() -> None:
     coordinator = _coordinator_with([])
-    coordinator.async_update_listeners = lambda: None
 
     coordinator.set_charging_plan_active("VIN-A", True)
     coordinator.set_charging_plan_active("VIN-B", False)
@@ -76,12 +78,14 @@ async def test_cloud_coordinator_uses_configured_account_interval() -> None:
         update_interval_seconds=120,
     )
 
-    assert await coordinator._async_update_data() == {"region": "eu", "vehicles": []}
+    await coordinator.async_refresh()
+    assert coordinator.data == {"region": "eu", "vehicles": []}
+    assert coordinator.last_update_success
     assert coordinator.update_interval.total_seconds() == 120
 
 
 @pytest.mark.asyncio
-async def test_cloud_refresh_keeps_latest_remote_command_status() -> None:
+async def test_cloud_refresh_keeps_latest_remote_command_status(monkeypatch) -> None:
     class CloudClient:
         async def async_get_vehicle_data(self) -> dict:
             return {
@@ -100,7 +104,7 @@ async def test_cloud_refresh_keeps_latest_remote_command_status() -> None:
         api,
         cloud_client=CloudClient(),  # type: ignore[arg-type]
     )
-    coordinator.data = await coordinator._async_update_data()
+    await coordinator.async_refresh()
     coordinator.async_track_command(
         {
             "id": "completed-command",
@@ -110,18 +114,38 @@ async def test_cloud_refresh_keeps_latest_remote_command_status() -> None:
         }
     )
 
-    refreshed = await coordinator._async_update_data()
+    await coordinator.async_refresh()
+    refreshed = coordinator.data
 
     assert refreshed["vehicles"][0]["command_status"] == (
         "A/C: completed - Success [0]"
     )
 
-    api.async_refresh.return_value = await CloudClient().async_get_vehicle_data()
-    await coordinator._async_refresh_after_completed_command()
+    api.async_refresh.return_value = {
+        "region": "eu", "vehicles": [{
+            "vin": "SYNTHETIC-VIN", "command_status": "No remote command has run yet", "values": {"soc": 42},
+        }],
+    }
+    api.async_get_command.return_value = {
+        "id": "polled-command", "vin": "SYNTHETIC-VIN", "state": "completed",
+        "status": "A/C: completed - Success [0]",
+    }
 
-    assert coordinator.data["vehicles"][0]["command_status"] == (
-        "A/C: completed - Success [0]"
-    )
+    async def immediate_poll(_delay):
+        return None
+
+    monkeypatch.setattr("custom_components.gwm_ora.coordinator.asyncio.sleep", immediate_poll)
+    coordinator.async_track_command({
+        "id": "polled-command", "vin": "SYNTHETIC-VIN", "state": "in_progress", "status": "A/C: pending",
+    })
+    await coordinator._command_tasks["polled-command"]
+    api.async_refresh.assert_awaited_once()
+
+    assert coordinator.data == {
+        "region": "eu", "vehicles": [{
+            "vin": "SYNTHETIC-VIN", "command_status": "A/C: completed - Success [0]", "values": {"soc": 42},
+        }],
+    }
 
 
 @pytest.mark.asyncio
@@ -132,12 +156,10 @@ async def test_cloud_coordinator_runs_owned_charging_cleanup_after_each_refresh(
         async def async_get_vehicle_data(self) -> dict[str, object]:
             return {"region": "eu", "vehicles": []}
 
-    api = object.__new__(GwmCommandApi)
-
     async def cleanup(entry_data: dict[str, object]) -> None:
         calls.append(entry_data)
 
-    api.async_cleanup_owned_charging_plans = cleanup  # type: ignore[method-assign]
+    api = SimpleNamespace(async_cleanup_owned_charging_plans=cleanup)
     coordinator = GwmDataUpdateCoordinator(
         HomeAssistant("synthetic-config"),
         api,
@@ -145,7 +167,9 @@ async def test_cloud_coordinator_runs_owned_charging_cleanup_after_each_refresh(
     )
     coordinator.config_entry = type("Entry", (), {"data": {"region": "eu"}})()
 
-    assert await coordinator._async_update_data() == {"region": "eu", "vehicles": []}
+    await coordinator.async_refresh()
+    assert coordinator.data == {"region": "eu", "vehicles": []}
+    assert coordinator.last_update_success
     assert calls == [{"region": "eu"}]
 
     async def failed_cleanup(entry_data: dict[str, object]) -> None:
@@ -153,7 +177,9 @@ async def test_cloud_coordinator_runs_owned_charging_cleanup_after_each_refresh(
         raise ValueError("synthetic storage failure")
 
     api.async_cleanup_owned_charging_plans = failed_cleanup  # type: ignore[method-assign]
-    assert await coordinator._async_update_data() == {"region": "eu", "vehicles": []}
+    await coordinator.async_refresh()
+    assert coordinator.data == {"region": "eu", "vehicles": []}
+    assert coordinator.last_update_success
 
 
 @pytest.mark.asyncio
@@ -186,8 +212,9 @@ async def test_cloud_coordinator_classifies_refresh_failures(
         cloud_client=cloud_client,  # type: ignore[arg-type]
     )
 
-    with pytest.raises(expected):
-        await coordinator._async_update_data()
+    await coordinator.async_refresh()
+    assert not coordinator.last_update_success
+    assert isinstance(coordinator.last_exception, expected)
     assert cloud_client.retired is isinstance(error, GwmAuthenticationError)
 
 
@@ -207,17 +234,18 @@ async def test_cloud_coordinator_surfaces_only_sanitized_api_failure_metadata(
         cloud_client=CloudClient(),  # type: ignore[arg-type]
     )
 
-    with caplog.at_level(logging.WARNING), pytest.raises(UpdateFailed) as raised:
-        await coordinator._async_update_data()
+    with caplog.at_level(logging.WARNING):
+        await coordinator.async_refresh()
 
-    assert str(raised.value) == (
+    assert not coordinator.last_update_success
+    assert str(coordinator.last_exception) == (
         "GWM cloud api_error during get_last_status (API code 607099)"
     )
-    assert caplog.messages[-1] == (
+    assert (
         "GWM cloud refresh failed: region=aus type=GwmApiError "
         "category=api_error operation=get_last_status api_code=607099 "
         "http_status=None retry_after_seconds=None"
-    )
+    ) in caplog.messages
 
 
 @pytest.mark.asyncio
@@ -274,8 +302,10 @@ async def test_command_terminal_callback_runs_once_after_result_or_deadline(monk
     if outcome == "errors":
         api.async_get_command.side_effect = GwmNetworkError()
     coordinator = GwmDataUpdateCoordinator(HomeAssistant("synthetic-config"), api, cloud_client=object())
-    coordinator.data = {"region": "cn", "vehicles": []}
-    coordinator._async_refresh_after_completed_command = AsyncMock()
+    initial_data = {"region": "cn", "vehicles": []}
+    refreshed_data = {"region": "cn", "vehicles": [{"vin": "SYNTHETIC-REFRESHED", "values": {"soc": 42}}]}
+    coordinator.data = initial_data
+    api.async_refresh.return_value = refreshed_data
     callback = AsyncMock()
     command = {"id": "command", "state": initial}
     coordinator.async_track_command(command, on_terminal=callback)
@@ -292,7 +322,8 @@ async def test_command_terminal_callback_runs_once_after_result_or_deadline(monk
         assert elapsed[0] == 130
     else:
         callback.assert_awaited_once_with(api.async_get_command.return_value)
-        assert coordinator._async_refresh_after_completed_command.await_count == int(outcome == "completed")
+        assert api.async_refresh.await_count == int(outcome == "completed")
+        assert coordinator.data == (refreshed_data if outcome == "completed" else initial_data)
 
 
 @pytest.mark.asyncio

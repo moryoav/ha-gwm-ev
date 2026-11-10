@@ -264,6 +264,8 @@
       "window_front_passenger": { "name": "Front passenger window" },
       "window_rear_driver_side": { "name": "Rear driver-side window" },
       "window_rear_passenger_side": { "name": "Rear passenger-side window" },
+      "window_rear_left": { "name": "Rear-left window" },
+      "window_rear_right": { "name": "Rear-right window" },
       "door_front_driver": { "name": "Front driver door" },
       "door_front_passenger": { "name": "Front passenger door" },
       "door_rear_driver_side": { "name": "Rear driver-side door" },

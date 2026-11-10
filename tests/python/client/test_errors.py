@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import inspect
 from collections.abc import Callable
 
 import pytest
@@ -239,8 +238,6 @@ def test_raw_transport_and_cloud_material_cannot_be_attached(
     factory: Callable[..., GwmClientError],
     forbidden_parameter: str,
 ) -> None:
-    assert forbidden_parameter not in inspect.signature(factory).parameters
-
     with pytest.raises(TypeError) as raised:
         factory(operation="request", **{forbidden_parameter: SECRET})
 

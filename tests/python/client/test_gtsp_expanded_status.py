@@ -4,10 +4,9 @@ import logging
 from datetime import UTC, datetime
 
 import pytest
-from test_china_gtsp import IDENTIFIER, LOGGER, SECRET, mapped
+from support.gtsp import IDENTIFIER, LOGGER, SECRET, mapped
 
 from custom_components.gwm_ora.gwm_client import CloudVehicle, CloudVehicleBasics, map_vehicle_snapshot
-from custom_components.gwm_ora.gwm_client.china_gtsp import _BINARY_FIELDS, _WINDOW_FIELDS
 
 
 def snapshot(status):
@@ -67,20 +66,39 @@ def test_tire_pressure_bounds_and_explicit_units(value, expected):
 
 @pytest.mark.parametrize("raw,expected", [(0, "0"), (1, "1"), ("1", "1"), (2, None), (-1, None),
     (255, None), (True, None), ("1,%", None), ("bad", None), (1.5, None)])
-@pytest.mark.parametrize("field,code", list(_BINARY_FIELDS.items()))
-def test_only_binary_door_codes_reach_the_shared_mapper(field, code, raw, expected):
+def test_gtsp_binary_door_values(raw, expected):
+    items = {item.code: item.value for item in mapped({"door": {"maindrvedoorsts": raw}}).items}
+    assert items.get("2206002") == expected
+
+
+@pytest.mark.parametrize("field,code", [("maindrvedoorlocksts", "2208001"), ("maindrvedoorsts", "2206002"), ("vicedoorsts", "2206004"), ("lbdoorsts", "2206003"), ("rbdoorsts", "2206005")])
+@pytest.mark.parametrize("raw,expected", [(0, "0"), (1, "1"), (2, None)])
+def test_gtsp_door_fields_keep_independent_signal_codes(field, code, raw, expected):
     items = {item.code: item.value for item in mapped({"door": {field: raw}}).items}
-    assert items.get(code) == expected
+    actual = {key: value for key, value in items.items() if key in {"2208001", "2206002", "2206003", "2206004", "2206005"}}
+    assert actual == ({} if expected is None else {code: expected})
 
 
 @pytest.mark.parametrize("raw,expected", [(0, True), (1, True), (2, True), (3, True), (4, True),
     (5, False), (6, None), (255, None), (-1, None), (True, None), ("5,%", None), ("bad", None)])
+
+def test_gtsp_window_position_values(raw, expected):
+    assert snapshot({"windows": {"lfwinposnsts": raw}}).values.window_front_driver_open is expected
+
+
+
 @pytest.mark.parametrize("field,key", [
     ("lfwinposnsts", "window_front_driver_open"), ("rfwinposnsts", "window_front_passenger_open"),
     ("lbwinposnsts", "window_rear_driver_side_open"), ("rbwinposnsts", "window_rear_passenger_side_open"),
 ])
-def test_provisional_window_enum_and_rear_sides(field, key, raw, expected):
-    assert getattr(snapshot({"windows": {field: raw}}).values, key) is expected
+@pytest.mark.parametrize("raw,expected", [(0, True), (5, False), (6, None)])
+def test_gtsp_window_sides_stay_independent(field, key, raw, expected):
+    values = snapshot({"windows": {field: raw}}).values
+    actual = {name: getattr(values, name) for name in (
+        "window_front_driver_open", "window_front_passenger_open",
+        "window_rear_driver_side_open", "window_rear_passenger_side_open",
+    )}
+    assert actual == {name: expected if name == key else None for name in actual}
 
 
 def test_lock_is_provisional_read_only_and_not_navinfo_network_conversion():
@@ -119,4 +137,4 @@ def test_new_model_fields_stay_raw_and_shape_logging_does_not_expose_values(capl
     assert result.values.ac_active is None
     assert result.values.sunroof_position_code is None
     assert result.values.charging_active is None
-    assert set(_WINDOW_FIELDS.values()).isdisjoint(result.raw_items)
+    assert {"2210001", "2210002", "2210003", "2210004"}.isdisjoint(result.raw_items)

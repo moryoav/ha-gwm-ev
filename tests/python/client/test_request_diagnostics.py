@@ -6,16 +6,36 @@ import asyncio
 import json
 import logging
 import ssl
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import cast
 from unittest.mock import Mock
 
 import aiohttp
 import pytest
+from support.overseas import _default_context, _QueueTransport
 
+from custom_components.gwm_ora.gwm_client import (
+    ClimateCommand,
+    CloseWindowsCommand,
+    DoorLockCommand,
+    GwmClient,
+    GwmClientConfig,
+    GwmSession,
+    VehicleIdentifier,
+)
 from custom_components.gwm_ora.gwm_client import _diagnostics as diagnostics
 from custom_components.gwm_ora.gwm_client._protocol import _Deadline, _TransportRequest, _TransportResponse
-from custom_components.gwm_ora.gwm_client.errors import GwmApiError, GwmNetworkError, GwmSchemaError
+from custom_components.gwm_ora.gwm_client.errors import (
+    GwmApiError,
+    GwmHttpError,
+    GwmNetworkError,
+    GwmProtocolError,
+    GwmRedirectError,
+    GwmResponseTooLargeError,
+    GwmSchemaError,
+)
+from custom_components.gwm_ora.gwm_client.tls import LEGACY_CIPHER_STRING
 from custom_components.gwm_ora.gwm_client.transport import AiohttpTransport
 
 LOGGER = "custom_components.gwm_ora.gwm_client._diagnostics"
@@ -70,8 +90,12 @@ def test_operation_alias_is_preserved(operation, error_type):
     (b"[" * 1200 + b"0" + b"]" * 1200, "json_too_deep"),
     pytest.param(b" " * (64 * 1024 + 1), "diagnostic_size_limit", id="diagnostic-size-limit"),
 ])
-def test_envelope_reason(body, reason):
-    assert diagnostics._envelope_shape(body).reason == reason
+def test_response_logs_the_bounded_envelope_reason(caplog, body, reason):
+    caplog.set_level(logging.DEBUG, logger=LOGGER)
+    diagnostics.log_response(_request(), _TransportResponse(200, {}, body))
+    assert f"envelope_reason={reason}" in caplog.text
+    assert len(caplog.records) == 1
+    assert SECRET not in caplog.text
 
 
 @pytest.mark.parametrize(("code", "safe"), [
@@ -81,8 +105,11 @@ def test_envelope_reason(body, reason):
     ([], None), (10**12, None), (-10**11, None), (10**100, None),
     (999_999_999_999, "999999999999"), (-99_999_999_999, "-99999999999"),
 ])
-def test_numeric_code_is_bounded_and_never_coerces_unsafe_types(code, safe):
-    assert diagnostics._numeric_code(code) == safe
+def test_response_logs_only_bounded_numeric_codes(caplog, code, safe):
+    caplog.set_level(logging.DEBUG, logger=LOGGER)
+    diagnostics.log_response(_request(), _TransportResponse(200, {}, json.dumps({"code": code}).encode()))
+    assert f"api_code={safe} api_code_type=" in caplog.text
+    assert SECRET not in caplog.text
 
 
 @pytest.mark.parametrize(("operation", "path", "method", "stage"), [
@@ -152,8 +179,11 @@ def test_disabled_debug_does_not_parse_or_log(caplog, monkeypatch):
     ("login", "userAuth/checkSecurityPassword"),
     ("refresh_token", "vehicle/T5/sendCmd"),
     ("send_climate_command", "private/unknown"),
+    ("acquire_vehicles", "vehicle/getLastStatus"),
+    ("get_last_status", "globalapp/vehicle/acquireVehicles"),
 ])
 def test_authentication_and_unknown_routes_are_not_inspected(caplog, monkeypatch, operation, path):
+    """Skip authentication and mismatched routes before reading their bodies."""
     caplog.set_level(logging.DEBUG, logger=LOGGER)
     parser = Mock(side_effect=AssertionError("must not parse"))
     monkeypatch.setattr(diagnostics, "_envelope_shape", parser)
@@ -166,8 +196,9 @@ def test_authentication_and_unknown_routes_are_not_inspected(caplog, monkeypatch
 
 
 def test_logging_failure_is_nonfatal(monkeypatch, caplog):
+    """Keep diagnostic logger failures from escaping to the caller."""
     caplog.set_level(logging.DEBUG, logger=LOGGER)
-    monkeypatch.setattr(diagnostics._LOGGER, "debug", Mock(side_effect=RuntimeError(SECRET)))
+    monkeypatch.setattr(diagnostics._LOGGER, "log", Mock(side_effect=RuntimeError(SECRET)))
     request = _request()
     diagnostics.log_request(request)
     diagnostics.log_response(request, _TransportResponse(200, {}, b"{}"))
@@ -185,14 +216,18 @@ def test_transport_failure_does_not_log_exception_text_or_mutated_category(caplo
 
 
 class _ResponseContext:
-    def __init__(self, body, error=None):
+    def __init__(self, body, error=None, *, status=200, headers=None):
+        """Prepare a synthetic response or an error entering its context."""
         self.body = body
         self.error = error
+        self.status = status
+        self.headers = {} if headers is None else headers
 
     async def __aenter__(self):
+        """Return response metadata and expose the synthetic body stream."""
         if self.error is not None:
             raise self.error
-        return SimpleNamespace(status=200, headers={}, content=self)
+        return SimpleNamespace(status=self.status, headers=self.headers, content=self)
 
     async def __aexit__(self, *_args):
         return None
@@ -201,19 +236,25 @@ class _ResponseContext:
         yield self.body
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("failure", [False, True])
-async def test_real_transport_preserves_bytes_request_count_and_failure(caplog, failure):
-    caplog.set_level(logging.DEBUG, logger=LOGGER)
-    body = b'{"code":"000000"}'
-    context = _ResponseContext(body, OSError(SECRET) if failure else None)
+def _transport(context):
+    """Create the real transport around a session with a controlled response."""
     session = SimpleNamespace(
         trust_env=False, headers={}, cookie_jar=aiohttp.DummyCookieJar(),
         _raise_for_status=False, _retry_connection=False, _middlewares=(), _trace_configs=[],
         _request_class=aiohttp.ClientRequest, _response_class=aiohttp.ClientResponse,
         closed=False, request=Mock(return_value=context),
     )
-    transport = AiohttpTransport(cast(aiohttp.ClientSession, session))
+    return AiohttpTransport(cast(aiohttp.ClientSession, session)), session
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", [False, True])
+async def test_real_transport_preserves_bytes_request_count_and_failure(caplog, failure):
+    """Preserve payload bytes, request count, and sanitized network failures."""
+    caplog.set_level(logging.DEBUG, logger=LOGGER)
+    body = b'{"code":"000000"}'
+    context = _ResponseContext(body, OSError(SECRET) if failure else None)
+    transport, session = _transport(context)
     request = _request()
     call = transport.execute(
         request, deadline=_Deadline(asyncio.get_running_loop().time() + 10),
@@ -232,6 +273,137 @@ async def test_real_transport_preserves_bytes_request_count_and_failure(caplog, 
     assert SECRET not in caplog.text
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("mime", "body", "expected"),
+    [
+        (
+            "application/json",
+            json.dumps({"code": 550004, "description": SECRET, "data": {"vin": SECRET}}).encode(),
+            ("content_type=json", "root_type=object", "api_code=550004 api_code_type=integer", "html_hint=False"),
+        ),
+        (
+            "text/html",
+            f"<!DOCTYPE html><html>{SECRET}</html>".encode(),
+            ("content_type=html", "api_code=None", "envelope_reason=invalid_json", "html_hint=True"),
+        ),
+    ],
+)
+async def test_russia_discovery_400_logs_safe_metadata_and_preserves_http_error(caplog, mime, body, expected):
+    """Report a discovery 400 at startup without exposing response or request values."""
+    caplog.set_level(logging.WARNING, logger=LOGGER)
+    headers = {
+        "Content-Type": f"{mime}; private={SECRET}",
+        "Server": f"nginx {SECRET}",
+        "X-Request-ID": SECRET,
+        "X-Aliyun-Waf": SECRET,
+        "Set-Cookie": f"acw_tc={SECRET}",
+    }
+    transport, session = _transport(_ResponseContext(body, status=400, headers=headers))
+    tls = _default_context()
+    tls.set_ciphers(LEGACY_CIPHER_STRING)
+    async with GwmClient(
+        GwmClientConfig("rus"), GwmSession("RU", "0123456789abcdef", SECRET, tls), transport=transport,
+    ) as client:
+        with pytest.raises(GwmHttpError) as raised:
+            await client.acquire_vehicles()
+    assert raised.value.status == 400
+    session.request.assert_called_once()
+    (record,) = (record for record in caplog.records if record.name == LOGGER)
+    assert record.levelno == logging.WARNING
+    message = record.getMessage()
+    assert "operation=acquire_vehicles stage=vehicle_discovery http_status=400" in message
+    assert f"body_bytes={len(body)}" in message
+    assert "server_family=nginx" in message
+    assert "waf_header_hint=True" in message
+    assert "waf_cookie_hint=True" in message
+    assert "request_id_present=True" in message
+    assert "region=rus gateway=app_v1 method=GET tls_mode=russia_bootstrap_mtls" in message
+    assert all(value in message for value in expected)
+    assert SECRET not in repr(record.args)
+    assert SECRET not in message
+    assert "gwmcloud.com" not in message
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("status", "headers", "error_type", "expected"),
+    [
+        (302, {"Location": f"https://example.invalid/{SECRET}"}, GwmRedirectError, "location_present=True"),
+        (400, {"Content-Encoding": "gzip"}, GwmProtocolError, "content_encoding=gzip"),
+        (400, {"Content-Length": "999999999"}, GwmResponseTooLargeError, "declared_body_bytes=999999999"),
+        (400, {"Content-Length": SECRET}, GwmProtocolError, "declared_body_bytes=None"),
+    ],
+)
+async def test_rejected_discovery_logs_headers_without_reading_body(caplog, status, headers, error_type, expected):
+    """Keep HTTP metadata when transport rejects a discovery response before reading."""
+    caplog.set_level(logging.WARNING, logger=LOGGER)
+    context = _ResponseContext(
+        SECRET.encode(), status=status, headers={**headers, "Content-Type": "text/html", "X-Request-ID": SECRET},
+    )
+    context.iter_chunked = Mock(side_effect=AssertionError("rejected body must not be read"))
+    transport, session = _transport(context)
+    request = _request("acquire_vehicles", "globalapp/vehicle/acquireVehicles", "GET")
+    with pytest.raises(error_type) as raised:
+        await transport.execute(
+            request, deadline=_Deadline(asyncio.get_running_loop().time() + 10),
+            connect_timeout=3, read_timeout=3,
+        )
+    session.request.assert_called_once()
+    context.iter_chunked.assert_not_called()
+    (record,) = (record for record in caplog.records if record.name == LOGGER)
+    assert record.levelno == logging.WARNING
+    message = record.getMessage()
+    assert f"operation=acquire_vehicles stage=vehicle_discovery http_status={status}" in message
+    assert f"response_rejected=True category={raised.value.category}" in message
+    assert "content_type=html" in message
+    assert "request_id_present=True" in message
+    assert expected in message
+    assert SECRET not in repr(record.args)
+
+
+@pytest.mark.parametrize(
+    ("headers", "declared_bytes", "server_date", "skew_seconds", "retry_seconds"),
+    [
+        (
+            {"Content-Length": "99", "Date": "Tue, 10 Nov 2026 08:00:15 GMT", "Retry-After": "003"},
+            99, "valid", 15, 3,
+        ),
+        ({}, None, "missing_or_oversized", None, None),
+        ({"Date": SECRET, "Retry-After": SECRET}, None, "invalid", None, None),
+    ],
+)
+def test_discovery_logs_bounded_header_and_timing_values(
+    caplog, monkeypatch, headers, declared_bytes, server_date, skew_seconds, retry_seconds,
+):
+    """Convert safe header and timing metadata without echoing invalid inputs."""
+    caplog.set_level(logging.WARNING, logger=LOGGER)
+    now = datetime(2026, 11, 10, 8, tzinfo=UTC)
+    monkeypatch.setattr(diagnostics, "datetime", SimpleNamespace(now=lambda _tz: now))
+    request = _request("acquire_vehicles", "globalapp/vehicle/acquireVehicles", "GET")
+    diagnostics.log_response(
+        request, _TransportResponse(400, {}, b"{}"), headers=headers, elapsed_seconds=0.125,
+    )
+    (record,) = (record for record in caplog.records if record.name == LOGGER)
+    message = record.getMessage()
+    assert "elapsed_ms=125" in message
+    assert f"declared_body_bytes={declared_bytes}" in message
+    assert f"server_date={server_date} clock_skew_seconds={skew_seconds}" in message
+    assert f"retry_after_seconds={retry_seconds}" in message
+    assert SECRET not in repr(record.args)
+
+
+def test_successful_discovery_remains_opt_in(caplog, monkeypatch):
+    """Avoid parsing routine successful discovery responses at the default level."""
+    caplog.set_level(logging.WARNING, logger=LOGGER)
+    parser = Mock(side_effect=AssertionError("must not parse"))
+    monkeypatch.setattr(diagnostics, "_envelope_shape", parser)
+    request = _request("acquire_vehicles", "globalapp/vehicle/acquireVehicles", "GET")
+    diagnostics.log_response(request, _TransportResponse(200, {}, b"{}"))
+    parser.assert_not_called()
+    assert not caplog.records
+
+
 @pytest.mark.parametrize(("body", "expected_error"), [
     (b"not json", GwmSchemaError),
     (b"null", GwmSchemaError),
@@ -240,25 +412,47 @@ async def test_real_transport_preserves_bytes_request_count_and_failure(caplog, 
     (b'{"code":0,"data":null}', GwmApiError),
     (b'{"code":"000000","data":null}', None),
 ])
-def test_success_decoder_does_not_require_data(caplog, body, expected_error):
+@pytest.mark.asyncio
+async def test_code_only_acknowledgements_reach_the_public_client(caplog, body, expected_error):
     """Accept code-only acknowledgements while rejecting invalid envelopes."""
-
-    from custom_components.gwm_ora.gwm_client.client import _decode_envelope
 
     caplog.set_level(logging.DEBUG, logger=LOGGER)
     response = _TransportResponse(200, {}, body)
     diagnostics.log_response(_request(), response)
-    if expected_error is not None:
-        with pytest.raises(expected_error):
-            _decode_envelope(response, operation="send_climate_command")
-    else:
-        assert _decode_envelope(response, operation="send_climate_command") is None
+    client = GwmClient(
+        GwmClientConfig("aus"), GwmSession("AU", "0123456789abcdef", "SYNTHETIC-ACCESS", _default_context()),
+        transport=_QueueTransport([response]),
+    )
+    call = client.update_climate_defaults(VehicleIdentifier("LGWTEST0000000001"), temperature=21, operation_time_minutes=15)
+    try:
+        if expected_error is not None:
+            with pytest.raises(expected_error):
+                await call
+        else:
+            assert await call is None
+    finally:
+        await client.aclose()
 
 
+@pytest.mark.asyncio
 @pytest.mark.parametrize("operation", NEW_OPERATIONS)
-def test_client_error_sanitization_preserves_operation(operation):
-    from custom_components.gwm_ora.gwm_client.client import _sanitized_client_error
-
-    error = _sanitized_client_error(GwmSchemaError(operation=operation), operation=operation)
-    assert type(error) is GwmSchemaError
-    assert error.operation == operation
+async def test_public_client_preserves_the_operation_on_sanitized_failures(operation):
+    client = GwmClient(
+        GwmClientConfig("aus"), GwmSession("AU", "0123456789abcdef", "SYNTHETIC-ACCESS", _default_context()),
+        transport=_QueueTransport([GwmSchemaError(operation=operation)]),
+    )
+    identifier = VehicleIdentifier("LGWTEST0000000001")
+    calls = {
+        "get_charging_plan": lambda: client.get_charging_plan(identifier),
+        "get_remote_command_result": lambda: client.get_remote_command_results(identifier, "SYNTHETIC-COMMAND"),
+        "update_climate_defaults": lambda: client.update_climate_defaults(identifier, temperature=21, operation_time_minutes=15),
+        "send_climate_command": lambda: client.send_climate_command(ClimateCommand(identifier, "auto", 21, 15), security_password_hash="0" * 32),
+        "send_close_windows_command": lambda: client.send_close_windows_command(CloseWindowsCommand(identifier), security_password_hash="0" * 32),
+        "send_lock_command": lambda: client.send_lock_command(DoorLockCommand(identifier, True), security_password_hash="0" * 32),
+    }
+    try:
+        with pytest.raises(GwmSchemaError) as raised:
+            await calls[operation]()
+        assert raised.value.operation == operation
+    finally:
+        await client.aclose()

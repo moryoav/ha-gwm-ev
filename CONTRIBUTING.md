@@ -160,9 +160,9 @@ Please keep pull requests focused. A good pull request should:
 
 Before opening a pull request, test the parts you changed as much as practical.
 
-Run:
+I run Home Assistant tests on Linux or WSL, using the Python and Home Assistant versions in [the Python workflow](.github/workflows/python.yml). See [the test suite guide](tests/README.md) for its boundaries, shared fixtures, focused commands, and certificate renewal gate.
 
-```powershell
+```bash
 python -m ruff check custom_components tests/python scripts
 python -m mypy --follow-imports=silent custom_components/gwm_ora/gwm_client
 python -m compileall custom_components tests/python scripts

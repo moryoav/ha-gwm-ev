@@ -14,8 +14,6 @@ from homeassistant.components.climate import HVACMode
 from homeassistant.core import HomeAssistant
 
 from custom_components.gwm_ora.button import (
-    BEANTECH_REMOTE_ACTIONS,
-    CHINA_REMOTE_BUTTONS,
     GwmCabinCleanButton,
     GwmChinaRemoteButton,
     GwmCloseWindowsButton,
@@ -493,19 +491,19 @@ async def test_horn_lights_button_registration_and_press_are_region_isolated(reg
     added: list[Any] = []
     await async_setup_buttons(hass, entry, lambda entities: added.extend(entities))
     remote = [entity for entity in added if isinstance(entity, GwmChinaRemoteButton)]
-    expected = (
-        BEANTECH_REMOTE_ACTIONS if region == "cn" and platform == "beantech"
-        else {action for action, _ in CHINA_REMOTE_BUTTONS} if region == "cn" and platform == "navinfo"
-        else set()
-    )
-    assert {entity._action for entity in remote} == expected
-    for entity in remote:
-        if entity._action not in {"horn", "flash_lights", "horn_and_lights"}:
+    actions = {"remote_start", "remote_stop", "horn", "flash_lights", "horn_and_lights", "sunroof_close"}
+    if platform == "navinfo":
+        actions |= {"tailgate_open", "tailgate_close", "sunroof_tilt", "sunroof_half", "sunroof_full", "cabin_purge", "force_refresh"}
+    expected = actions if region == "cn" and platform in {"beantech", "navinfo"} else set()
+    by_id = {entity.unique_id: entity for entity in remote}
+    assert set(by_id) == {"SYNTHETIC-A_" + action for action in expected}
+    for action in ("horn", "flash_lights", "horn_and_lights"):
+        if action not in expected:
             continue
+        entity = by_id["SYNTHETIC-A_" + action]
         assert entity.available
-        assert entity.unique_id == "SYNTHETIC-A_" + entity._action
         await entity.async_press()
-        api.async_vehicle_control.assert_awaited_with("SYNTHETIC-A", entity._action)
+        api.async_vehicle_control.assert_awaited_with("SYNTHETIC-A", action)
         coordinator.async_track_command.assert_called_with({"id": "accepted", "state": "in_progress"})
         vehicle["capabilities"]["china_vehicle_commands"] = False
         assert not entity.available

@@ -50,6 +50,7 @@ from .gwm_client import (
     ChinaAuthState,
     ChinaClient,
     ChinaClientConfig,
+    ChinaCredentials,
     ChinaVehicleControlCommand,
     ClimateCommand,
     CloseWindowsCommand,
@@ -204,6 +205,14 @@ class _ChinaReadClient(Protocol):
     async def acquire_vehicles(self) -> tuple[CloudVehicle, ...]: ...
 
     async def get_last_status(self, identifier: VehicleIdentifier) -> CloudVehicleStatus: ...
+
+    async def refresh_session(
+        self,
+        credentials: ChinaCredentials,
+        state: ChinaAuthState,
+        *,
+        on_state: Callable[[ChinaAuthState], Awaitable[None]] | None = None,
+    ) -> ChinaAuthenticated: ...
 
     async def get_charging_plan(
         self,
@@ -498,6 +507,7 @@ class GwmCloudClient:
         self._client = client
         self._clock = clock or (lambda: datetime.now(UTC))
         self._bootstrap = bootstrap
+        self._china_partial_state: ChinaAuthState | None = None
         self._credentials = credentials
         self._state_store = state_store
         self._entry_data = dict(entry_data or {})
@@ -653,7 +663,7 @@ class GwmCloudClient:
     async def async_get_vehicle_data(self) -> dict[str, object]:
         """Perform one atomic account discovery/status/basics refresh."""
 
-        return await self._async_with_session_renewal(self._async_get_vehicle_data_once)
+        return await self._async_with_session_renewal(self._async_get_vehicle_data_once, retry_after_renewal=True)
 
     async def _async_get_vehicle_data_once(self) -> dict[str, object]:
         """Perform one account refresh without a session-renewal retry."""
@@ -757,7 +767,8 @@ class GwmCloudClient:
             lambda: self._async_get_climate_context_once(
                 identifier,
                 include_status=include_status,
-            )
+            ),
+            retry_after_renewal=True
         )
 
     async def _async_get_climate_context_once(
@@ -832,7 +843,10 @@ class GwmCloudClient:
 
         self._ensure_apac_read_only("get_charging_plan")
 
-        return await self._async_with_session_renewal(lambda: self._client.get_charging_plan(identifier))
+        return await self._async_with_session_renewal(
+            lambda: self._client.get_charging_plan(identifier),
+            retry_after_renewal=True,
+        )
 
     async def async_set_charging_plan(self, command: ChargingPlanCommand) -> None:
         """Set or clear the charging plan through the authenticated client."""
@@ -1065,7 +1079,8 @@ class GwmCloudClient:
         return await self._async_with_session_renewal(
             lambda: cast(_ChinaReadClient, self._client).get_bean_tech_comfort_modes(
                 identifier
-            )
+            ),
+            retry_after_renewal=True
         )
 
     async def async_set_bean_tech_comfort_mode(
@@ -1109,7 +1124,8 @@ class GwmCloudClient:
         return await self._async_with_session_renewal(
             lambda: cast(
                 _ChinaReadClient, self._client
-            ).get_bean_tech_cabin_clean_appointment(identifier)
+            ).get_bean_tech_cabin_clean_appointment(identifier),
+            retry_after_renewal=True
         )
 
     async def async_get_remote_command_results(
@@ -1123,50 +1139,62 @@ class GwmCloudClient:
             return await self._async_with_session_renewal(
                 lambda: cast(_ChinaReadClient, self._client).get_remote_command_results(
                     identifier, command_id, control_action=control_action
-                )
+                ),
+                retry_after_renewal=True,
             )
         return await self._async_with_session_renewal(
-            lambda: self._client.get_remote_command_results(identifier, command_id)
+            lambda: self._client.get_remote_command_results(identifier, command_id),
+            retry_after_renewal=True
         )
 
     async def _async_with_session_renewal[T](
         self,
         action: Callable[[], Awaitable[T]],
+        *,
+        retry_after_renewal: bool = False,
     ) -> T:
-        """Retry one overseas operation after one serialized token rotation."""
+        """Renew one regional session and replay only explicitly allowed reads."""
 
         if self.region == REGION_APAC:
             return await self._async_with_apac_session_renewal(action)
 
         async with self._session_renewal_lock:
             await self._async_flush_pending_auth_state()
-            observed_state = self._current_overseas_auth_state()
-        observed_access_token = observed_state.access_token if observed_state is not None else None
+            observed_state = self._current_auth_state()
         try:
             return await action()
         except (GwmAuthenticationError, GwmApiError) as error:
-            if observed_state is None or not is_overseas_session_expired(error):
+            if observed_state is None or not self._is_session_expired(error):
                 raise
             trigger = error
 
         try:
             async with self._session_renewal_lock:
                 await self._async_flush_pending_auth_state()
-                current_state = self._current_overseas_auth_state()
+                current_state = self._current_auth_state()
                 if current_state is None:
                     raise GwmAuthenticationError(
                         operation=trigger.operation,
                         api_code=trigger.api_code,
                     )
-                if current_state.access_token == observed_access_token:
-                    await self._async_renew_overseas_session(
-                        current_state,
-                        trigger=trigger,
-                    )
+                if current_state == observed_state or (
+                    type(current_state) is ChinaAuthState and not current_state.complete
+                ):
+                    try:
+                        await self._async_renew_session(current_state, trigger=trigger)
+                    except GwmApiError as renewal_error:
+                        risk_control_required = self.region == REGION_CHINA and renewal_error.api_code == "1013"
+                        if not self._is_session_expired(renewal_error) and not risk_control_required:
+                            raise
+                        raise GwmAuthenticationError(
+                            operation=renewal_error.operation, api_code=renewal_error.api_code,
+                        ) from None
+            if not retry_after_renewal:
+                raise GwmApiError(operation=trigger.operation, api_code=trigger.api_code)
             try:
                 return await action()
             except (GwmAuthenticationError, GwmApiError) as retry_error:
-                if not is_overseas_session_expired(retry_error):
+                if not self._is_session_expired(retry_error):
                     raise
                 raise GwmAuthenticationError(
                     operation=retry_error.operation,
@@ -1262,15 +1290,22 @@ class GwmCloudClient:
             self._vehicles = {vehicle.identifier.value: vehicle for vehicle in restored.vehicles}
         self._apac_validation_pending = False
 
-    async def _async_renew_overseas_session(
+    def _is_session_expired(self, error: GwmAuthenticationError | GwmApiError) -> bool:
+        if self.region == REGION_CHINA:
+            return type(error) is GwmAuthenticationError or (
+                type(error) is GwmApiError and error.api_code == "550004"
+            )
+        return is_overseas_session_expired(error)
+
+    async def _async_renew_session(
         self,
-        state: EuAuthState | AnzAuthState | RussiaAuthState,
+        state: EuAuthState | AnzAuthState | RussiaAuthState | ChinaAuthState,
         *,
         trigger: GwmAuthenticationError | GwmApiError,
     ) -> None:
         credentials = self._credentials
         if (
-            state.refresh_token is None
+            (state.g_refresh_token if isinstance(state, ChinaAuthState) else state.refresh_token) is None
             or credentials is None
             or credentials.region != self.region
         ):
@@ -1280,7 +1315,14 @@ class GwmCloudClient:
             )
         regional_credentials = credentials.client_credentials()
         client = cast(_OverseasReadClient, self._client)
-        if self.region == REGION_EU and type(state) is EuAuthState:
+        result: ChinaAuthenticated | EuAuthenticated | AnzAuthenticated | RussiaAuthenticated
+        if self.region == REGION_CHINA and type(state) is ChinaAuthState:
+            if type(regional_credentials) is not ChinaCredentials:
+                raise GwmAuthenticationError(operation=trigger.operation, api_code=trigger.api_code)
+            result = await cast(_ChinaReadClient, self._client).refresh_session(
+                regional_credentials, state, on_state=self._async_publish_china_partial_state,
+            )
+        elif self.region == REGION_EU and type(state) is EuAuthState:
             if type(regional_credentials) is not EuCredentials:
                 raise GwmAuthenticationError(
                     operation=trigger.operation,
@@ -1317,7 +1359,15 @@ class GwmCloudClient:
             )
         bootstrap = GwmCloudBootstrap.from_authentication(credentials, result)
         self._bootstrap = bootstrap
+        self._china_partial_state = None
         self._pending_auth_state = result.state
+        await self._async_flush_pending_auth_state()
+
+    async def _async_publish_china_partial_state(self, state: ChinaAuthState) -> None:
+        """Retain rotated G-App credentials before fallible platform initialization."""
+        self._china_partial_state = state
+        self._bootstrap = None
+        self._pending_auth_state = state
         await self._async_flush_pending_auth_state()
 
     async def _async_flush_pending_auth_state(self) -> None:
@@ -1349,13 +1399,17 @@ class GwmCloudClient:
         except Exception:
             raise GwmNetworkError(operation="refresh_token") from None
 
-    def _current_overseas_auth_state(
+    def _current_auth_state(
         self,
-    ) -> EuAuthState | AnzAuthState | RussiaAuthState | None:
+    ) -> EuAuthState | AnzAuthState | RussiaAuthState | ChinaAuthState | None:
+        if self.region == REGION_CHINA and self._china_partial_state is not None:
+            return self._china_partial_state
         bootstrap = self._bootstrap
         if bootstrap is None:
             return None
         state = bootstrap.state
+        if self.region == REGION_CHINA and type(state) is ChinaAuthState:
+            return state
         if self.region == REGION_EU and type(state) is EuAuthState:
             return state
         if self.region == REGION_ANZ and type(state) is AnzAuthState:
@@ -1389,6 +1443,7 @@ class GwmCloudClient:
         """Retire a rejected durable revision without logging its contents."""
 
         self._bootstrap = None
+        self._china_partial_state = None
         self._pending_auth_state = None
         if self.region == REGION_APAC:
             self._apac_validation_pending = False
@@ -1419,7 +1474,8 @@ class GwmCloudClient:
         return await self._async_with_session_renewal(
             lambda: cast(_ChinaReadClient, self._client).get_bean_tech_charge_setting(
                 identifier
-            )
+            ),
+            retry_after_renewal=True
         )
 
     async def async_set_bean_tech_charging_mode(
@@ -1447,7 +1503,8 @@ class GwmCloudClient:
         return await self._async_with_session_renewal(
             lambda: cast(_ChinaReadClient, self._client).get_bean_tech_switch_status(
                 identifier
-            )
+            ),
+            retry_after_renewal=True
         )
 
     async def async_get_bean_tech_battery_heating_appointment(
@@ -1459,7 +1516,8 @@ class GwmCloudClient:
         return await self._async_with_session_renewal(
             lambda: cast(
                 _ChinaReadClient, self._client
-            ).get_bean_tech_battery_heating_appointment(identifier)
+            ).get_bean_tech_battery_heating_appointment(identifier),
+            retry_after_renewal=True
         )
 
     async def async_set_bean_tech_battery_heating_appointment(

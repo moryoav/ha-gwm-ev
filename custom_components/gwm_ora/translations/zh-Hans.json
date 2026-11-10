@@ -264,6 +264,8 @@
       "window_front_passenger": { "name": "副驾车窗" },
       "window_rear_driver_side": { "name": "左后车窗" },
       "window_rear_passenger_side": { "name": "右后车窗" },
+      "window_rear_left": { "name": "左后车窗" },
+      "window_rear_right": { "name": "右后车窗" },
       "door_front_driver": { "name": "主驾车门" },
       "door_front_passenger": { "name": "副驾车门" },
       "door_rear_driver_side": { "name": "左后车门" },

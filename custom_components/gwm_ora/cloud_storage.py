@@ -15,7 +15,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
-from homeassistant.core import HomeAssistant
+from homeassistant.core import CoreState, HomeAssistant
 from homeassistant.helpers.storage import Store
 
 from .cloud_auth import (
@@ -195,6 +195,7 @@ class GwmCloudStateStore:
         digest = hashlib.sha256(unique_id.encode("utf-8")).hexdigest()
         self.unique_id = unique_id
         self._apac_storage = unique_id.startswith(f"cloud:{REGION_APAC}:")
+        self._hass = hass
         self._store = Store[dict[str, Any]](
             hass,
             _STORAGE_VERSION,
@@ -541,41 +542,45 @@ class GwmCloudStateStore:
         )
 
     async def _async_save(self, record: _GwmCloudRecord) -> None:
-        """Keep the account lock owned until every APAC executor operation finishes."""
+        """Keep the account lock until the writer and confirmation have finished."""
         if record.region == REGION_APAC:
             await async_finish_apac_state_save(self._async_publish_record(record))
-        else:
-            await self._async_publish_record(record)
+            return
+        task = asyncio.create_task(self._async_publish_record(record))
+        cancelled = False
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                cancelled = True
+            except Exception:
+                break
+        if cancelled:
+            with suppress(Exception):
+                task.result()
+            raise asyncio.CancelledError
+        task.result()
 
     async def _async_publish_record(self, record: _GwmCloudRecord) -> None:
-        """Keep failed APAC revisions private until atomic publication succeeds."""
-        if record.region == REGION_APAC:
+        """Confirm durable publication before exposing a new record to callers."""
+        is_apac = record.region == REGION_APAC
+        if is_apac:
             self._pending_apac_record = record
-        encoded = _encode_record(record)
-        await self._store.async_save(encoded)
-        if record.region == REGION_APAC:
-            # Store defers writes during shutdown and logs writer errors without raising.
-            # Drain deferred work, then confirm the exact revision independently of its cache.
+        data = _encode_record(record)
+        await self._store.async_save(data)
+        if is_apac or self._hass.state is CoreState.stopping:
+            # Store defers shutdown writes; this caller needs completed publication.
             await self._store._async_handle_write_data()
-            await asyncio.to_thread(_verify_apac_publication, self._store.path, encoded)
+        # Store.async_save can log a writer failure and return normally.
+        if is_apac:
+            if not await asyncio.to_thread(_stored_record_matches, self._store.path, data):
+                raise OSError("APAC private state publication was not confirmed")
+        elif not await self._hass.async_add_executor_job(_stored_record_matches, self._store.path, data):
+            raise OSError("GWM cloud state write could not be confirmed")
         self._record = record
         if self._pending_apac_record is record:
             self._pending_apac_record = None
         self._invalid_loaded_data = False
-
-
-def _verify_apac_publication(path: str, expected: dict[str, Any]) -> None:
-    """Confirm the private APAC revision on disk without exposing its contents."""
-    try:
-        envelope = json.loads(Path(path).read_bytes())
-    except (OSError, ValueError):
-        raise OSError("APAC private state publication was not confirmed") from None
-    if (
-        not isinstance(envelope, dict)
-        or envelope.get("version") != _STORAGE_VERSION
-        or envelope.get("data") != expected
-    ):
-        raise OSError("APAC private state publication was not confirmed")
 
 
 async def async_finish_apac_state_save(save: Coroutine[Any, Any, None]) -> None:
@@ -592,6 +597,15 @@ async def async_finish_apac_state_save(save: Coroutine[Any, Any, None]) -> None:
     task.result()
     if cancelled:
         raise asyncio.CancelledError
+
+
+def _stored_record_matches(path: str, expected: dict[str, Any]) -> bool:
+    """Confirm the on-disk payload without trusting Home Assistant's cache."""
+    try:
+        stored = json.loads(Path(path).read_bytes())
+    except (OSError, ValueError):
+        return False
+    return isinstance(stored, dict) and stored.get("version") == _STORAGE_VERSION and stored.get("data") == expected
 
 
 def cloud_state_store(

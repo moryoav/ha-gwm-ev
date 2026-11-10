@@ -10,6 +10,8 @@ This project follows semantic versioning. HACS uses the latest GitHub release ta
 
 ### Added
 
+- Added vehicle discovery diagnostics for overseas accounts, including response type, numeric GWM codes, and gateway hints for HTTP failures. Kept raw response data out of logs.
+
 - Added experimental APAC climate and vehicle commands under Vehicle controls, with a separate Charging control opt-in for direct start/stop. This implementation requires live validation; APAC charging schedules remain unavailable.
 
 - Added APAC read-only setup, private session storage, refresh, discovery and status for Pakistan, Thailand, Malaysia and Indonesia. Vehicle commands and charging writes are disabled by default.
@@ -17,6 +19,32 @@ This project follows semantic versioning. HACS uses the latest GitHub release ta
 ### Changed
 
 - Bundled the shared APAC authentication files for standard installation and sign-in.
+
+## [0.17.14] - 2026-11-05
+
+### Fixed
+
+- Corrected BeanTech window sensors across models: recognized raw `1` as closed and supported open and percentage-position codes. Kept invalid, unsupported, and missing window positions unknown instead of reporting a confirmed state.
+- Corrected rear window names to physical left and right for each backend while preserving existing entity IDs and the physical windows they track. Kept the four individual sensors and single close-all-windows button.
+- Rejected fractional and non-finite window positions before numeric formatting while preserving valid integral readings.
+
+### Known validation limitation
+
+- Retained the existing EU bootstrap certificate and renewal guard. The renewal deadline passed on October 6, 2026; the certificate remains valid until January 4, 2027. The existing renewal test still fails, as recorded in v0.17.13.
+
+## [0.17.13] - 2026-11-04
+
+### Fixed
+
+- Recognized Mainland-China API code `550004` as session expiry. Renewed the G-App and platform sessions and retried failed reads once, matching EU, ANZ, and Russia recovery. Requested reauthentication when renewal or the retry rejects the session, without sending SMS automatically.
+- Preserved rotated G-App-only state when platform initialization is interrupted and resumed it on the next poll without another refresh or SMS login. Stopped automatic renewal on China risk-control code `1013` and requested reauthentication.
+- Prevented automatic command resubmission during session recovery across regions while retaining one retry for reads.
+- Requested reauthentication when saved China platform credentials are rejected during startup initialization.
+- Confirmed saved authentication state on disk before continuing recovery and completed interrupted writes before allowing another account update.
+
+### Known validation limitation
+
+- Retained the existing EU bootstrap certificate and renewal guard. The renewal deadline passed on October 6, 2026; the certificate remains valid until January 4, 2027. The existing renewal test still fails, as recorded in v0.17.11 and v0.17.12.
 
 ## [0.17.12] - 2026-10-19
 

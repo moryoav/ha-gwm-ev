@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import json
-import ssl
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
 import pytest
+from support.overseas import _body, _context, _RecordingTransport
 
 from custom_components.gwm_ora.gwm_client import (
     ChargingPlanCommand,
@@ -19,34 +19,10 @@ from custom_components.gwm_ora.gwm_client import (
     GwmSession,
     Region,
     VehicleIdentifier,
-    create_gwm_ssl_context,
 )
-from custom_components.gwm_ora.gwm_client._protocol import _Deadline, _TransportRequest, _TransportResponse
+from custom_components.gwm_ora.gwm_client._protocol import _TransportResponse
 
 FIXTURE_PATH = Path(__file__).with_name("fixtures") / "command_contracts_v1.json"
-
-
-class _RecordingTransport:
-    def __init__(self, responses: list[_TransportResponse]) -> None:
-        self.responses = list(responses)
-        self.requests: list[_TransportRequest] = []
-
-    async def execute(
-        self,
-        request: _TransportRequest,
-        *,
-        deadline: _Deadline,
-        connect_timeout: float,
-        read_timeout: float,
-    ) -> _TransportResponse:
-        assert deadline.remaining(0) > 0
-        assert connect_timeout > 0
-        assert read_timeout > 0
-        self.requests.append(request)
-        return self.responses.pop(0)
-
-    async def aclose(self) -> None:
-        return None
 
 
 def _fixture() -> dict[str, Any]:
@@ -59,19 +35,6 @@ def _response(data: object = None, *, code: str = "000000") -> _TransportRespons
         {"content-type": "application/json"},
         json.dumps({"code": code, "data": data}, separators=(",", ":")).encode(),
     )
-
-
-def _context(region: Region) -> ssl.SSLContext:
-    return (
-        ssl.create_default_context()
-        if region is Region.ANZ
-        else create_gwm_ssl_context()
-    )
-
-
-def _body(request: _TransportRequest) -> dict[str, Any]:
-    assert request.body is not None
-    return json.loads(request.body)
 
 
 @pytest.mark.asyncio

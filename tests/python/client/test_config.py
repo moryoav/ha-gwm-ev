@@ -15,6 +15,7 @@ def test_client_config_normalizes_region_and_uses_bounded_defaults() -> None:
 
     assert config.region is Region.EU
     assert config.timeouts == RequestTimeouts()
+    assert config.timeouts.total == 30
     assert config.max_response_bytes == 4 * 1024 * 1024
     assert config.anz_authentication_method is None
 
@@ -53,7 +54,6 @@ def test_client_config_rejects_unknown_region(region: object) -> None:
 @pytest.mark.parametrize(
     "timeouts",
     [
-        RequestTimeouts,
         lambda: RequestTimeouts(total=0),
         lambda: RequestTimeouts(total=-1),
         lambda: RequestTimeouts(total=math.inf),
@@ -63,9 +63,6 @@ def test_client_config_rejects_unknown_region(region: object) -> None:
     ],
 )
 def test_request_timeouts_reject_invalid_values(timeouts: object) -> None:
-    if timeouts is RequestTimeouts:
-        assert RequestTimeouts().total == 30
-        return
     with pytest.raises(ValueError, match="^timeouts_invalid$"):
         timeouts()  # type: ignore[operator]
 
