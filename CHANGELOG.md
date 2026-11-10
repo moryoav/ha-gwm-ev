@@ -19,6 +19,10 @@ This project follows semantic versioning. HACS uses the latest GitHub release ta
 
 - Bundled the shared APAC authentication files for standard installation and sign-in.
 
+### Fixed
+
+- Added opt-in BeanTech PIN authorization for door lock and unlock, window closing, and standalone remote start, with bundled credential encoding and restart-safe result polling.
+
 ## [0.17.14] - 2026-11-05
 
 ### Fixed

@@ -34,6 +34,7 @@ from custom_components.gwm_ora.cloud_runtime import (
 from custom_components.gwm_ora.cloud_storage import cloud_state_store
 from custom_components.gwm_ora.const import (
     CONF_ACCOUNT,
+    CONF_BEAN_TECH_LOCK_CREDENTIAL,
     CONF_CONNECTION_TYPE,
     CONF_COUNTRY,
     CONF_ENABLE_CHARGING_CONTROL,
@@ -647,8 +648,10 @@ async def test_removing_cloud_entry_removes_its_private_state(tmp_path: Any) -> 
 
 @pytest.mark.asyncio
 async def test_cloud_diagnostics_redact_current_and_future_account_state() -> None:
+    """Exclude account, command credential, and vehicle secrets from diagnostics."""
     secrets = {
         CONF_SECURITY_PIN: "private-pin",
+        CONF_BEAN_TECH_LOCK_CREDENTIAL: "private-lock-credential",
         "access_token": "private-access-token",
         "g_refresh_token": "private-refresh-token",
         "auto_ai_user_id": "private-user-id",
@@ -660,7 +663,13 @@ async def test_cloud_diagnostics_redact_current_and_future_account_state() -> No
         "vin": "private-vin",
         "location": "private-location",
     }
-    entry = _cloud_entry(data_updates=secrets, options={CONF_SECURITY_PIN: "private-pin"})
+    entry = _cloud_entry(
+        data_updates=secrets,
+        options={
+            CONF_SECURITY_PIN: secrets[CONF_SECURITY_PIN],
+            CONF_BEAN_TECH_LOCK_CREDENTIAL: secrets[CONF_BEAN_TECH_LOCK_CREDENTIAL],
+        },
+    )
     entry.runtime_data = SimpleNamespace(
         coordinator=SimpleNamespace(data={"vehicles": [secrets]}),
         state_store={
@@ -675,6 +684,7 @@ async def test_cloud_diagnostics_redact_current_and_future_account_state() -> No
     assert result["entry"]["data"][CONF_ACCOUNT] == REDACTED
     assert result["entry"]["data"][CONF_PASSWORD] == REDACTED
     assert result["entry"]["options"][CONF_SECURITY_PIN] == REDACTED
+    assert result["entry"]["options"][CONF_BEAN_TECH_LOCK_CREDENTIAL] == REDACTED
     assert result["entry"]["unique_id"] == REDACTED
     rendered = repr(result)
     assert "private-account" not in rendered

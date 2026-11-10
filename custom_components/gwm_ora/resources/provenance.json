@@ -110,6 +110,28 @@
       "certificate_count": 3
     },
     {
+      "path": "beantech_lock_encoder.bin",
+      "region": "cn",
+      "role": "shared_bean_tech_lock_credential_encoder",
+      "bytes": 235568,
+      "sha256": "741c5d031404643b18b8d3efb8e42715a58e4875bcf9071a213313a9c678f687",
+      "content_canonicalization": "raw_bytes",
+      "source_id": "official-china-gwm-android-2200",
+      "source_url": "https://sapp-img.gwmapp-h.com/img/565d3a58b97943e6b131ce8f0f9102cb.apk",
+      "source_apk": {
+        "package": "com.gwm.fusion",
+        "version": "2.2.0",
+        "version_code": 2200,
+        "sha256": "d227dac6c8507d5d96498c1e475cb0431e4437667ca0834c1e83062e74c1b9ca",
+        "signer_sha256": "3f22fc746f95bb0eab0dec0fb49fe71b7f8a7dc9d7e19feab1e36e20adf99267"
+      },
+      "source_parts": [
+        {"member": "classes.dex", "offset": 33185248, "bytes": 16},
+        {"member": "lib/arm64-v8a/libsapp_crypto_tool.so", "offset": 0, "bytes": 235552}
+      ],
+      "redistribution_permission": "unresolved"
+    },
+    {
       "path": "apac/bootstrap.cer",
       "region": "ap",
       "role": "shared_bootstrap_client_certificate",

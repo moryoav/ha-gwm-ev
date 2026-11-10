@@ -17,6 +17,7 @@ ASSET_NAME = "gwm.zip"
 
 
 def build(tag: str, output_dir: Path) -> Path:
+    """Build and verify the installable archive for the manifest version."""
     match = TAG_PATTERN.fullmatch(tag)
     if match is None:
         raise ValueError(f"Expected a vX.Y.Z tag, got {tag!r}")
@@ -64,6 +65,7 @@ def build(tag: str, output_dir: Path) -> Path:
             "gwm_client/client.py",
             "gwm_client/china_client.py",
             "gwm_client/py.typed",
+            "resources/beantech_lock_encoder.bin",
         }
         if missing := required_files - names:
             raise ValueError(f"ZIP is missing integration or bundled client files: {sorted(missing)}")

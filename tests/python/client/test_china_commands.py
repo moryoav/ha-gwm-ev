@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import replace
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from support.china import (
@@ -22,6 +22,7 @@ from support.china import (
     _FakeTransport,
 )
 
+from custom_components.gwm_ora.gwm_client._dotnet_json import encode_dotnet_json
 from custom_components.gwm_ora.gwm_client.china_client import (
     ChinaAuthenticated,
 )
@@ -38,6 +39,7 @@ from custom_components.gwm_ora.gwm_client.commands import (
     select_remote_command_result,
 )
 from custom_components.gwm_ora.gwm_client.errors import (
+    GwmApiError,
     GwmClientError,
     GwmConfigurationError,
     GwmNetworkError,
@@ -45,6 +47,153 @@ from custom_components.gwm_ora.gwm_client.errors import (
     GwmSchemaError,
 )
 from custom_components.gwm_ora.gwm_client.models import VehicleIdentifier
+
+_SYNTHETIC_LOCK_CREDENTIAL = "A" * 64
+_BEAN_IDENTIFIER = VehicleIdentifier(BEAN_VIN)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("operation", "command", "wire_command", "invalid_command"), [
+    ("send_lock_command", DoorLockCommand(_BEAN_IDENTIFIER, True), {"controlType": "VEHICLE_LOCK"},
+     {"controlType": "VEHICLE_LOCK", "cmdBody": None}),
+    ("send_lock_command", DoorLockCommand(_BEAN_IDENTIFIER, False), {"controlType": "VEHICLE_UNLOCK"},
+     {"controlType": "VEHICLE_UNLOCK", "cmdBody": None}),
+    ("send_close_windows_command", CloseWindowsCommand(_BEAN_IDENTIFIER),
+     {"controlType": "WINDOW_CLOSE", "cmdBody": {"leftFront": 0, "leftBack": 0, "rightFront": 0, "rightBack": 0}},
+     {"controlType": "WINDOW_CLOSE", "cmdBody": {"leftFront": False, "leftBack": 0, "rightFront": 0, "rightBack": 0}}),
+    ("send_vehicle_control_command", ChinaVehicleControlCommand(_BEAN_IDENTIFIER, "remote_start", 5),
+     {"controlType": "ENGINE_START", "cmdBody": {"operationTime": 300}},
+     {"controlType": "ENGINE_START", "cmdBody": {"operationTime": 301}}),
+    ("send_vehicle_control_command", ChinaVehicleControlCommand(_BEAN_IDENTIFIER, "remote_start", 30),
+     {"controlType": "ENGINE_START", "cmdBody": {"operationTime": 1800}},
+     {"controlType": "ENGINE_STOP"}),
+])
+async def test_beantech_authorized_command_uses_v3_sequence(
+    operation: str,
+    command: DoorLockCommand | CloseWindowsCommand | ChinaVehicleControlCommand,
+    wire_command: dict[str, object],
+    invalid_command: dict[str, object],
+) -> None:
+    """Correlate one token and sequence across authorization, submission, and polling."""
+    token = "G_A(synthetic-opaque-token)"
+    is_lock = operation == "send_lock_command"
+    auth_operation = "authorize_bean_tech_lock" if is_lock else "authorize_bean_tech_command"
+    transport = _FakeTransport(
+        acquire_vehicles=[FIXTURE["responses"]["discovery"]],
+        **{auth_operation: [{"code": "000000", "data": token}], operation: [{"code": "000000"}]},
+        get_remote_command_result=[
+            {"code": "000000", "data": {"messageList": [{"messageData": {"resultCode": code}}]}}
+            for code in ("2", "0")
+        ],
+    )
+    client = _client(transport)
+    await client.authenticate(_credentials(), state=_complete_state())
+    identifier = VehicleIdentifier(BEAN_VIN)
+
+    accepted = await getattr(client, operation)(
+        command, bean_tech_lock_credential=_SYNTHETIC_LOCK_CREDENTIAL,
+    )
+    assert accepted.result_action == ("authorized_lock" if is_lock else "authorized_command")
+    for state in ("pending", "completed"):
+        candidates = await client.get_remote_command_results(
+            identifier, accepted.command_id, control_action=accepted.result_action,
+        )
+        result = select_remote_command_result(candidates, command_id=accepted.command_id, region=None)
+        assert result is not None and result.state == state
+
+    auth, submit, *polls = transport.calls[-4:]
+    base = "/app-api/api/v3.0/vehicle/"
+    assert [(req.method, urlsplit(req.url).path) for req in (auth, submit, *polls)] == [
+        ("POST", base + "security/generate-token"),
+        ("POST", base + "remote-ctrl/timely"),
+        ("GET", base + "remote-ctrl/result"),
+        ("GET", base + "remote-ctrl/result"),
+    ]
+    assert json.loads(auth.body or b"null") == {"securityPwd": _SYNTHETIC_LOCK_CREDENTIAL, "eventType": 2, "version": 1}
+    assert json.loads(submit.body or b"null") == {
+        "vin": BEAN_VIN, "seqNo": BEAN_COMMAND_ID, "sendType": 0, "commands": [wire_command],
+    }
+    assert submit.headers["securityToken"] == token
+    assert token not in repr(submit) and _SYNTHETIC_LOCK_CREDENTIAL not in repr(auth)
+    for request in polls:
+        assert parse_qs(urlsplit(request.url).query) == {"vin": [BEAN_VIN], "seqNo": [BEAN_COMMAND_ID], "msgType": ["remote"]}
+        assert "securityToken" not in request.headers
+    with pytest.raises(ValueError, match="route_invalid"):
+        replace(submit, headers={key: val for key, val in submit.headers.items() if key != "securityToken"})
+    with pytest.raises(ValueError, match="route_invalid"):
+        replace(submit, operation="send_close_windows_command" if is_lock else "send_lock_command")
+    body = json.loads(submit.body or b"null")
+    body["commands"] = [invalid_command]
+    signed_body = encode_dotnet_json(body)
+    headers = dict(submit.headers)
+    headers["bt-auth-sign"] = bean_tech_sign(
+        "POST", base + "remote-ctrl/timely", headers["bt-auth-nonce"],
+        headers["bt-auth-timestamp"], "json=" + signed_body,
+    )
+    with pytest.raises(ValueError, match="route_invalid"):
+        replace(submit, headers=headers, body=signed_body.encode("utf-8"))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("send_operation", "command"), [
+    ("send_lock_command", DoorLockCommand(_BEAN_IDENTIFIER, False)),
+    ("send_close_windows_command", CloseWindowsCommand(_BEAN_IDENTIFIER)),
+    ("send_vehicle_control_command", ChinaVehicleControlCommand(_BEAN_IDENTIFIER, "remote_start")),
+])
+@pytest.mark.parametrize(("auth_failure", "response", "error"), [
+    (True, {"code": "550002"}, GwmApiError),
+    (True, {"data": "synthetic-security-token"}, GwmSchemaError),
+    (True, {"code": "000000", "data": {"token": "nested"}}, GwmSchemaError),
+    (True, {"code": "000000", "data": "bad\r\nheader"}, GwmSchemaError),
+    (False, {"code": "550002"}, GwmApiError),
+    (False, {"data": None}, GwmSchemaError),
+])
+async def test_beantech_authorized_command_does_not_fall_back_or_resend(
+    send_operation: str,
+    command: DoorLockCommand | CloseWindowsCommand | ChinaVehicleControlCommand,
+    auth_failure: bool,
+    response: dict[str, object],
+    error: type[GwmClientError],
+) -> None:
+    """Stop after the failed stage without sending a replacement command."""
+    auth_operation = "authorize_bean_tech_lock" if send_operation == "send_lock_command" else "authorize_bean_tech_command"
+    operation = auth_operation if auth_failure else send_operation
+    replies = {auth_operation: [{"code": "000000", "data": "synthetic-security-token"}]}
+    replies[operation] = [response]
+    transport = _FakeTransport(acquire_vehicles=[FIXTURE["responses"]["discovery"]], **replies)
+    client = _client(transport)
+    await client.authenticate(_credentials(), state=_complete_state())
+
+    with pytest.raises(error) as raised:
+        await getattr(client, send_operation)(
+            command, bean_tech_lock_credential=_SYNTHETIC_LOCK_CREDENTIAL,
+        )
+    assert raised.value.operation == operation
+    calls = [req for req in transport.calls if req.operation != "acquire_vehicles"]
+    assert [req.operation for req in calls] == (
+        [auth_operation] if auth_failure else [auth_operation, send_operation]
+    )
+    assert all("T5" not in req.url for req in calls)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("result_action", ["authorized_lock", "authorized_command"])
+async def test_beantech_authorized_command_rejects_result_without_envelope_code(result_action: str) -> None:
+    """Require a successful envelope before using a completed result."""
+    transport = _FakeTransport(
+        acquire_vehicles=[FIXTURE["responses"]["discovery"]],
+        get_remote_command_result=[
+            {"data": {"messageList": [{"messageData": {"resultCode": "0"}}]}},
+        ],
+    )
+    client = _client(transport)
+    await client.authenticate(_credentials(), state=_complete_state())
+
+    with pytest.raises(GwmSchemaError) as raised:
+        await client.get_remote_command_results(
+            VehicleIdentifier(BEAN_VIN), BEAN_COMMAND_ID, control_action=result_action,
+        )
+    assert raised.value.operation == "get_remote_command_result"
 
 
 @pytest.mark.asyncio
@@ -235,6 +384,7 @@ async def test_unknown_platform_climate_is_rejected_before_command_transport() -
 
 @pytest.mark.asyncio
 async def test_navinfo_lock_unlock_close_windows_and_result_need_no_pin() -> None:
+    """Keep NavInfo on AutoAI even when the entry has a BeanTech credential."""
     transactions = ("TX-LOCK-1", "TX-UNLOCK-2", "TX-WINDOW-3")
     transport = _FakeTransport(
         acquire_vehicles=[FIXTURE["responses"]["discovery"]],
@@ -273,12 +423,17 @@ async def test_navinfo_lock_unlock_close_windows_and_result_need_no_pin() -> Non
     )
     identifier = VehicleIdentifier(VIN)
 
-    locked = await client.send_lock_command(DoorLockCommand(identifier, True))
+    locked = await client.send_lock_command(
+        DoorLockCommand(identifier, True), bean_tech_lock_credential=_SYNTHETIC_LOCK_CREDENTIAL,
+    )
     unlocked = await client.send_lock_command(DoorLockCommand(identifier, False))
-    closed = await client.send_close_windows_command(CloseWindowsCommand(identifier))
+    closed = await client.send_close_windows_command(
+        CloseWindowsCommand(identifier), bean_tech_lock_credential=_SYNTHETIC_LOCK_CREDENTIAL,
+    )
     results = await client.get_remote_command_results(identifier, closed.command_id)
 
     assert (locked.command_id, unlocked.command_id, closed.command_id) == transactions
+    assert locked.result_action is closed.result_action is None
     requests = [
         request
         for request in transport.calls
@@ -413,12 +568,14 @@ async def test_navinfo_extended_vehicle_controls_use_exact_app_command_shapes() 
                 identifier,
                 action,  # type: ignore[arg-type]
                 20 if action == "remote_start" else None,
-            )
+            ),
+            bean_tech_lock_credential=_SYNTHETIC_LOCK_CREDENTIAL if action == "remote_start" else None,
         )
         for action in actions
     ]
 
     assert tuple(item.command_id for item in acceptances) == transaction_ids
+    assert all(item.result_action is None for item in acceptances)
     requests = [
         request
         for request in transport.calls
@@ -531,7 +688,8 @@ async def test_beantech_horn_lights_send_exact_pin_exempt_timely_request(
     client = _client(transport)
     await client.authenticate(_credentials(), state=_complete_state())
     accepted = await client.send_vehicle_control_command(
-        ChinaVehicleControlCommand(VehicleIdentifier(BEAN_VIN), action)  # type: ignore[arg-type]
+        ChinaVehicleControlCommand(VehicleIdentifier(BEAN_VIN), action),  # type: ignore[arg-type]
+        bean_tech_lock_credential=_SYNTHETIC_LOCK_CREDENTIAL,
     )
     request = transport.calls[-1]
     expected_body = (

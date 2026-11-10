@@ -37,6 +37,7 @@ from .const import (
     ATTR_END_TIME,
     ATTR_START_TIME,
     ATTR_VIN,
+    CONF_BEAN_TECH_LOCK_CREDENTIAL,
     CONF_CONNECTION_TYPE,
     CONF_ENABLE_APAC_CHARGING,
     CONF_ENABLE_APAC_REMOTE,
@@ -235,6 +236,7 @@ async def _async_setup_cloud_entry(
         )
         charging_enabled = entry.options.get(CONF_ENABLE_CHARGING_CONTROL) is True
         security_pin = entry.options.get(CONF_SECURITY_PIN)
+        bean_tech_lock_credential = entry.options.get(CONF_BEAN_TECH_LOCK_CREDENTIAL)
         apac_pin = isinstance(security_pin, str) and bool(security_pin.strip())
         apac_remote = entry.data.get(CONF_REGION) == REGION_APAC and apac_pin and entry.options.get(CONF_ENABLE_APAC_REMOTE) is True
         apac_charging = entry.data.get(CONF_REGION) == REGION_APAC and apac_pin and entry.options.get(CONF_ENABLE_APAC_CHARGING) is True
@@ -272,6 +274,7 @@ async def _async_setup_cloud_entry(
             apac_charging_enabled=apac_charging,
             charging_enabled=charging_enabled,
             security_pin=security_pin if isinstance(security_pin, str) else None,
+            bean_tech_lock_credential=bean_tech_lock_credential if isinstance(bean_tech_lock_credential, str) else None,
         )
     except (TypeError, ValueError) as err:
         await cloud.aclose()

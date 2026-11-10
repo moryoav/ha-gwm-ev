@@ -22,6 +22,7 @@ CONF_ENABLE_APAC_REMOTE = "enable_apac_remote"
 CONF_ENABLE_APAC_CHARGING = "enable_apac_charging"
 CONF_ENABLE_CHARGING_CONTROL = "enable_charging_control"
 CONF_SECURITY_PIN = "security_pin"
+CONF_BEAN_TECH_LOCK_CREDENTIAL = "bean_tech_lock_credential"
 CONF_POLL_INTERVAL_SECONDS = "poll_interval_seconds"
 CONF_LOG_LEVEL = "log_level"
 

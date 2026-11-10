@@ -229,16 +229,24 @@ class _ChinaReadClient(Protocol):
     async def send_lock_command(
         self,
         command: DoorLockCommand,
-    ) -> RemoteCommandAcceptance: ...
+        *,
+        bean_tech_lock_credential: str | None = None,
+    ) -> RemoteCommandAcceptance:
+        """Send one China door command with optional BeanTech authorization."""
+        ...
 
     async def send_close_windows_command(
         self,
         command: CloseWindowsCommand,
+        *,
+        bean_tech_lock_credential: str | None = None,
     ) -> RemoteCommandAcceptance: ...
 
     async def send_vehicle_control_command(
         self,
         command: ChinaVehicleControlCommand,
+        *,
+        bean_tech_lock_credential: str | None = None,
     ) -> RemoteCommandAcceptance: ...
 
     async def get_bean_tech_comfort_modes(
@@ -961,6 +969,7 @@ class GwmCloudClient:
         command: DoorLockCommand,
         *,
         security_password_hash: str | None = None,
+        bean_tech_lock_credential: str | None = None,
     ) -> RemoteCommandAcceptance:
         """Send a supported regional lock command with bounded session recovery."""
         if self.region == REGION_APAC:
@@ -968,8 +977,13 @@ class GwmCloudClient:
                 raise GwmRoutePolicyError(operation="send_lock_command")
             return await self.async_send_apac_control(command.identifier, "lock" if command.lock else "unlock", security_password_hash=security_password_hash)
         if self.region == REGION_CHINA:
+            client = cast(_ChinaReadClient, self._client)
+            if bean_tech_lock_credential is not None:
+                return await self._async_with_session_renewal(
+                    lambda: client.send_lock_command(command, bean_tech_lock_credential=bean_tech_lock_credential)
+                )
             return await self._async_with_session_renewal(
-                lambda: cast(_ChinaReadClient, self._client).send_lock_command(command)
+                lambda: client.send_lock_command(command)
             )
         if not isinstance(security_password_hash, str):
             raise GwmConfigurationError(operation="send_lock_command")
@@ -985,6 +999,7 @@ class GwmCloudClient:
         command: CloseWindowsCommand,
         *,
         security_password_hash: str | None = None,
+        bean_tech_lock_credential: str | None = None,
     ) -> RemoteCommandAcceptance:
         """Send a supported regional window command with bounded session recovery."""
         if self.region == REGION_APAC:
@@ -992,8 +1007,15 @@ class GwmCloudClient:
                 raise GwmRoutePolicyError(operation="send_close_windows_command")
             return await self.async_send_apac_control(command.identifier, "close_windows", security_password_hash=security_password_hash)
         if self.region == REGION_CHINA:
+            client = cast(_ChinaReadClient, self._client)
+            if bean_tech_lock_credential is not None:
+                return await self._async_with_session_renewal(
+                    lambda: client.send_close_windows_command(
+                        command, bean_tech_lock_credential=bean_tech_lock_credential,
+                    )
+                )
             return await self._async_with_session_renewal(
-                lambda: cast(_ChinaReadClient, self._client).send_close_windows_command(command)
+                lambda: client.send_close_windows_command(command)
             )
         if not isinstance(security_password_hash, str):
             raise GwmConfigurationError(operation="send_close_windows_command")
@@ -1060,13 +1082,22 @@ class GwmCloudClient:
     async def async_send_vehicle_control_command(
         self,
         command: ChinaVehicleControlCommand,
+        *,
+        bean_tech_lock_credential: str | None = None,
     ) -> RemoteCommandAcceptance:
         """Send one platform-filtered mainland-China vehicle command."""
 
         if self.region != REGION_CHINA:
             raise GwmRoutePolicyError(operation="send_vehicle_control_command")
+        client = cast(_ChinaReadClient, self._client)
+        if bean_tech_lock_credential is not None:
+            return await self._async_with_session_renewal(
+                lambda: client.send_vehicle_control_command(
+                    command, bean_tech_lock_credential=bean_tech_lock_credential,
+                )
+            )
         return await self._async_with_session_renewal(
-            lambda: cast(_ChinaReadClient, self._client).send_vehicle_control_command(command)
+            lambda: client.send_vehicle_control_command(command)
         )
 
     async def async_get_bean_tech_comfort_modes(

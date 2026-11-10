@@ -112,13 +112,15 @@
           "enable_apac_remote": "Allow supported climate, locks, windows, seats and other vehicle controls. Requires a vehicle security PIN.",
           "enable_apac_charging": "Allow starting and stopping charging. Charging schedules are not supported. Requires a vehicle security PIN.",
           "enable_charging_control": "Independent explicit opt-in for charging schedules.",
-          "security_pin": "Required for remote commands outside mainland China. The stored value is shown in a masked password field and remains redacted from diagnostics.",
+          "security_pin": "Required for remote commands outside mainland China. For mainland-China BeanTech vehicles, enter the six-digit PIN if the app requires it for locking, unlocking, closing windows, or standalone remote start. Leave it blank to keep the saved credential.",
           "log_level": "Integration-specific diagnostic verbosity."
         }
       }
     },
     "error": {
-      "security_pin_required": "A vehicle security PIN is required when vehicle controls or charging control are enabled."
+      "security_pin_required": "A vehicle security PIN is required when vehicle controls or charging control are enabled.",
+      "bean_tech_lock_pin_invalid": "Enter the six-digit vehicle security PIN used in the GWM app.",
+      "bean_tech_lock_preparation_failed": "Home Assistant could not prepare the BeanTech PIN credential. Check that the integration files are up to date and try again."
     },
     "abort": {
       "legacy_addon_entry": "The previous add-on based entry cannot be configured. Remove it and add GWM again."

@@ -6,6 +6,7 @@ import ssl
 from dataclasses import replace
 from types import MappingProxyType
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -24,6 +25,7 @@ from custom_components.gwm_ora.const import (
     CONF_ACCOUNT,
     CONF_ALLOW_SESSION_RECLAIM,
     CONF_AUTHENTICATION_METHOD,
+    CONF_BEAN_TECH_LOCK_CREDENTIAL,
     CONF_CONNECTION_TYPE,
     CONF_COUNTRY,
     CONF_ENABLE_CHARGING_CONTROL,
@@ -982,6 +984,7 @@ async def test_cloud_reconfigure_can_replace_overseas_account_with_china(
 
 @pytest.mark.asyncio
 async def test_cloud_options_show_masked_pin_and_enforce_opt_in() -> None:
+    """Preserve the existing PIN rules for overseas accounts."""
     entry = _entry(
         data={CONF_CONNECTION_TYPE: CONNECTION_TYPE_CLOUD, CONF_REGION: "eu"},
         options={CONF_SECURITY_PIN: "existing-pin"},
@@ -991,6 +994,7 @@ async def test_cloud_options_show_masked_pin_and_enforce_opt_in() -> None:
     flow.handler = entry.entry_id
 
     form = await flow.async_step_init()
+    assert CONF_BEAN_TECH_LOCK_CREDENTIAL not in form["data_schema"].schema
     assert form["data_schema"]({
         CONF_POLL_INTERVAL_SECONDS: 60,
         CONF_ENABLE_REMOTE_COMMANDS: False,
@@ -1038,6 +1042,55 @@ async def test_cloud_options_show_masked_pin_and_enforce_opt_in() -> None:
         }
     )
     assert required["errors"] == {CONF_SECURITY_PIN: "security_pin_required"}
+
+
+@pytest.mark.asyncio
+async def test_china_options_prepare_and_preserve_lock_credential(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Accept a PIN and keep only the encoded credential in the China options."""
+    credential = "A" * 64
+    entry = _entry(
+        data={CONF_CONNECTION_TYPE: CONNECTION_TYPE_CLOUD, CONF_REGION: "cn"},
+        options={CONF_BEAN_TECH_LOCK_CREDENTIAL: credential},
+    )
+    flow = config_flow.GwmOptionsFlow()
+    flow.hass = _Hass(entry)  # type: ignore[assignment]
+    flow.handler = entry.entry_id
+    form = await flow.async_step_init()
+    fields = form["data_schema"].schema
+    assert CONF_BEAN_TECH_LOCK_CREDENTIAL not in fields
+    assert fields[CONF_SECURITY_PIN].config["type"] == "password"
+    assert fields[CONF_SECURITY_PIN].config["autocomplete"] == "off"
+
+    enabled = {
+        CONF_POLL_INTERVAL_SECONDS: 60,
+        CONF_ENABLE_REMOTE_COMMANDS: True,
+        CONF_ENABLE_CHARGING_CONTROL: False,
+        CONF_LOG_LEVEL: "info",
+    }
+    invalid = await flow.async_step_init({**enabled, CONF_SECURITY_PIN: "１２３４５６"})
+    assert invalid["errors"] == {CONF_SECURITY_PIN: "bean_tech_lock_pin_invalid"}
+    assert invalid["data_schema"](enabled)[CONF_SECURITY_PIN] == ""
+
+    replacement = "B" * 64
+    prepare = AsyncMock(return_value=replacement)
+    monkeypatch.setattr(config_flow, "async_prepare_bean_tech_lock_credential", prepare)
+    accepted = await flow.async_step_init({**enabled, CONF_SECURITY_PIN: "000123"})
+    assert accepted["type"] is FlowResultType.CREATE_ENTRY
+    assert accepted["data"][CONF_BEAN_TECH_LOCK_CREDENTIAL] == replacement
+    assert CONF_SECURITY_PIN not in accepted["data"]
+    prepare.assert_awaited_once_with(flow.hass, "000123")
+
+    preserved = await flow.async_step_init({**enabled, CONF_SECURITY_PIN: ""})
+    assert preserved["data"][CONF_BEAN_TECH_LOCK_CREDENTIAL] == credential
+    disabled = await flow.async_step_init({**enabled, CONF_ENABLE_REMOTE_COMMANDS: False, CONF_SECURITY_PIN: "000123"})
+    assert CONF_BEAN_TECH_LOCK_CREDENTIAL not in disabled["data"]
+    assert CONF_SECURITY_PIN not in disabled["data"]
+    prepare.assert_awaited_once()
+
+    prepare.side_effect = config_flow.BeanTechLockPreparationError("synthetic-error")
+    failed = await flow.async_step_init({**enabled, CONF_SECURITY_PIN: "000123"})
+    assert failed["errors"] == {CONF_SECURITY_PIN: "bean_tech_lock_preparation_failed"}
+    assert failed["data_schema"](enabled)[CONF_SECURITY_PIN] == ""
 
 
 @pytest.mark.asyncio
@@ -1141,6 +1194,11 @@ async def test_apac_extra_controls_require_pin_and_stay_separate(option) -> None
     assert not accepted["data"].get("enable_apac_climate", False)
     other = "enable_apac_charging" if option == "enable_apac_remote" else "enable_apac_remote"
     assert not accepted["data"].get(other, False)
+
+    flow.hass = _Hass(_entry(data=dict(entry.data), options=accepted["data"]))  # type: ignore[assignment]
+    preserved = await flow.async_step_init({**values, CONF_SECURITY_PIN: ""})
+    assert preserved["type"] is FlowResultType.CREATE_ENTRY
+    assert preserved["data"] == accepted["data"]
 
 
 @pytest.mark.asyncio

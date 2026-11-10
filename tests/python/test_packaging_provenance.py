@@ -11,6 +11,7 @@ import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.x509.oid import NameOID
 
+from custom_components.gwm_ora import bean_tech_lock
 from custom_components.gwm_ora.cloud_auth import _RESOURCE_DIRECTORY
 from custom_components.gwm_ora.gwm_client.crypto import load_certificate, recover_transformed_private_key
 
@@ -19,6 +20,7 @@ RESOURCE_DIRECTORY = ROOT / "custom_components" / "gwm_ora" / "resources"
 CLIENT_DIRECTORY = ROOT / "custom_components/gwm_ora/gwm_client"
 
 EXPECTED_FILES = {
+    "beantech_lock_encoder.bin": (235568, "741c5d031404643b18b8d3efb8e42715a58e4875bcf9071a213313a9c678f687"),
     "gwm_general.cer": (1529, "24886bad04d8b26aa2aafd3fb22c74bd1f2859d81499a39c561df4930429a03d"),
     "gwm_general.key": (732, "1fbaf6b3d46feab76f4bc73806cd08d79c7cfda6c5183ceb5fdc4d6720560da6"),
     "gwm_root.pem": (4517, "ffb870f997b2037df5873ef1d773100ab7c380ecb78c2ce4eab84144d5895665"),
@@ -63,12 +65,27 @@ def test_integration_resources_match_the_provenance_inventory() -> None:
 
     for name, (expected_size, expected_hash) in EXPECTED_FILES.items():
         data = (RESOURCE_DIRECTORY / name).read_bytes()
-        canonical_data = _canonical_resource_bytes(data)
         record = records[name]
+        canonical_data = data if record.get("content_canonicalization") == "raw_bytes" else _canonical_resource_bytes(data)
         assert len(canonical_data) == expected_size == record["bytes"]
         assert hashlib.sha256(canonical_data).hexdigest() == expected_hash == record["sha256"]
         if normalized_upstream_hash := record.get("normalized_upstream_sha256"):
             assert hashlib.sha256(canonical_data).hexdigest() == normalized_upstream_hash
+
+    encoder = records["beantech_lock_encoder.bin"]
+    assert encoder["content_canonicalization"] == "raw_bytes"
+    assert encoder["redistribution_permission"] == "unresolved"
+
+
+def test_bean_tech_encoder_rejects_modified_bundle(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Reject a changed binary before the encoder can execute."""
+    bundle = tmp_path / "beantech_lock_encoder.bin"
+    verified = (RESOURCE_DIRECTORY / bundle.name).read_bytes()
+    bundle.write_bytes(verified[:-1] + bytes([verified[-1] ^ 1]))
+    monkeypatch.setattr(bean_tech_lock, "_ENCODER", bundle)
+
+    with pytest.raises(bean_tech_lock.BeanTechLockPreparationError, match="bean_tech_lock_encoder_invalid"):
+        bean_tech_lock._prepare_credential("000123")
 
 
 @pytest.mark.parametrize(

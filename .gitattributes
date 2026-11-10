@@ -5,3 +5,4 @@
 *.jpeg binary
 *.gif binary
 *.ico binary
+custom_components/gwm_ora/resources/beantech_lock_encoder.bin binary

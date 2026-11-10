@@ -48,6 +48,7 @@ from .gwm_client.commands import (
     BEANTECH_BATTERY_HEAT_ACTIONS,
     BEANTECH_COMFORT_ACTIONS,
     BEANTECH_HORN_LIGHT_ACTIONS,
+    BeanTechAuthorizedResultAction,
     ChinaRemoteCommandAction,
 )
 
@@ -55,11 +56,18 @@ _SMART_CHARGE_COMMAND_NAME = "Smart charge"
 _BATTERY_APPOINTMENT_COMMAND_NAME = "Battery appointment heating"
 _CHARGE_SOC_COMMAND_NAME = "Charge SOC limit"
 _CHARGE_WINDOW_COMMAND_NAME = "Charge window"
+_AUTHORIZED_COMMAND_RESULTS: dict[str, BeanTechAuthorizedResultAction] = {
+    "Authorized door lock": "authorized_lock",
+    "Authorized door unlock": "authorized_lock",
+    "Authorized window close": "authorized_command",
+    "Authorized remote start": "authorized_command",
+}
 _BEANTECH_RESULT_ACTIONS: dict[str, ChinaRemoteCommandAction] = {
     _SMART_CHARGE_COMMAND_NAME: "charging_mode",
     _CHARGE_WINDOW_COMMAND_NAME: "charge_window",
     _CHARGE_SOC_COMMAND_NAME: "charge_soc",
     _BATTERY_APPOINTMENT_COMMAND_NAME: "battery_appointment",
+    **_AUTHORIZED_COMMAND_RESULTS,
 }
 
 _APAC_CONTROL_NAMES = {
@@ -99,6 +107,7 @@ class GwmCommandApi:
         apac_charging_enabled: bool = False,
         charging_enabled: bool = False,
         security_pin: str | None,
+        bean_tech_lock_credential: str | None = None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         """Bind regional consent, the private journal and per-entry command ownership."""
@@ -112,6 +121,7 @@ class GwmCommandApi:
             or type(apac_charging_enabled) is not bool
             or type(charging_enabled) is not bool
             or (security_pin is not None and not isinstance(security_pin, str))
+            or (bean_tech_lock_credential is not None and not isinstance(bean_tech_lock_credential, str))
             or (clock is not None and not callable(clock))
         ):
             raise ValueError("gwm_command_api_invalid")
@@ -125,6 +135,7 @@ class GwmCommandApi:
         self._apac_charging_enabled = apac_charging_enabled
         self._charging_enabled = charging_enabled
         self._security_pin = security_pin.strip() if security_pin else ""
+        self._bean_tech_lock_credential = bean_tech_lock_credential
         self._clock = clock or (lambda: datetime.now(UTC))
         self._commands: dict[str, GwmCommandJournalEntry] = {}
         self._timeout_ids: set[str] = set()
@@ -352,14 +363,19 @@ class GwmCommandApi:
                 lambda: self._cloud.async_send_lock_command(command, security_password_hash=_security_password_hash(self._security_pin)),
             )
         if self._cloud.region == "cn":
-            acceptance = await self._cloud.async_send_lock_command(command)  # type: ignore[call-arg]
+            if self._bean_tech_lock_credential is None:
+                acceptance = await self._cloud.async_send_lock_command(command)
+            else:
+                acceptance = await self._cloud.async_send_lock_command(
+                    command, bean_tech_lock_credential=self._bean_tech_lock_credential,
+                )
         else:
             acceptance = await self._cloud.async_send_lock_command(
                 command,
                 security_password_hash=_security_password_hash(self._security_pin),
             )
         return await self._record_acceptance(
-            identifier, command_name, acceptance.command_id
+            identifier, command_name, acceptance.command_id, result_action=acceptance.result_action,
         )
 
     async def async_apac_control(self, vin: str, action: str) -> dict[str, object]:
@@ -388,14 +404,19 @@ class GwmCommandApi:
                 lambda: self._cloud.async_send_close_windows_command(command, security_password_hash=_security_password_hash(self._security_pin)),
             )
         if self._cloud.region == "cn":
-            acceptance = await self._cloud.async_send_close_windows_command(command)  # type: ignore[call-arg]
+            if self._bean_tech_lock_credential is None:
+                acceptance = await self._cloud.async_send_close_windows_command(command)
+            else:
+                acceptance = await self._cloud.async_send_close_windows_command(
+                    command, bean_tech_lock_credential=self._bean_tech_lock_credential,
+                )
         else:
             acceptance = await self._cloud.async_send_close_windows_command(
                 command,
                 security_password_hash=_security_password_hash(self._security_pin),
             )
         return await self._record_acceptance(
-            identifier, "Window close", acceptance.command_id
+            identifier, "Window close", acceptance.command_id, result_action=acceptance.result_action,
         )
 
     async def async_set_front_defroster(
@@ -472,11 +493,15 @@ class GwmCommandApi:
             raise GwmCommandForbidden(
                 "GWM China vehicle controls are not active for this entry"
             )
-        acceptance = await sender(command)
+        if command.action == "remote_start" and self._bean_tech_lock_credential is not None:
+            acceptance = await sender(command, bean_tech_lock_credential=self._bean_tech_lock_credential)
+        else:
+            acceptance = await sender(command)
         return await self._record_acceptance(
             identifier,
             _CHINA_VEHICLE_CONTROL_NAMES[command.action],
             acceptance.command_id,
+            result_action=acceptance.result_action,
         )
 
     async def async_set_comfort_mode(
@@ -672,7 +697,12 @@ class GwmCommandApi:
         identifier: VehicleIdentifier,
         command_name: str,
         cloud_command_id: str,
+        *,
+        result_action: BeanTechAuthorizedResultAction | None = None,
     ) -> dict[str, object]:
+        if result_action is not None:
+            # Persist the v3 route using the existing journal name field.
+            command_name = f"Authorized {command_name.lower()}"
         task = asyncio.create_task(
             self._state_store.async_record_accepted_command(
                 self._credentials,
@@ -1188,7 +1218,11 @@ def _expected_remote_type(command_name: str, *, region: str | None = None) -> st
         return "0x0B"
     if command_name == "Air circulation":
         return "0x11"
-    if command_name == "Comfort mode" or command_name in _CHINA_VEHICLE_CONTROL_NAMES.values():
+    if (
+        command_name == "Comfort mode"
+        or command_name in _CHINA_VEHICLE_CONTROL_NAMES.values()
+        or command_name in _AUTHORIZED_COMMAND_RESULTS
+    ):
         return "china"
     raise GwmCommandError(
         "Remote command journal contains an unsupported command family"

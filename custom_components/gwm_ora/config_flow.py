@@ -12,6 +12,7 @@ from homeassistant import config_entries
 from homeassistant.config_entries import ConfigEntry, ConfigFlowResult
 from homeassistant.helpers import selector
 
+from .bean_tech_lock import BeanTechLockPreparationError, async_prepare_bean_tech_lock_credential
 from .cloud_auth import (
     CloudAuthenticationResult,
     CloudAuthState,
@@ -38,6 +39,7 @@ from .const import (
     CONF_ACCOUNT,
     CONF_ALLOW_SESSION_RECLAIM,
     CONF_AUTHENTICATION_METHOD,
+    CONF_BEAN_TECH_LOCK_CREDENTIAL,
     CONF_CONNECTION_TYPE,
     CONF_COUNTRY,
     CONF_ENABLE_APAC_CHARGING,
@@ -90,6 +92,7 @@ from .gwm_client import (
 from .gwm_client.apac_flow import ApacAuthenticated, ApacVerificationRequired
 from .gwm_client.apac_material import load_installed_apac_material
 from .gwm_client.apac_restore import ApacRestored
+from .gwm_client.china_crypto import valid_bean_tech_lock_credential
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -252,19 +255,13 @@ def _cloud_options_schema(entry: ConfigEntry, defaults: dict[str, Any] | None = 
         }
         fields[vol.Required(CONF_ENABLE_APAC_REMOTE, default=current.get(CONF_ENABLE_APAC_REMOTE, False))] = bool
         fields[vol.Required(CONF_ENABLE_APAC_CHARGING, default=current.get(CONF_ENABLE_APAC_CHARGING, False))] = bool
-        fields[vol.Optional(CONF_SECURITY_PIN, default=current.get(CONF_SECURITY_PIN, ""))] = _password_selector(
-            autocomplete="off"
+    fields[
+        vol.Optional(
+            CONF_SECURITY_PIN,
+            # China saves only the encoded credential and keeps the PIN field empty.
+            default="" if region == REGION_CHINA else current.get(CONF_SECURITY_PIN, ""),
         )
-        return vol.Schema(fields)
-    if region != REGION_CHINA:
-        fields[
-            vol.Optional(
-                CONF_SECURITY_PIN,
-                # The password selector masks this value while still allowing
-                # an administrator to reveal or replace the configured PIN.
-                default=current.get(CONF_SECURITY_PIN, ""),
-            )
-        ] = _password_selector(autocomplete="off")
+    ] = _password_selector(autocomplete="off")
     return vol.Schema(fields)
 
 
@@ -863,36 +860,44 @@ class GwmOptionsFlow(config_entries.OptionsFlowWithReload):
 
         errors: dict[str, str] = {}
         if user_input is not None:
+            region = entry.data.get(CONF_REGION)
             normalized = dict(user_input)
-            if entry.data.get(CONF_REGION) == REGION_APAC:
+            if region == REGION_APAC:
                 normalized.pop(CONF_ENABLE_APAC_CLIMATE, None)
                 normalized.pop(CONF_ENABLE_CHARGING_CONTROL, None)
                 normalized.pop(CONF_ENABLE_REMOTE_COMMANDS, None)
-            pin = normalized.get(CONF_SECURITY_PIN)
-            normalized_pin = pin.strip() if isinstance(pin, str) else ""
-            existing_pin = entry.options.get(CONF_SECURITY_PIN)
-            preserved_pin = existing_pin.strip() if isinstance(existing_pin, str) else ""
-            selected_control = (
-                any(normalized.get(key) is True for key in (CONF_ENABLE_APAC_REMOTE, CONF_ENABLE_APAC_CHARGING))
-                if entry.data.get(CONF_REGION) == REGION_APAC
-                else normalized.get(CONF_ENABLE_REMOTE_COMMANDS) is True
-            )
-            if (
-                entry.data.get(CONF_REGION) != REGION_CHINA
-                and selected_control
-                and not (normalized_pin or preserved_pin)
-            ):
-                errors[CONF_SECURITY_PIN] = "security_pin_required"
+                enabled = any(
+                    normalized.get(key) is True for key in (CONF_ENABLE_APAC_REMOTE, CONF_ENABLE_APAC_CHARGING)
+                )
             else:
-                if (
-                    entry.data.get(CONF_REGION) == REGION_CHINA
-                    or not selected_control
-                ):
-                    normalized.pop(CONF_SECURITY_PIN, None)
-                elif normalized_pin:
-                    normalized[CONF_SECURITY_PIN] = normalized_pin
+                enabled = normalized.get(CONF_ENABLE_REMOTE_COMMANDS) is True
+            pin = normalized.pop(CONF_SECURITY_PIN, None)
+            normalized_pin = pin.strip() if isinstance(pin, str) else ""
+            normalized.pop(CONF_BEAN_TECH_LOCK_CREDENTIAL, None)
+            if region == REGION_CHINA:
+                if enabled and normalized_pin:
+                    try:
+                        normalized[CONF_BEAN_TECH_LOCK_CREDENTIAL] = await async_prepare_bean_tech_lock_credential(
+                            self.hass, normalized_pin,
+                        )
+                    except ValueError:
+                        errors[CONF_SECURITY_PIN] = "bean_tech_lock_pin_invalid"
+                    except BeanTechLockPreparationError:
+                        errors[CONF_SECURITY_PIN] = "bean_tech_lock_preparation_failed"
+                elif enabled:
+                    credential = entry.options.get(CONF_BEAN_TECH_LOCK_CREDENTIAL)
+                    if valid_bean_tech_lock_credential(credential):
+                        normalized[CONF_BEAN_TECH_LOCK_CREDENTIAL] = credential
+                    elif credential not in (None, ""):
+                        errors[CONF_SECURITY_PIN] = "bean_tech_lock_pin_invalid"
+            elif enabled:
+                existing_pin = entry.options.get(CONF_SECURITY_PIN)
+                preserved_pin = existing_pin.strip() if isinstance(existing_pin, str) else ""
+                if normalized_pin or preserved_pin:
+                    normalized[CONF_SECURITY_PIN] = normalized_pin or preserved_pin
                 else:
-                    normalized[CONF_SECURITY_PIN] = preserved_pin
+                    errors[CONF_SECURITY_PIN] = "security_pin_required"
+            if not errors:
                 return self.async_create_entry(data=normalized)
 
         return self.async_show_form(
