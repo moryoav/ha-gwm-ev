@@ -51,6 +51,7 @@ from custom_components.gwm_ora.const import (
     CONFIGURABLE_CLOUD_REGIONS,
     CONNECTION_TYPE_CLOUD,
     DOMAIN,
+    PLATFORMS,
     REGION_BR,
     platforms_for_region,
 )
@@ -71,7 +72,7 @@ from custom_components.gwm_ora.gwm_client.br_auth_client import BrTokens
 from custom_components.gwm_ora.gwm_client.br_flow import BrAuthenticated
 from custom_components.gwm_ora.gwm_client.br_identity import BrCredentials
 from custom_components.gwm_ora.gwm_client.br_material import create_br_ssl_context, load_br_material
-from custom_components.gwm_ora.gwm_client.br_request import GwmBrCredentialError, prepare_br_request
+from custom_components.gwm_ora.gwm_client.br_request import prepare_br_request
 from custom_components.gwm_ora.gwm_client.br_state import BrAccountCredentials, BrAuthState
 from custom_components.gwm_ora.sensor import _sensor_descriptions_for_vehicle
 
@@ -444,17 +445,26 @@ def test_br_credentials_binding_state_and_storage_round_trip() -> None:
 
 
 @pytest.mark.asyncio
-async def test_br_startup_restore_makes_no_request_and_needs_stored_tokens(
+async def test_br_startup_restore_makes_no_request_and_never_logs_in_by_password(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     authenticator, transport = _authenticator(monkeypatch, tmp_path)
     credentials = _credentials()
     regional = credentials.client_credentials()
 
-    restored = await authenticator.async_authenticate(
-        credentials, state=_expired_state(credentials), allow_password_login=False
+    fresh = replace(
+        BrAuthState.for_credentials(regional),
+        tokens=BrTokens(fake_jwt(NOW_FAR), "synthetic-refresh", float(NOW_FAR)),
     )
+    restored = await authenticator.async_authenticate(credentials, state=fresh, allow_password_login=False)
     assert isinstance(restored, BrAuthenticated)
+    assert transport.requests == []
+
+    # An expired saved session is NOT renewed with the password: it asks for reauthentication.
+    with pytest.raises(GwmAuthenticationError):
+        await authenticator.async_authenticate(
+            credentials, state=_expired_state(credentials), allow_password_login=False
+        )
     assert transport.requests == []
 
     with pytest.raises(GwmAuthenticationError):
@@ -539,45 +549,93 @@ async def test_br_cloud_client_reads_vehicles_and_status_only_and_is_read_only(
 
 
 @pytest.mark.asyncio
-async def test_br_expired_token_relogins_by_password_and_persists_the_new_tokens(
+async def test_br_expired_token_asks_for_reauthentication_without_a_password_login(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     credentials, bootstrap = _bootstrap(tmp_path, expired=True)
-    new_exp = NOW_FAR + 5
-    transport = FakeTransport(_login(new_exp), envelope(VEHICLES), envelope(STATUS))
+    transport = FakeTransport(_login(), envelope(VEHICLES), envelope(STATUS))
     monkeypatch.setattr(runtime.AiohttpTransport, "create_owned", lambda **kwargs: transport)
     store = _Store()
     cloud = runtime.GwmCloudClient.from_entry_data(
         cloud_entry_data(credentials), cloud_unique_id(credentials), bootstrap, state_store=store
     )
 
-    await cloud.async_get_vehicle_data()
+    with pytest.raises(GwmAuthenticationError):
+        await cloud.async_get_vehicle_data()
 
-    assert [request.operation for request in transport.requests] == ["login", "acquire_vehicles", "get_last_status"]
-    assert len(store.saved) == 1
-    assert store.saved[0].tokens.expires_at == float(new_exp)
-    reusable = cloud.reusable_bootstrap
-    assert reusable is not None and reusable.state.tokens == store.saved[0].tokens
+    assert transport.requests == []  # no login (nor any other) request left the process
+    assert store.cleared == 1 and cloud.reusable_bootstrap is None
     await cloud.aclose()
 
 
 @pytest.mark.asyncio
-async def test_br_password_change_clears_state_and_asks_for_reauthentication(
+async def test_br_rejected_token_asks_for_reauthentication_without_a_password_login(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    credentials, bootstrap = _bootstrap(tmp_path, expired=True)
-    transport = FakeTransport(envelope(None, code="308001"))
+    credentials, bootstrap = _bootstrap(tmp_path)
+    transport = FakeTransport(html(401, "unauthorized"), _login())
     monkeypatch.setattr(runtime.AiohttpTransport, "create_owned", lambda **kwargs: transport)
     store = _Store()
     cloud = runtime.GwmCloudClient.from_entry_data(
         cloud_entry_data(credentials), cloud_unique_id(credentials), bootstrap, state_store=store
     )
 
-    with pytest.raises(GwmBrCredentialError):
+    with pytest.raises(GwmAuthenticationError):
         await cloud.async_get_vehicle_data()
 
-    assert store.cleared == 1 and cloud.reusable_bootstrap is None
+    assert [r.operation for r in transport.requests] == ["acquire_vehicles"]
+    assert store.cleared == 1
     await cloud.aclose()
+
+
+@pytest.mark.asyncio
+async def test_br_startup_with_expired_saved_session_raises_config_entry_auth_failed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from homeassistant.exceptions import ConfigEntryAuthFailed
+
+    credentials = _credentials()
+    state = _expired_state(credentials)
+    transport = FakeTransport(_login(), envelope(VEHICLES))
+    context = _context(tmp_path)
+    monkeypatch.setattr(cloud_auth.AiohttpTransport, "create_owned", lambda **kwargs: transport)
+    monkeypatch.setattr(integration, "load_installed_br_context", lambda: context)
+
+    class Store:
+        cleared = 0
+
+        async def async_load_auth_state(self, data: object) -> BrAuthState:
+            return state
+
+        async def async_save_auth_state(self, *args: object) -> None:
+            raise AssertionError("nothing must be saved")
+
+        async def async_clear_auth_state(self, data: object) -> None:
+            Store.cleared += 1
+
+    entry = ConfigEntry(
+        data=cloud_entry_data(credentials), discovery_keys=MappingProxyType({}), domain=DOMAIN,
+        entry_id="br-entry", minor_version=1, options={}, source="user", subentries_data=None,
+        title="GWM Brazil", unique_id=cloud_unique_id(credentials), version=1,
+    )
+    with pytest.raises(ConfigEntryAuthFailed):
+        await integration._async_load_cloud_bootstrap_once(HomeAssistant(str(tmp_path)), entry, Store())  # type: ignore[arg-type]
+    assert transport.requests == [] and Store.cleared == 1
+
+
+@pytest.mark.asyncio
+async def test_br_login_uses_a_clean_tls_context_and_reads_use_the_vehicle_context(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    authenticator, transport = _authenticator(monkeypatch, tmp_path, _login(), envelope(VEHICLES))
+    credentials = _credentials()
+    await authenticator.async_authenticate(credentials, allow_password_login=True)
+
+    login, read = transport.requests
+    assert login.operation == "login" and read.operation == "acquire_vehicles"
+    assert login.ssl_context.security_level > 0  # not downgraded
+    assert read.ssl_context.security_level == 0  # vehicle gateway identity only
+    assert login.ssl_context is not read.ssl_context
 
 
 @pytest.mark.asyncio
@@ -651,6 +709,10 @@ async def test_br_setup_forwards_only_read_only_platforms_and_never_enables_comm
     with pytest.raises(GwmCommandForbidden):
         await entry.runtime_data.api.async_set_charging_plan(VIN, enable=True)
     assert [request.operation for request in transport.requests] == ["acquire_vehicles", "get_last_status"]
+    assert entry.runtime_data.platforms == BR_PLATFORMS
+    # The config changed after setup (reconfigure or opt-in toggle): unload must still release
+    # exactly what was forwarded, not what the new config would forward.
+    monkeypatch.setattr(integration, "platforms_for_region", lambda region: PLATFORMS)
     assert await integration.async_unload_entry(hass, entry)
     assert unloaded == BR_PLATFORMS and transport.closed is True
 
@@ -709,7 +771,7 @@ def test_br_diagnostics_know_the_hosts_and_redact_private_values(tmp_path: Path)
 
     request = prepare_br_request(
         operation="login",
-        ssl_context=_context(tmp_path),
+        ssl_context=ssl.create_default_context(),
         credentials=BrCredentials.from_password(ACCOUNT, PASSWORD, DEVICE),
     )
     exchange = begin_request(request, connect_timeout=10.0, read_timeout=20.0, remaining=30.0)

@@ -1,5 +1,9 @@
 """BR login and the session that owns re-login.
 
+The login host (a public web portal) is reached with a CLEAN default TLS context:
+no client certificate and no lowered security level. The vehicle client identity
+(mTLS, SECLEVEL=0) is used only for the vehicle gateway reads.
+
 NOTE: this backend has no refresh endpoint (the ``refreshToken`` is only carried
 as a header) and tokens last about 24 h, so renewal means a new password login.
 Upstream policy forbids silent password re-login; the BR region keeps it inside
@@ -19,7 +23,7 @@ from dataclasses import dataclass, field
 from ._protocol import _AsyncTransport, _Deadline
 from .br_identity import BrCredentials
 from .br_request import decode_br_envelope, prepare_br_request
-from .errors import GwmDeadlineExceededError, GwmSchemaError
+from .errors import GwmAuthenticationError, GwmDeadlineExceededError, GwmSchemaError
 
 _EXPIRY_MARGIN_SECONDS = 300
 _MAX_TOKEN = 16 * 1024
@@ -60,16 +64,24 @@ def jwt_expiry(token: str) -> float | None:
 
 
 class BrAuthClient:
-    """Explicit password login over an injected transport and mTLS context."""
+    """Explicit password login over an injected transport and a clean TLS context."""
 
     def __init__(
-        self, *, credentials: BrCredentials, ssl_context: ssl.SSLContext, transport: _AsyncTransport
+        self,
+        *,
+        credentials: BrCredentials,
+        transport: _AsyncTransport,
+        login_context: ssl.SSLContext | None = None,
     ) -> None:
-        """Retain caller-owned dependencies without authenticating."""
+        """Retain caller-owned dependencies without authenticating.
+
+        ``login_context`` defaults to ``ssl.create_default_context()`` (system CA, no
+        client certificate), created lazily in a worker thread on the first login.
+        """
         if type(credentials) is not BrCredentials:
             raise ValueError("br_credentials_invalid")
         self._credentials = credentials
-        self._ssl_context = ssl_context
+        self._login_context = login_context
         self._transport = transport
         self._lock = asyncio.Lock()
 
@@ -78,8 +90,10 @@ class BrAuthClient:
         deadline = _Deadline(asyncio.get_running_loop().time() + 30.0)
         try:
             async with asyncio.timeout_at(deadline.expires_at), self._lock:
+                if self._login_context is None:
+                    self._login_context = await asyncio.to_thread(ssl.create_default_context)
                 request = prepare_br_request(
-                    operation="login", ssl_context=self._ssl_context, credentials=self._credentials
+                    operation="login", ssl_context=self._login_context, credentials=self._credentials
                 )
                 response = await self._transport.execute(
                     request, deadline=deadline, connect_timeout=10.0, read_timeout=20.0
@@ -99,12 +113,22 @@ class BrAuthClient:
 
 
 class BrSession:
-    """Current tokens plus the encapsulated re-login on expiry."""
+    """Current tokens plus, when allowed, the encapsulated re-login on expiry.
 
-    def __init__(self, auth: BrAuthClient, *, clock: Callable[[], float] = time.time) -> None:
-        """Start without tokens; the first use logs in."""
+    Limitation: the BR backend has no refresh endpoint and tokens last about 24 h.
+    With ``allow_login=False`` (the Home Assistant runtime) an expired or rejected
+    session raises ``GwmAuthenticationError`` so the user is asked to reauthenticate,
+    matching the repository's "no silent password login" policy. The maintainer may
+    instead opt for a bounded automatic re-login by passing ``allow_login=True``.
+    """
+
+    def __init__(
+        self, auth: BrAuthClient, *, clock: Callable[[], float] = time.time, allow_login: bool = True
+    ) -> None:
+        """Start without tokens; with ``allow_login`` the first use logs in."""
         self._auth = auth
         self._clock = clock
+        self._allow_login = allow_login
         self._tokens: BrTokens | None = None
         self._lock = asyncio.Lock()
 
@@ -128,6 +152,8 @@ class BrSession:
         async with self._lock:
             tokens = self._tokens
             if tokens is None or tokens is rejected or tokens.expired(self._clock()):
+                if not self._allow_login:
+                    raise GwmAuthenticationError(operation="login")
                 tokens = await self._auth.login()
                 self._tokens = tokens
             return tokens

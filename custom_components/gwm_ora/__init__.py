@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import timedelta
 from pathlib import Path
 
@@ -52,6 +52,7 @@ from .const import (
     DEFAULT_POLL_INTERVAL_SECONDS,
     DOMAIN,
     MIN_CHARGE_WINDOW_MINUTES,
+    PLATFORMS,
     REGION_APAC,
     REGION_BR,
     REGION_CHINA,
@@ -94,6 +95,9 @@ class GwmRuntimeData:
     coordinator: GwmDataUpdateCoordinator
     cloud: GwmCloudClient
     state_store: GwmCloudStateStore
+    # Exact platforms forwarded at setup; unload must release these, not whatever the
+    # (possibly already changed) config entry would forward now.
+    platforms: list[Platform] = field(default_factory=lambda: list(PLATFORMS))
 
 
 GwmConfigEntry = ConfigEntry[GwmRuntimeData]
@@ -209,7 +213,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: GwmConfigEntry) -> bool:
 async def async_unload_entry(hass: HomeAssistant, entry: GwmConfigEntry) -> bool:
     """Unload a config entry."""
     unloaded = await hass.config_entries.async_unload_platforms(
-        entry, _entry_platforms(entry)
+        entry, entry.runtime_data.platforms
     )
     if not unloaded:
         return False
@@ -322,15 +326,17 @@ async def _async_setup_cloud_entry(
         await coordinator.async_config_entry_first_refresh()
         for command in await api.async_restore(dict(entry.data)):
             coordinator.async_track_command(command)
+        platforms = _entry_platforms(entry)
         entry.runtime_data = GwmRuntimeData(
             api=api,
             coordinator=coordinator,
             cloud=cloud,
             state_store=state_store,
+            platforms=list(platforms),
         )
         _async_register_services(hass)
         await hass.config_entries.async_forward_entry_setups(
-            entry, _entry_platforms(entry)
+            entry, platforms
         )
     except BaseException:
         if entry.data.get(CONF_REGION) == REGION_APAC:
