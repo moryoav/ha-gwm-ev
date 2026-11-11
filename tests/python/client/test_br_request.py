@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import ssl
 from pathlib import Path
 
 import pytest
@@ -48,9 +49,23 @@ def test_device_id_is_md5_shaped_and_persisted(tmp_path: Path) -> None:
     assert path.stat().st_mode & 0o077 == 0
 
 
-def test_login_request_headers_and_body(context) -> None:
+def test_login_uses_a_clean_default_tls_context_not_the_vehicle_identity(context) -> None:
     credentials = BrCredentials.from_password("someone@example.invalid", "Synthetic1", DEVICE)
-    request = prepare_br_request(operation="login", ssl_context=context, credentials=credentials)
+    # The vehicle mTLS context (SECLEVEL=0, client certificate) is refused for the login host.
+    with pytest.raises(ValueError, match="^br_request_invalid$"):
+        prepare_br_request(operation="login", ssl_context=context, credentials=credentials)
+    clean = ssl.create_default_context()
+    assert clean.security_level > 0 and clean.check_hostname
+    request = prepare_br_request(operation="login", ssl_context=clean, credentials=credentials)
+    assert request.ssl_context is clean
+    # And the reverse: the vehicle gateway still demands the mTLS context.
+    with pytest.raises(ValueError, match="^br_request_invalid$"):
+        prepare_br_request(operation="acquire_vehicles", ssl_context=clean, access_token="tok-a")
+
+
+def test_login_request_headers_and_body() -> None:
+    credentials = BrCredentials.from_password("someone@example.invalid", "Synthetic1", DEVICE)
+    request = prepare_br_request(operation="login", ssl_context=ssl.create_default_context(), credentials=credentials)
     assert request.method == "POST"
     assert request.url == (
         "https://br-front-service.gwmcloud.com/br-official-commerce/br-official-gateway/"

@@ -315,7 +315,7 @@ Notes:
 
 - Updating or reinstalling the integration (including through the Marketplace) replaces the `custom_components/gwm_ora/` folder and removes `resources/br/`. Copy the three files back after each update.
 - Keep the files private. If your Home Assistant configuration directory is under version control, add `custom_components/gwm_ora/resources/br/` to its `.gitignore`. The integration refuses to load them from this project's source checkout.
-- Brazil tokens last about 24 hours and the service has no token-refresh endpoint. When a token expires the integration signs in again with the saved password, then privately saves the new session. If the service rejects the password, Home Assistant asks you to reconnect.
+- Brazil tokens last about 24 hours and the service has no token-refresh endpoint. When a token expires the integration does not sign in again by itself (no silent password login); Home Assistant asks you to reconnect with your password, about once a day.
 - The password is stored in the Home Assistant config entry, as for the other regions, and is redacted from diagnostics together with tokens, the device identity, the VIN, and the location.
 
 ## Mainland China
