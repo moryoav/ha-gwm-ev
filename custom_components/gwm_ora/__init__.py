@@ -10,6 +10,7 @@ from pathlib import Path
 
 import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import (
     ConfigEntryAuthFailed,
@@ -188,6 +189,14 @@ def _async_register_services(hass: HomeAssistant) -> None:
     )
 
 
+def _entry_platforms(entry: GwmConfigEntry) -> list[Platform]:
+    """Platforms for this entry's region and charging opt-in."""
+    return platforms_for_region(
+        entry.data.get(CONF_REGION),
+        charging_control=entry.options.get(CONF_ENABLE_CHARGING_CONTROL) is True,
+    )
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: GwmConfigEntry) -> bool:
     """Set up GWM from a config entry."""
     if entry.data.get(CONF_CONNECTION_TYPE) != CONNECTION_TYPE_CLOUD:
@@ -200,7 +209,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: GwmConfigEntry) -> bool:
 async def async_unload_entry(hass: HomeAssistant, entry: GwmConfigEntry) -> bool:
     """Unload a config entry."""
     unloaded = await hass.config_entries.async_unload_platforms(
-        entry, platforms_for_region(entry.data.get(CONF_REGION))
+        entry, _entry_platforms(entry)
     )
     if not unloaded:
         return False
@@ -250,7 +259,8 @@ async def _async_setup_cloud_entry(
             if entry.data.get(CONF_REGION) == REGION_APAC
             else entry.options.get(CONF_ENABLE_REMOTE_COMMANDS) is True
         )
-        charging_enabled = not read_only and entry.options.get(CONF_ENABLE_CHARGING_CONTROL) is True
+        # Brazil honours only the charging opt-in; every other control stays off.
+        charging_enabled = entry.options.get(CONF_ENABLE_CHARGING_CONTROL) is True
         # Brazil is read-only: stale options can never enable a command surface or carry a PIN.
         security_pin = None if read_only else entry.options.get(CONF_SECURITY_PIN)
         bean_tech_lock_credential = None if read_only else entry.options.get(CONF_BEAN_TECH_LOCK_CREDENTIAL)
@@ -320,7 +330,7 @@ async def _async_setup_cloud_entry(
         )
         _async_register_services(hass)
         await hass.config_entries.async_forward_entry_setups(
-            entry, platforms_for_region(entry.data.get(CONF_REGION))
+            entry, _entry_platforms(entry)
         )
     except BaseException:
         if entry.data.get(CONF_REGION) == REGION_APAC:

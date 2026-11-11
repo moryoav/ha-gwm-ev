@@ -184,17 +184,20 @@ def _apac_options_after_authentication(
     return {key: value for key, value in options.items() if key not in blocked}
 
 
-def _br_options_after_authentication(options: Mapping[str, Any]) -> dict[str, Any]:
-    """Brazil is read-only: drop any command consent, PIN or credential from earlier regions."""
+def _br_options_after_authentication(
+    options: Mapping[str, Any], *, preserve_charging: bool = False
+) -> dict[str, Any]:
+    """Brazil allows only the charging opt-in: drop command consent, PIN or credential from other regions."""
     blocked = {
         CONF_ENABLE_REMOTE_COMMANDS,
-        CONF_ENABLE_CHARGING_CONTROL,
         CONF_ENABLE_APAC_CLIMATE,
         CONF_ENABLE_APAC_REMOTE,
         CONF_ENABLE_APAC_CHARGING,
         CONF_SECURITY_PIN,
         CONF_BEAN_TECH_LOCK_CREDENTIAL,
     }
+    if not preserve_charging:
+        blocked.add(CONF_ENABLE_CHARGING_CONTROL)
     return {key: value for key, value in options.items() if key not in blocked}
 
 
@@ -281,7 +284,7 @@ def _cloud_options_schema(entry: ConfigEntry, defaults: dict[str, Any] | None = 
         fields = {
             marker: value
             for marker, value in fields.items()
-            if marker.schema not in {CONF_ENABLE_REMOTE_COMMANDS, CONF_ENABLE_CHARGING_CONTROL}
+            if marker.schema != CONF_ENABLE_REMOTE_COMMANDS
         }
         return vol.Schema(fields)
     if region == REGION_APAC:
@@ -850,7 +853,11 @@ class GwmConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 **(
                     {"options": _apac_options_after_authentication(entry.options, preserve_consent=True)}
                     if credentials.region == REGION_APAC
-                    else {"options": _br_options_after_authentication(entry.options)}
+                    else {
+                        "options": _br_options_after_authentication(
+                            entry.options, preserve_charging=entry.data.get(CONF_REGION) == REGION_BR
+                        )
+                    }
                     if credentials.region == REGION_BR
                     else {}
                 ),
@@ -922,7 +929,7 @@ class GwmOptionsFlow(config_entries.OptionsFlowWithReload):
             region = entry.data.get(CONF_REGION)
             normalized = dict(user_input)
             if region == REGION_BR:
-                normalized = _br_options_after_authentication(normalized)
+                normalized = _br_options_after_authentication(normalized, preserve_charging=True)
                 enabled = False
             elif region == REGION_APAC:
                 normalized.pop(CONF_ENABLE_APAC_CLIMATE, None)

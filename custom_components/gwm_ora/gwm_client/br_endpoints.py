@@ -1,7 +1,8 @@
 """Allowlisted Brazil (BR) hosts, paths and header sets, read-only.
 
-Nothing here can express a command: only the password login and the two vehicle
-reads exist. Any other operation fails closed.
+Nothing here can express a command except the opt-in charging-plan write
+(``setChargingPlan``): the password login, the two vehicle reads and that one
+route exist. Any other operation fails closed.
 """
 
 from __future__ import annotations
@@ -16,6 +17,8 @@ BR_AUTH_BASE_URL: Final = f"https://{BR_AUTH_HOST}/br-official-commerce/br-offic
 BR_APP_BASE_URL: Final = f"https://{BR_APP_HOST}/app-api/api/v1.0/"
 BR_SUCCESS_CODE: Final = "000000"
 BR_CREDENTIAL_REJECTED_CODE: Final = "308001"
+# The vehicle is busy with another remote operation: report it, never retry in a loop.
+BR_BUSY_CODES: Final = frozenset({"9999", "REMOTE250502"})
 
 # Login web-portal headers confirmed against the live backend.
 _AUTH_HEADERS: Final = MappingProxyType(
@@ -61,6 +64,7 @@ _ENDPOINTS: Final = MappingProxyType(
         "login": BrEndpoint("POST", BR_AUTH_BASE_URL, "userAuth/loginAccount", False),
         "acquire_vehicles": BrEndpoint("GET", BR_APP_BASE_URL, "globalapp/vehicle/acquireVehicles", True),
         "get_last_status": BrEndpoint("GET", BR_APP_BASE_URL, "vehicle/getLastStatus", True),
+        "set_charging_plan": BrEndpoint("POST", BR_APP_BASE_URL, "vehicleCharge/setChargingPlan", True),
     }
 )
 

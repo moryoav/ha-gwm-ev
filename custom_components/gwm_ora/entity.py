@@ -15,6 +15,7 @@ from .const import DOMAIN
 from .coordinator import GwmDataUpdateCoordinator
 from .errors import GwmCommandError, GwmCommandForbidden
 from .gwm_client import GwmAuthenticationError, GwmClientError
+from .gwm_client.br_request import GwmBrBusyError
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -170,6 +171,12 @@ async def async_call_gwm_api(
         raise HomeAssistantError(
             translation_domain=DOMAIN,
             translation_key="cloud_auth_failed",
+        ) from err
+    except GwmBrBusyError as err:
+        _log_gwm_client_failure(err)
+        raise HomeAssistantError(
+            translation_domain=DOMAIN,
+            translation_key="br_charging_busy",
         ) from err
     except GwmCommandForbidden as err:
         raise HomeAssistantError(

@@ -139,6 +139,9 @@
     "remote_command_unavailable": {
       "message": "Remote commands are unavailable. Enable them in the integration options and configure a security PIN where required."
     },
+    "br_charging_busy": {
+      "message": "The vehicle or GWM Brazil is busy with another operation. Wait a minute and try again."
+    },
     "charging_control_unavailable": {
       "message": "Charging control is unavailable. Enable it in the integration options."
     },

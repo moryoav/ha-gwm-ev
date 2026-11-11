@@ -13,6 +13,7 @@ from ._protocol import _AsyncTransport
 from .br_auth_client import BrAuthClient, BrSession, BrTokens
 from .br_read import BrReadClient
 from .br_state import BrAccountCredentials, BrAuthState
+from .charging import ChargingPlanCommand
 from .errors import GwmAuthenticationError
 from .models import (
     CloudVehicle,
@@ -62,6 +63,10 @@ class BrCloudReader:
         if type(identifier) is not VehicleIdentifier:
             raise ValueError("br_vehicle_invalid")
         return CloudVehicleBasics()
+
+    async def set_charging_plan(self, command: ChargingPlanCommand) -> None:
+        """The only write; the cloud client allows it only with the charging opt-in."""
+        await self._client.set_charging_plan(command)
 
     async def aclose(self) -> None:
         """Close the owned transport."""

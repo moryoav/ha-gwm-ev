@@ -868,6 +868,8 @@ class GwmCommandApi:
         """Return the current validated charging-plan shape."""
 
         self._ensure_charging_available()
+        if self._cloud.region == REGION_BR:
+            raise GwmCommandForbidden("GWM Brazil has no charging-plan readback")
         identifier = _vehicle_identifier(vin, command_name="Charging plan")
         return (await self._cloud.async_get_charging_plan(identifier)).as_dict()
 
@@ -897,6 +899,9 @@ class GwmCommandApi:
         except (TypeError, ValueError):
             raise GwmCommandError("Charging plan requires a valid window and options") from None
         await self._cloud.async_set_charging_plan(command)
+        if self._cloud.region == REGION_BR:
+            # No readback and no ownership journal in this region (assumed state).
+            return {}
         if not enable:
             await self._durably_remove_owned_plan(identifier.value)
             return {}
@@ -983,8 +988,6 @@ class GwmCommandApi:
 
     def _ensure_charging_available(self) -> None:
         """Require charging consent and a writable regional backend."""
-        if self._cloud.region == REGION_BR:
-            raise GwmCommandForbidden("GWM Brazil is read-only")
         if self._cloud.region == REGION_APAC:
             raise GwmCommandForbidden("Charging schedules are not supported for this region")
         if not self._charging_enabled:

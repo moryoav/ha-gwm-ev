@@ -56,14 +56,20 @@ PLATFORMS: list[Platform] = [
     Platform.SWITCH,
 ]
 
-# Brazil is read-only: no command, climate, lock or charging platform is ever loaded.
+# Brazil is read-only except the opt-in charging schedule: no command, climate or lock platform is ever loaded.
 BR_COUNTRY = "BR"
 BR_PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.BINARY_SENSOR, Platform.DEVICE_TRACKER]
 
 
-def platforms_for_region(region: object) -> list[Platform]:
-    """Return the platforms loaded for one region (read-only platforms only for Brazil)."""
-    return BR_PLATFORMS if region == REGION_BR else PLATFORMS
+def platforms_for_region(region: object, *, charging_control: bool = False) -> list[Platform]:
+    """Return the platforms loaded for one region.
+
+    Brazil loads read-only platforms; the switch platform (which only holds the
+    "Scheduled charging" switch there) is added only when charging control is on.
+    """
+    if region != REGION_BR:
+        return PLATFORMS
+    return [*BR_PLATFORMS, Platform.SWITCH] if charging_control else BR_PLATFORMS
 
 
 # Charging schedule control (behind the integration option).
