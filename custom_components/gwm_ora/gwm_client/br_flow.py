@@ -7,7 +7,6 @@ there is no command path in this region.
 from __future__ import annotations
 
 import ssl
-import time
 from dataclasses import dataclass, field, replace
 
 from ._protocol import _AsyncTransport
@@ -84,9 +83,13 @@ def create_br_reader(
     """Build the runtime reader; it owns ``transport`` and restores persisted tokens."""
     if type(credentials) is not BrAccountCredentials or type(state) is not BrAuthState or not state.matches(credentials):
         raise ValueError("br_credentials_invalid")
-    # Runtime sessions never log in by password: expiry or rejection means reauthentication.
+    # Runtime sessions never log in by password: they renew silently with the refresh token
+    # and ask for reauthentication only when that refresh is refused too.
     session = BrSession(
-        BrAuthClient(credentials=credentials.to_br_credentials(), transport=transport), allow_login=False
+        BrAuthClient(
+            credentials=credentials.to_br_credentials(), transport=transport, refresh_context=ssl_context
+        ),
+        allow_login=False,
     )
     if state.tokens is not None:
         session.restore(state.tokens)
@@ -103,8 +106,9 @@ async def authenticate_br(
 ) -> BrAuthenticated:
     """Restore persisted tokens lazily, or sign in once and validate with a read.
 
-    Restoring performs no network call and no password login: an expired or missing
-    session raises ``GwmAuthenticationError`` (reauthentication). An explicit login (config or reauth flow) signs in
+    Restoring performs no network call and no password login: a missing session raises
+    ``GwmAuthenticationError`` (reauthentication); an expired access token is renewed
+    by the first read through the refresh token. An explicit login (config or reauth flow) signs in
     and reads the vehicle list so certificate and credential problems surface here.
     """
     if (
@@ -117,13 +121,13 @@ async def authenticate_br(
     if not allow_password_login:
         if candidate.tokens is None:
             raise GwmAuthenticationError(operation="login")
-        # Honour "resume only": an expired saved session needs reauthentication, not a silent
-        # password login (the backend has no refresh endpoint, so this recurs about daily).
-        if candidate.tokens.expired(time.time()):
-            raise GwmAuthenticationError(operation="login")
+        # Resume only: an expired access token is recoverable (the first read refreshes it with
+        # the refresh token); a dead refresh token surfaces there as reauthentication.
         return BrAuthenticated(candidate, ssl_context)
 
-    auth = BrAuthClient(credentials=credentials.to_br_credentials(), transport=transport)
+    auth = BrAuthClient(
+        credentials=credentials.to_br_credentials(), transport=transport, refresh_context=ssl_context
+    )
     tokens = await auth.login()
     session = BrSession(auth, allow_login=False)
     session.restore(tokens)

@@ -4,10 +4,10 @@ The login host (a public web portal) is reached with a CLEAN default TLS context
 no client certificate and no lowered security level. The vehicle client identity
 (mTLS, SECLEVEL=0) is used only for the vehicle gateway reads.
 
-NOTE: this backend has no refresh endpoint (the ``refreshToken`` is only carried
-as a header) and tokens last about 24 h, so renewal means a new password login.
-Upstream policy forbids silent password re-login; the BR region keeps it inside
-``BrSession`` so the PR can align the exact behaviour in one place.
+Access tokens last about 24 h; the refresh token lives about 60 days and rotates.
+Renewal is a ``refreshToken`` call on the h5 gateway (same mTLS context as the
+vehicle reads), which needs no password. A password login happens only when
+explicitly allowed (standalone tool); the Home Assistant runtime never does it.
 """
 
 from __future__ import annotations
@@ -72,18 +72,57 @@ class BrAuthClient:
         credentials: BrCredentials,
         transport: _AsyncTransport,
         login_context: ssl.SSLContext | None = None,
+        refresh_context: ssl.SSLContext | None = None,
     ) -> None:
         """Retain caller-owned dependencies without authenticating.
 
         ``login_context`` defaults to ``ssl.create_default_context()`` (system CA, no
         client certificate), created lazily in a worker thread on the first login.
+        ``refresh_context`` is the vehicle-gateway mTLS context used by the h5 refresh;
+        without it ``refresh`` is unavailable.
         """
         if type(credentials) is not BrCredentials:
             raise ValueError("br_credentials_invalid")
         self._credentials = credentials
         self._login_context = login_context
+        self._refresh_context = refresh_context
         self._transport = transport
         self._lock = asyncio.Lock()
+
+    @property
+    def can_refresh(self) -> bool:
+        """True when a refresh TLS context was supplied."""
+        return self._refresh_context is not None
+
+    async def refresh(self, tokens: BrTokens) -> BrTokens:
+        """Renew the session with the refresh token (no password). Never retried."""
+        if self._refresh_context is None or type(tokens) is not BrTokens or not tokens.refresh_token:
+            raise GwmAuthenticationError(operation="refresh_token")
+        deadline = _Deadline(asyncio.get_running_loop().time() + 30.0)
+        try:
+            async with asyncio.timeout_at(deadline.expires_at):
+                request = prepare_br_request(
+                    operation="refresh_token",
+                    ssl_context=self._refresh_context,
+                    access_token=tokens.access_token,
+                    refresh_token=tokens.refresh_token,
+                    device_id=self._credentials.device_id,
+                )
+                response = await self._transport.execute(
+                    request, deadline=deadline, connect_timeout=10.0, read_timeout=20.0
+                )
+                data = decode_br_envelope(response, operation="refresh_token")
+        except TimeoutError:
+            raise GwmDeadlineExceededError(operation="refresh_token") from None
+        if not isinstance(data, dict):
+            raise GwmSchemaError(operation="refresh_token")
+        access, refresh = data.get("accessToken"), data.get("refreshToken")
+        if not isinstance(access, str) or not access or not isinstance(refresh, str) or not refresh:
+            raise GwmSchemaError(operation="refresh_token")
+        try:
+            return BrTokens(access, refresh, jwt_expiry(access))
+        except ValueError:
+            raise GwmSchemaError(operation="refresh_token") from None
 
     async def login(self) -> BrTokens:
         """One password login. A rejected credential is never retried."""
@@ -113,13 +152,14 @@ class BrAuthClient:
 
 
 class BrSession:
-    """Current tokens plus, when allowed, the encapsulated re-login on expiry.
+    """Current tokens plus their silent renewal.
 
-    Limitation: the BR backend has no refresh endpoint and tokens last about 24 h.
-    With ``allow_login=False`` (the Home Assistant runtime) an expired or rejected
-    session raises ``GwmAuthenticationError`` so the user is asked to reauthenticate,
-    matching the repository's "no silent password login" policy. The maintainer may
-    instead opt for a bounded automatic re-login by passing ``allow_login=True``.
+    An absent, expired or rejected access token is renewed with the refresh token on
+    the h5 gateway (no password). If the auth client cannot refresh, there is no
+    refresh token, or the refresh is refused, the session falls back to a password
+    login when ``allow_login=True`` (standalone tool) and otherwise raises
+    ``GwmAuthenticationError`` so the user is asked to reauthenticate (Home
+    Assistant runtime, ``allow_login=False``).
     """
 
     def __init__(
@@ -144,14 +184,22 @@ class BrSession:
         return self._tokens
 
     async def ensure(self, *, rejected: BrTokens | None = None) -> BrTokens:
-        """Return valid tokens, logging in again when absent, expired or rejected.
+        """Return valid tokens, refreshing (or logging in) when absent, expired or rejected.
 
         ``rejected`` is the snapshot a request just used and the server refused;
-        concurrent callers holding the same snapshot trigger a single login.
+        concurrent callers holding the same snapshot trigger a single renewal.
         """
         async with self._lock:
             tokens = self._tokens
             if tokens is None or tokens is rejected or tokens.expired(self._clock()):
+                if tokens is not None and tokens.refresh_token and self._auth.can_refresh:
+                    try:
+                        refreshed = await self._auth.refresh(tokens)
+                    except GwmAuthenticationError:
+                        refreshed = None
+                    if refreshed is not None:
+                        self._tokens = refreshed
+                        return refreshed
                 if not self._allow_login:
                     raise GwmAuthenticationError(operation="login")
                 tokens = await self._auth.login()
