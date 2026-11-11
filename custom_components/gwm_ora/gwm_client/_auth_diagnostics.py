@@ -59,7 +59,10 @@ _HOSTS = {
     "eu-app-gateway-common.gwmcloud.com": "eu",
     "aus-h5-gateway.gwmcloud.com": "aus",
     "rus-h5-gateway.gwmcloud.com": "rus",
+    "br-front-service.gwmcloud.com": "br",
 }
+# The BR password login runs on the web-portal gateway with its own prefix and no request signing.
+_BR_LOGIN_PREFIX = "/br-official-commerce/br-official-gateway/pc-api/api/v1.0/"
 _CATEGORIES = frozenset({
     "client_error", "configuration_error", "route_policy_error", "client_closed",
     "transport_error", "network_error", "tls_error", "deadline_exceeded",
@@ -212,7 +215,13 @@ def begin_request(request: _TransportRequest, *, connect_timeout: float, read_ti
         region = _HOSTS.get(url.hostname or "")
         if region is None or url.port not in {None, 443}:
             return None
-        prefix = next((value for value in ("/app-api/api/v1.0/", "/app-api/api/v2.0/") if url.path.startswith(value)), None)
+        prefix = (
+            _BR_LOGIN_PREFIX
+            if region == "br" and url.path.startswith(_BR_LOGIN_PREFIX)
+            else next((value for value in ("/app-api/api/v1.0/", "/app-api/api/v2.0/") if url.path.startswith(value)), None)
+            if region != "br"
+            else None
+        )
         if prefix is None:
             return None
         route = _PATHS.get(url.path[len(prefix):])
@@ -222,8 +231,11 @@ def begin_request(request: _TransportRequest, *, connect_timeout: float, read_ti
         if certificate != (url.hostname == "eu-app-gateway-common.gwmcloud.com"):
             return None
         version_two = prefix == "/app-api/api/v2.0/"
-        gateway = "certificate_v1" if certificate else "auth_v2" if version_two else "h5_v1"
-        signing = "gwm_auth" if region == "rus" or (region == "eu" and version_two) else "bt_auth"
+        gateway = "br_login" if region == "br" else "certificate_v1" if certificate else "auth_v2" if version_two else "h5_v1"
+        signing = (
+            "none" if region == "br"
+            else "gwm_auth" if region == "rus" or (region == "eu" and version_two) else "bt_auth"
+        )
         names = {name.lower() for name in request.headers}
         attempt = _CURRENT_ATTEMPT.get()
         fields: dict[str, object] = {

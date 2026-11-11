@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import timedelta
@@ -50,11 +51,12 @@ from .const import (
     DEFAULT_POLL_INTERVAL_SECONDS,
     DOMAIN,
     MIN_CHARGE_WINDOW_MINUTES,
-    PLATFORMS,
     REGION_APAC,
+    REGION_BR,
     REGION_CHINA,
     SERVICE_CLEAR_CHARGING_PLAN,
     SERVICE_SET_CHARGING_PLAN,
+    platforms_for_region,
 )
 from .coordinator import GwmDataUpdateCoordinator
 from .entity import async_call_gwm_api
@@ -72,6 +74,15 @@ from .gwm_client import (
 from .gwm_client.apac_flow import ApacAuthenticated
 from .gwm_client.apac_material import load_installed_apac_material
 from .gwm_client.apac_restore import ApacRestored
+from .gwm_client.br_flow import BrAuthenticated
+from .gwm_client.br_installed import (
+    GwmBrMaterialInvalidError,
+    GwmBrMaterialMissingError,
+    installed_br_directory,
+    load_installed_br_context,
+)
+
+_LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -188,7 +199,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: GwmConfigEntry) -> bool:
 
 async def async_unload_entry(hass: HomeAssistant, entry: GwmConfigEntry) -> bool:
     """Unload a config entry."""
-    unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    unloaded = await hass.config_entries.async_unload_platforms(
+        entry, platforms_for_region(entry.data.get(CONF_REGION))
+    )
     if not unloaded:
         return False
     cloud = entry.runtime_data.cloud
@@ -229,14 +242,18 @@ async def _async_setup_cloud_entry(
     bootstrap = await _async_load_cloud_bootstrap(hass, entry, state_store)
 
     try:
+        read_only = entry.data.get(CONF_REGION) == REGION_BR
         command_enabled = (
-            entry.options.get(CONF_ENABLE_APAC_REMOTE) is True
+            False
+            if read_only
+            else entry.options.get(CONF_ENABLE_APAC_REMOTE) is True
             if entry.data.get(CONF_REGION) == REGION_APAC
             else entry.options.get(CONF_ENABLE_REMOTE_COMMANDS) is True
         )
-        charging_enabled = entry.options.get(CONF_ENABLE_CHARGING_CONTROL) is True
-        security_pin = entry.options.get(CONF_SECURITY_PIN)
-        bean_tech_lock_credential = entry.options.get(CONF_BEAN_TECH_LOCK_CREDENTIAL)
+        charging_enabled = not read_only and entry.options.get(CONF_ENABLE_CHARGING_CONTROL) is True
+        # Brazil is read-only: stale options can never enable a command surface or carry a PIN.
+        security_pin = None if read_only else entry.options.get(CONF_SECURITY_PIN)
+        bean_tech_lock_credential = None if read_only else entry.options.get(CONF_BEAN_TECH_LOCK_CREDENTIAL)
         apac_pin = isinstance(security_pin, str) and bool(security_pin.strip())
         apac_remote = entry.data.get(CONF_REGION) == REGION_APAC and apac_pin and entry.options.get(CONF_ENABLE_APAC_REMOTE) is True
         apac_charging = entry.data.get(CONF_REGION) == REGION_APAC and apac_pin and entry.options.get(CONF_ENABLE_APAC_CHARGING) is True
@@ -302,7 +319,9 @@ async def _async_setup_cloud_entry(
             state_store=state_store,
         )
         _async_register_services(hass)
-        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+        await hass.config_entries.async_forward_entry_setups(
+            entry, platforms_for_region(entry.data.get(CONF_REGION))
+        )
     except BaseException:
         if entry.data.get(CONF_REGION) == REGION_APAC:
             await api.async_shutdown_apac_commands()
@@ -378,15 +397,16 @@ async def _async_load_cloud_bootstrap_once(
         await async_finish_apac_state_save(state_store.async_save_auth_state(credentials, result.state))
 
     try:
-        authenticator = (
-            GwmCloudAuthenticator(
+        if credentials.region == REGION_APAC:
+            authenticator = GwmCloudAuthenticator(
                 apac_material_loader=lambda: load_installed_apac_material(
                     Path(hass.config.path(".storage", "gwm_apac_material"))
                 )
             )
-            if credentials.region == REGION_APAC
-            else GwmCloudAuthenticator()
-        )
+        elif credentials.region == REGION_BR:
+            authenticator = GwmCloudAuthenticator(br_context_loader=load_installed_br_context)
+        else:
+            authenticator = GwmCloudAuthenticator()
         result = await authenticator.async_authenticate(
             credentials,
             state=auth_state,
@@ -407,6 +427,7 @@ async def _async_load_cloud_bootstrap_once(
                 RussiaAuthenticated,
                 ChinaAuthenticated,
                 ApacAuthenticated,
+                BrAuthenticated,
             ),
         ):
             await state_store.async_clear_auth_state(dict(entry.data))
@@ -422,6 +443,19 @@ async def _async_load_cloud_bootstrap_once(
         await state_store.async_clear_auth_state(dict(entry.data))
         raise ConfigEntryAuthFailed(
             "GWM cloud authentication was rejected"
+        ) from err
+    except (GwmBrMaterialMissingError, GwmBrMaterialInvalidError) as err:
+        # Not an authentication failure: keep retrying so dropping the files in place recovers setup.
+        missing = isinstance(err, GwmBrMaterialMissingError)
+        _LOGGER.error(
+            "GWM Brazil mTLS certificate material is %s. Place gwm_general.cer, gwm_general.key and "
+            "gwm_root.cer (or gwm_client_fullchain.pem and gwm_general.key) in %s, then reload the integration",
+            "missing" if missing else "invalid",
+            installed_br_directory(),
+        )
+        raise ConfigEntryNotReady(
+            f"GWM Brazil certificate material is {'missing' if missing else 'invalid'}; "
+            f"place the files in {installed_br_directory()}"
         ) from err
     except GwmClientError as err:
         status = f" (HTTP {err.status})" if isinstance(err, GwmHttpError) and err.status is not None else ""
