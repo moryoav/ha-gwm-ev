@@ -157,7 +157,7 @@ def decode_br_envelope(response: _TransportResponse, *, operation: str) -> objec
 
     data = mapping.get("data") if mapping is not None else None
     if operation == "set_charging_plan" and mapping is not None and (
-        code in BR_BUSY_CODES
+        (isinstance(code, str) and code in BR_BUSY_CODES)
         or mapping.get("running") is True
         or (isinstance(data, Mapping) and data.get("running") is True)
         or (isinstance(mapping.get("description"), str) and "REMOTE250502" in mapping["description"])
