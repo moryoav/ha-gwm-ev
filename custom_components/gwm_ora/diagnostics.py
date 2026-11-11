@@ -53,6 +53,7 @@ TO_REDACT = {
     "latitude",
     "location",
     "longitude",
+    "password_md5",
     "phone",
     "private_key",
     "pt_token",

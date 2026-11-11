@@ -8,6 +8,13 @@ This project follows semantic versioning. The Marketplace installs GWM from publ
 
 ## [Unreleased]
 
+### Added
+
+- Added a read-only Brazil region: password sign-in without a verification code, vehicle discovery, and status polling for sensors, binary sensors, and the location tracker. Brazil never creates command, climate, lock, number, or charging entities.
+- Brazil needs the vehicle-gateway client certificate, which is not distributed. Place `gwm_general.cer`, `gwm_general.key`, and `gwm_root.cer` in `custom_components/gwm_ora/resources/br/` once. Setup and startup report a clear error naming this folder when the files are missing or unusable.
+- Brazil signs in again with the saved password when its 24-hour token expires, because the service has no refresh endpoint, and saves the new session privately.
+- Added Brazil gateway hosts to the sanitized diagnostics and redacted the password digest.
+
 ## [0.18.0] - 2026-11-10
 
 ### Added

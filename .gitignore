@@ -21,3 +21,7 @@ options.json
 # Local agent notes
 AGENTS.md
 agents.md
+
+# BR mTLS material (extraido do app; NAO versionar)
+custom_components/gwm_ora/resources/br/
+instalar-no-ha.sh

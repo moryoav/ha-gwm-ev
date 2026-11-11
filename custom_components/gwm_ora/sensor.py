@@ -538,6 +538,13 @@ def _sensor_descriptions_for_vehicle(
     region: str,
 ) -> tuple[GwmSensorEntityDescription, ...]:
     """Return descriptions supported by the vehicle backend."""
+    if str(region or "").lower() == "br":
+        # Read-only region: no command is ever issued, so there is no command status to show.
+        return tuple(
+            description
+            for description in SENSORS
+            if description.key not in BEANTECH_SENSOR_KEYS and description.key != "command_status"
+        )
     if str(region or "").lower() == "cn" and str(vehicle.get("platform") or "").lower() == "beantech":
         return SENSORS
     descriptions = tuple(description for description in SENSORS if description.key not in BEANTECH_SENSOR_KEYS)
