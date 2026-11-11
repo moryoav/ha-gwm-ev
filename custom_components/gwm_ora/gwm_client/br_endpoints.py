@@ -1,8 +1,8 @@
 """Allowlisted Brazil (BR) hosts, paths and header sets, read-only.
 
 Nothing here can express a command except the opt-in charging-plan write
-(``setChargingPlan``): the password login, the two vehicle reads and that one
-route exist. Any other operation fails closed.
+(``setChargingPlan``): the password login, the two vehicle reads, the token
+refresh and that one route exist. Any other operation fails closed.
 """
 
 from __future__ import annotations
@@ -13,8 +13,10 @@ from typing import Final
 
 BR_AUTH_HOST: Final = "br-front-service.gwmcloud.com"
 BR_APP_HOST: Final = "br-app-gateway.gwmcloud.com"
+BR_H5_HOST: Final = "br-h5-gateway.gwmcloud.com"
 BR_AUTH_BASE_URL: Final = f"https://{BR_AUTH_HOST}/br-official-commerce/br-official-gateway/pc-api/api/v1.0/"
 BR_APP_BASE_URL: Final = f"https://{BR_APP_HOST}/app-api/api/v1.0/"
+BR_H5_BASE_URL: Final = f"https://{BR_H5_HOST}/app-api/api/v1.0/"
 BR_SUCCESS_CODE: Final = "000000"
 BR_CREDENTIAL_REJECTED_CODE: Final = "308001"
 # The vehicle is busy with another remote operation: report it, never retry in a loop.
@@ -65,6 +67,7 @@ _ENDPOINTS: Final = MappingProxyType(
         "acquire_vehicles": BrEndpoint("GET", BR_APP_BASE_URL, "globalapp/vehicle/acquireVehicles", True),
         "get_last_status": BrEndpoint("GET", BR_APP_BASE_URL, "vehicle/getLastStatus", True),
         "set_charging_plan": BrEndpoint("POST", BR_APP_BASE_URL, "vehicleCharge/setChargingPlan", True),
+        "refresh_token": BrEndpoint("POST", BR_H5_BASE_URL, "userAuth/refreshToken", True),
     }
 )
 
@@ -83,5 +86,5 @@ def br_auth_headers() -> dict[str, str]:
 
 
 def br_app_headers(access_token: str, refresh_token: str) -> dict[str, str]:
-    """Headers for the vehicle gateway; the refresh token is carried, never used to renew."""
+    """Headers for the vehicle gateway and the h5 refresh host (both tokens are carried)."""
     return {**_APP_HEADERS, "accessToken": access_token, "refreshToken": refresh_token}
