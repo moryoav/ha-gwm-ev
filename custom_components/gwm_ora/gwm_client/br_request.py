@@ -61,7 +61,8 @@ def prepare_br_request(
             not isinstance(ssl_context, ssl.SSLContext)
             or not ssl_context.check_hostname
             or ssl_context.verify_mode != ssl.CERT_REQUIRED
-            or ssl_context.security_level != 0
+            # Vehicle gateway: mTLS context at SECLEVEL=0. Login host: a standard, non-downgraded one.
+            or (ssl_context.security_level != 0) == (operation != "login")
         ):
             raise ValueError("invalid")
         body: bytes | None = None
