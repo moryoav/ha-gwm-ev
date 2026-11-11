@@ -56,7 +56,7 @@ def _client(tmp_path: Path, *responses, clock=lambda: NOW) -> tuple[BrReadClient
     context = create_br_ssl_context(load_br_material(tmp_path))
     transport = FakeTransport(*responses)
     credentials = BrCredentials.from_password("someone@example.invalid", "Synthetic1", DEVICE)
-    session = BrSession(BrAuthClient(credentials=credentials, ssl_context=context, transport=transport), clock=clock)
+    session = BrSession(BrAuthClient(credentials=credentials, transport=transport), clock=clock)
     return BrReadClient(session=session, ssl_context=context, transport=transport), transport
 
 
@@ -85,6 +85,10 @@ async def test_login_then_discovery_and_golden_status(tmp_path: Path) -> None:
     assert snapshot.values.odometer_km == 1234
     assert snapshot.values.charge_plug_connected is True
     assert snapshot.values.ac_active is False
+    # 2201001 is tenths of a degree Celsius: raw "22" is 2.2 C. Locks the code-to-field mapping.
+    assert any(item.code == "2201001" and item.value == "22" for item in status.items)
+    assert snapshot.values.interior_temperature_c == pytest.approx(2.2)
+    assert snapshot.raw_items["2201001"] is not None
     assert snapshot.location is not None
     assert (snapshot.location.latitude, snapshot.location.longitude) == (-1.25, 2.5)
 
