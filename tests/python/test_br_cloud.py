@@ -103,6 +103,10 @@ def _login(exp: int = NOW_FAR) -> object:
     return envelope({"accessToken": fake_jwt(exp), "refreshToken": "synthetic-refresh"})
 
 
+def _refresh(exp: int = NOW_FAR, refresh: str = "rotated-refresh") -> object:
+    return envelope({"accessToken": fake_jwt(exp), "refreshToken": refresh})
+
+
 def _component(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """A fake installed component whose resources/br is empty (nothing placed yet)."""
     component = tmp_path / "config" / "custom_components" / "gwm_ora"
@@ -445,11 +449,11 @@ async def test_br_startup_restore_makes_no_request_and_never_logs_in_by_password
     assert isinstance(restored, BrAuthenticated)
     assert transport.requests == []
 
-    # An expired saved session is NOT renewed with the password: it asks for reauthentication.
-    with pytest.raises(GwmAuthenticationError):
-        await authenticator.async_authenticate(
-            credentials, state=_expired_state(credentials), allow_password_login=False
-        )
+    # An expired access token is recoverable: resuming makes no request (the first read refreshes it).
+    resumed = await authenticator.async_authenticate(
+        credentials, state=_expired_state(credentials), allow_password_login=False
+    )
+    assert isinstance(resumed, BrAuthenticated)
     assert transport.requests == []
 
     with pytest.raises(GwmAuthenticationError):
@@ -533,52 +537,84 @@ async def test_br_cloud_client_reads_vehicles_and_status_only_and_is_read_only(
     assert transport.closed is True
 
 
-@pytest.mark.asyncio
-async def test_br_expired_token_asks_for_reauthentication_without_a_password_login(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    credentials, bootstrap = _bootstrap(tmp_path, expired=True)
-    transport = FakeTransport(_login(), envelope(VEHICLES), envelope(STATUS))
+async def _br_cloud(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, transport: FakeTransport, *, expired: bool):
+    credentials, bootstrap = _bootstrap(tmp_path, expired=expired)
     monkeypatch.setattr(runtime.AiohttpTransport, "create_owned", lambda **kwargs: transport)
     store = _Store()
     cloud = runtime.GwmCloudClient.from_entry_data(
         cloud_entry_data(credentials), cloud_unique_id(credentials), bootstrap, state_store=store
     )
+    return cloud, store
+
+
+@pytest.mark.asyncio
+async def test_br_expired_token_is_refreshed_silently_and_the_rotated_tokens_are_saved(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    transport = FakeTransport(_refresh(), envelope(VEHICLES), envelope(STATUS))
+    cloud, store = await _br_cloud(monkeypatch, tmp_path, transport, expired=True)
+
+    data = await cloud.async_get_vehicle_data()
+
+    assert [r.operation for r in transport.requests] == ["refresh_token", "acquire_vehicles", "get_last_status"]
+    assert "login" not in [r.operation for r in transport.requests]
+    assert transport.requests[0].ssl_context.security_level == 0
+    assert data["vehicles"][0]["values"]["soc"] == 80.0
+    assert store.cleared == 0
+    assert store.saved and store.saved[-1].tokens.refresh_token == "rotated-refresh"
+    await cloud.aclose()
+
+
+@pytest.mark.asyncio
+async def test_br_refused_refresh_asks_for_reauthentication_without_a_password_login(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    transport = FakeTransport(envelope(None, code="999999"), _login())
+    cloud, store = await _br_cloud(monkeypatch, tmp_path, transport, expired=True)
 
     with pytest.raises(GwmAuthenticationError):
         await cloud.async_get_vehicle_data()
 
-    assert transport.requests == []  # no login (nor any other) request left the process
+    assert [r.operation for r in transport.requests] == ["refresh_token"]  # no login request
     assert store.cleared == 1 and cloud.reusable_bootstrap is None
     await cloud.aclose()
 
 
 @pytest.mark.asyncio
-async def test_br_rejected_token_asks_for_reauthentication_without_a_password_login(
+async def test_br_rejected_token_is_refreshed_and_the_read_repeated(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    credentials, bootstrap = _bootstrap(tmp_path)
-    transport = FakeTransport(html(401, "unauthorized"), _login())
-    monkeypatch.setattr(runtime.AiohttpTransport, "create_owned", lambda **kwargs: transport)
-    store = _Store()
-    cloud = runtime.GwmCloudClient.from_entry_data(
-        cloud_entry_data(credentials), cloud_unique_id(credentials), bootstrap, state_store=store
-    )
+    transport = FakeTransport(html(401, "unauthorized"), _refresh(), envelope(VEHICLES), envelope(STATUS))
+    cloud, store = await _br_cloud(monkeypatch, tmp_path, transport, expired=False)
+
+    await cloud.async_get_vehicle_data()
+
+    assert [r.operation for r in transport.requests] == [
+        "acquire_vehicles", "refresh_token", "acquire_vehicles", "get_last_status",
+    ]
+    assert store.cleared == 0
+    await cloud.aclose()
+
+
+@pytest.mark.asyncio
+async def test_br_rejected_token_with_refused_refresh_asks_for_reauthentication(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    transport = FakeTransport(html(401, "unauthorized"), html(401, "unauthorized"), _login())
+    cloud, store = await _br_cloud(monkeypatch, tmp_path, transport, expired=False)
 
     with pytest.raises(GwmAuthenticationError):
         await cloud.async_get_vehicle_data()
 
-    assert [r.operation for r in transport.requests] == ["acquire_vehicles"]
+    assert [r.operation for r in transport.requests] == ["acquire_vehicles", "refresh_token"]
     assert store.cleared == 1
     await cloud.aclose()
 
 
 @pytest.mark.asyncio
-async def test_br_startup_with_expired_saved_session_raises_config_entry_auth_failed(
+async def test_br_startup_with_expired_saved_session_resumes_and_leaves_the_refresh_to_the_first_read(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    from homeassistant.exceptions import ConfigEntryAuthFailed
-
     credentials = _credentials()
     state = _expired_state(credentials)
     transport = FakeTransport(_login(), envelope(VEHICLES))
@@ -593,7 +629,7 @@ async def test_br_startup_with_expired_saved_session_raises_config_entry_auth_fa
             return state
 
         async def async_save_auth_state(self, *args: object) -> None:
-            raise AssertionError("nothing must be saved")
+            return None  # the resumed state is saved as-is (still the expired tokens)
 
         async def async_clear_auth_state(self, data: object) -> None:
             Store.cleared += 1
@@ -603,9 +639,9 @@ async def test_br_startup_with_expired_saved_session_raises_config_entry_auth_fa
         entry_id="br-entry", minor_version=1, options={}, source="user", subentries_data=None,
         title="GWM Brazil", unique_id=cloud_unique_id(credentials), version=1,
     )
-    with pytest.raises(ConfigEntryAuthFailed):
-        await integration._async_load_cloud_bootstrap_once(HomeAssistant(str(tmp_path)), entry, Store())  # type: ignore[arg-type]
-    assert transport.requests == [] and Store.cleared == 1
+    bootstrap = await integration._async_load_cloud_bootstrap_once(HomeAssistant(str(tmp_path)), entry, Store())  # type: ignore[arg-type]
+    assert bootstrap is not None
+    assert transport.requests == [] and Store.cleared == 0
 
 
 @pytest.mark.asyncio

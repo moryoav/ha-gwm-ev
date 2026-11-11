@@ -124,5 +124,5 @@ async def open_br_read_client(material_directory: Path, credentials: BrCredentia
     """
     context = await asyncio.to_thread(lambda: create_br_ssl_context(load_br_material(material_directory)))
     transport = AiohttpTransport.create_owned()
-    session = BrSession(BrAuthClient(credentials=credentials, transport=transport))
+    session = BrSession(BrAuthClient(credentials=credentials, transport=transport, refresh_context=context))
     return BrReadClient(session=session, ssl_context=context, transport=transport, owns_transport=True)
