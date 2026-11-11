@@ -118,9 +118,12 @@ async def async_setup_entry(
             coordinator.region == "cn"
             and str(vehicle.get("platform") or "").lower() == "beantech"
         )
-        existing = [
+        existing: list[GwmEntity] = [
             GwmChargingScheduleSwitch(api, coordinator, vin),
         ]
+        if coordinator.region == "br":
+            # Read-only region: the scheduled-charging switch is the only switch.
+            return existing
         if coordinator.region == "ap" and str(vehicle.get("platform") or "").strip().casefold() == "beantech":
             specs = (
                 ("seat_heating_start", "seat_heating_stop", "front_driver_seat_heater_level", "seat_heating"),

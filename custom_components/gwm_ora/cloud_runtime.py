@@ -570,7 +570,7 @@ class GwmCloudClient:
         self._lock_window_commands_enabled = (
             False if read_only else apac_remote_enabled if region == REGION_APAC else lock_window_commands_enabled
         )
-        self._charging_control_enabled = charging_control_enabled and region not in {REGION_APAC, REGION_BR}
+        self._charging_control_enabled = charging_control_enabled and region != REGION_APAC
         self._vehicles: dict[str, CloudVehicle] = {}
         self._china_climate_defaults: dict[str, CloudClimateConfiguration] = {}
 
@@ -625,7 +625,8 @@ class GwmCloudClient:
                 ssl_context=bootstrap.br_ssl_context,
                 transport=AiohttpTransport.create_owned(),
             )
-            # Read-only region: every command capability stays disabled whatever the caller passes.
+            # Brazil is read-only except the opt-in charging plan: command, climate, lock and
+            # window capabilities stay disabled whatever the caller passes.
             return cls(
                 credentials.region,
                 cast(_OverseasReadClient, reader),
@@ -633,6 +634,7 @@ class GwmCloudClient:
                 credentials=credentials,
                 state_store=state_store,
                 entry_data=data,
+                charging_control_enabled=charging_control_enabled,
             )
 
         if credentials.region == REGION_APAC:
@@ -911,7 +913,16 @@ class GwmCloudClient:
     async def async_set_charging_plan(self, command: ChargingPlanCommand) -> None:
         """Set or clear the charging plan through the authenticated client."""
 
-        self._ensure_apac_read_only("set_charging_plan")
+        if self.region == REGION_BR:
+            # The one BR write: opt-in charging plan on a discovered vehicle, never replayed on renewal.
+            if (
+                not self._charging_control_enabled
+                or type(command) is not ChargingPlanCommand
+                or command.identifier.value not in self._vehicles
+            ):
+                raise GwmRoutePolicyError(operation="set_charging_plan")
+        else:
+            self._ensure_apac_read_only("set_charging_plan")
 
         await self._async_with_session_renewal(lambda: self._client.set_charging_plan(command))
 

@@ -139,6 +139,9 @@
     "remote_command_unavailable": {
       "message": "远程命令不可用。请在集成选项中启用，并在需要时配置安全 PIN。"
     },
+    "br_charging_busy": {
+      "message": "车辆或 GWM 巴西服务正忙于其他操作。请稍等一分钟后重试。"
+    },
     "charging_control_unavailable": {
       "message": "充电控制不可用。请在集成选项中启用。"
     },

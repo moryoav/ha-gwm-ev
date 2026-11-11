@@ -75,6 +75,7 @@ from custom_components.gwm_ora.gwm_client.br_request import GwmBrCredentialError
 from custom_components.gwm_ora.gwm_client.br_state import BrAccountCredentials, BrAuthState
 from custom_components.gwm_ora.sensor import _sensor_descriptions_for_vehicle
 
+_REAL_REGISTER_SERVICES = integration._async_register_services
 DEVICE = "0123456789abcdef0123456789abcdef"
 ACCOUNT = "someone@example.invalid"
 PASSWORD = "Synthetic-Password-1"
@@ -300,7 +301,12 @@ async def test_br_reauth_asks_only_for_the_password_and_drops_stale_command_opti
         domain=DOMAIN,
         entry_id="br-entry",
         minor_version=1,
-        options={CONF_POLL_INTERVAL_SECONDS: 90, CONF_ENABLE_REMOTE_COMMANDS: True, CONF_SECURITY_PIN: "1234"},
+        options={
+            CONF_POLL_INTERVAL_SECONDS: 90,
+            CONF_ENABLE_REMOTE_COMMANDS: True,
+            CONF_ENABLE_CHARGING_CONTROL: True,
+            CONF_SECURITY_PIN: "1234",
+        },
         source="user",
         subentries_data=None,
         title="GWM Brazil",
@@ -325,12 +331,12 @@ async def test_br_reauth_asks_only_for_the_password_and_drops_stale_command_opti
 
     assert result["reason"] == "reauth_successful"
     assert updates[0]["data"][CONF_PASSWORD] == "New-Password-2"
-    assert updates[0]["options"] == {CONF_POLL_INTERVAL_SECONDS: 90}
+    assert updates[0]["options"] == {CONF_POLL_INTERVAL_SECONDS: 90, CONF_ENABLE_CHARGING_CONTROL: True}
     assert consume_cloud_bootstrap(flow.hass, entry.unique_id) is not None
 
 
 @pytest.mark.asyncio
-async def test_br_options_expose_only_polling_and_log_level() -> None:
+async def test_br_options_expose_only_polling_charging_opt_in_and_log_level() -> None:
     entry = ConfigEntry(
         data={CONF_CONNECTION_TYPE: CONNECTION_TYPE_CLOUD, CONF_REGION: REGION_BR},
         discovery_keys=MappingProxyType({}),
@@ -348,7 +354,12 @@ async def test_br_options_expose_only_polling_and_log_level() -> None:
     flow.hass = _Hass(entry)  # type: ignore[assignment]
     flow.handler = entry.entry_id
     form = await flow.async_step_init()
-    assert set(form["data_schema"].schema) == {CONF_POLL_INTERVAL_SECONDS, CONF_LOG_LEVEL}
+    assert set(form["data_schema"].schema) == {
+        CONF_POLL_INTERVAL_SECONDS,
+        CONF_ENABLE_CHARGING_CONTROL,
+        CONF_LOG_LEVEL,
+    }
+    assert form["data_schema"]({CONF_POLL_INTERVAL_SECONDS: 60, CONF_LOG_LEVEL: "info"})[CONF_ENABLE_CHARGING_CONTROL] is False
 
     saved = await flow.async_step_init(
         {
@@ -360,7 +371,11 @@ async def test_br_options_expose_only_polling_and_log_level() -> None:
         }
     )
     assert saved["type"] is FlowResultType.CREATE_ENTRY
-    assert saved["data"] == {CONF_POLL_INTERVAL_SECONDS: 120, CONF_LOG_LEVEL: "info"}
+    assert saved["data"] == {
+        CONF_POLL_INTERVAL_SECONDS: 120,
+        CONF_LOG_LEVEL: "info",
+        CONF_ENABLE_CHARGING_CONTROL: True,
+    }
 
 
 # ------------------------------------------------------ installed material
@@ -489,7 +504,7 @@ async def test_br_cloud_client_reads_vehicles_and_status_only_and_is_read_only(
         cloud_unique_id(credentials),
         bootstrap,
         state_store=_Store(),
-        # Every consent below is ignored for Brazil.
+        # Every consent below except charging is ignored for Brazil.
         climate_commands_enabled=True,
         apac_remote_enabled=True,
         apac_charging_enabled=True,
@@ -502,12 +517,12 @@ async def test_br_cloud_client_reads_vehicles_and_status_only_and_is_read_only(
     assert [request.operation for request in transport.requests] == ["acquire_vehicles", "get_last_status"]
     assert data["region"] == "br"
     assert data["remote_commands_enabled"] is False
-    assert data["charging_control_enabled"] is False
+    assert data["charging_control_enabled"] is True
     vehicle = data["vehicles"][0]
     assert vehicle["values"]["soc"] == 80.0
     assert vehicle["location"]["latitude"] == pytest.approx(-1.25)
     capabilities = vehicle["capabilities"]
-    assert not any(value is True for value in capabilities.values()), capabilities
+    assert {key for key, value in capabilities.items() if value is True} == {"charging_control"}, capabilities
 
     identifier = VehicleIdentifier(VIN)
     for call in (
@@ -601,7 +616,7 @@ async def test_br_setup_forwards_only_read_only_platforms_and_never_enables_comm
         domain=DOMAIN,
         entry_id="br-entry",
         minor_version=1,
-        options={CONF_ENABLE_REMOTE_COMMANDS: True, CONF_ENABLE_CHARGING_CONTROL: True, CONF_SECURITY_PIN: "1234"},
+        options={CONF_ENABLE_REMOTE_COMMANDS: True, CONF_SECURITY_PIN: "1234"},
         source="user",
         subentries_data=None,
         title="GWM Brazil",
@@ -703,3 +718,302 @@ def test_br_diagnostics_know_the_hosts_and_redact_private_values(tmp_path: Path)
     flattened = json.dumps(exchange.fields, default=str)
     assert ACCOUNT not in flattened and DEVICE not in flattened and PASSWORD not in flattened
     assert br_flow.BrAuthenticated is BrAuthenticated
+
+
+# ------------------------------------------------- opt-in charging schedule
+
+
+def _plan_body(request: Any) -> dict[str, Any]:
+    return json.loads(request.body)
+
+
+def test_br_set_charging_plan_request_has_the_documented_url_and_body(tmp_path: Path) -> None:
+    from custom_components.gwm_ora.gwm_client import ChargingPlanCommand
+
+    context = _context(tmp_path)
+    identifier = VehicleIdentifier(VIN)
+    start, end = 1_800_000_000_000, 1_800_000_000_000 + 8 * 3600 * 1000
+    on = prepare_br_request(
+        operation="set_charging_plan",
+        ssl_context=context,
+        access_token="tok-a",
+        refresh_token="tok-r",
+        plan=ChargingPlanCommand(identifier, enable=True, start_time_ms=start, end_time_ms=end),
+    )
+    assert on.method == "POST"
+    assert on.url == f"https://br-app-gateway.gwmcloud.com/app-api/api/v1.0/vehicleCharge/setChargingPlan?vin={VIN}"
+    assert on.headers["accessToken"] == "tok-a" and on.headers["content-type"] == "application/json"
+    body = _plan_body(on)
+    assert body["enable"] is True and body["startTime"] == start and body["endTime"] == end
+    assert body["planType"] == "1" and body["vin"] == VIN
+    assert body["seqNo"].endswith("1234") and len(body["seqNo"]) == 36 and "-" not in body["seqNo"]
+    assert set(body) == {"enable", "startTime", "endTime", "seqNo", "planType", "vin"}  # no PIN field
+
+    off = prepare_br_request(
+        operation="set_charging_plan",
+        ssl_context=context,
+        access_token="tok-a",
+        refresh_token="tok-r",
+        plan=ChargingPlanCommand(identifier, enable=False),
+    )
+    assert _plan_body(off) | {"seqNo": ""} == {
+        "enable": False, "startTime": "", "endTime": "", "seqNo": "", "planType": "1", "vin": VIN,
+    }
+    # The window rule lives in the shared command, not in the BR serializer.
+    with pytest.raises(ValueError):
+        ChargingPlanCommand(identifier, enable=True, start_time_ms=start, end_time_ms=start + 60_000)
+    for bad in ({"plan": None}, {"plan": "x"}):
+        with pytest.raises(ValueError, match="^br_request_invalid$"):
+            prepare_br_request(operation="set_charging_plan", ssl_context=context, access_token="tok-a", **bad)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="^br_request_invalid$"):  # a plan only belongs to this route
+        prepare_br_request(
+            operation="get_last_status", ssl_context=context, access_token="tok-a",
+            vehicle_id=VIN, plan=ChargingPlanCommand(identifier, enable=False),
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "response",
+    [
+        envelope(None, code="9999", description="busy"),
+        envelope(None, code="REMOTE250502", description="system busy"),
+        envelope({"running": True}),
+    ],
+)
+async def test_br_charging_busy_is_a_friendly_error_and_not_retried(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, response: object
+) -> None:
+    from custom_components.gwm_ora.gwm_client.br_request import GwmBrBusyError
+
+    credentials, bootstrap = _bootstrap(tmp_path)
+    transport = FakeTransport(envelope(VEHICLES), envelope(STATUS), response)  # type: ignore[arg-type]
+    monkeypatch.setattr(runtime.AiohttpTransport, "create_owned", lambda **kwargs: transport)
+    cloud = runtime.GwmCloudClient.from_entry_data(
+        cloud_entry_data(credentials), cloud_unique_id(credentials), bootstrap,
+        state_store=_Store(), charging_control_enabled=True,
+    )
+    await cloud.async_get_vehicle_data()
+    from custom_components.gwm_ora.gwm_client import ChargingPlanCommand
+
+    with pytest.raises(GwmBrBusyError):
+        await cloud.async_set_charging_plan(ChargingPlanCommand(VehicleIdentifier(VIN), enable=False))
+    assert len(transport.requests) == 3  # no retry loop
+    await cloud.aclose()
+
+
+@pytest.mark.asyncio
+async def test_br_guard_allows_only_the_charging_plan_and_only_with_opt_in(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from custom_components.gwm_ora.gwm_client import ChargingPlanCommand
+
+    identifier = VehicleIdentifier(VIN)
+    now = 1_800_000_000_000
+    plan = ChargingPlanCommand(identifier, enable=True, start_time_ms=now, end_time_ms=now + 8 * 3600 * 1000)
+
+    async def build(enabled: bool) -> tuple[runtime.GwmCloudClient, FakeTransport]:
+        credentials, bootstrap = _bootstrap(tmp_path)
+        transport = FakeTransport(envelope(VEHICLES), envelope(STATUS), envelope({}), envelope({}))
+        monkeypatch.setattr(runtime.AiohttpTransport, "create_owned", lambda **kwargs: transport)
+        cloud = runtime.GwmCloudClient.from_entry_data(
+            cloud_entry_data(credentials), cloud_unique_id(credentials), bootstrap,
+            state_store=_Store(), charging_control_enabled=enabled,
+            climate_commands_enabled=True, lock_window_commands_enabled=True,
+        )
+        await cloud.async_get_vehicle_data()
+        return cloud, transport
+
+    cloud, transport = await build(False)
+    with pytest.raises(GwmRoutePolicyError):
+        await cloud.async_set_charging_plan(plan)
+    assert len(transport.requests) == 2
+    await cloud.aclose()
+
+    cloud, transport = await build(True)
+    await cloud.async_set_charging_plan(plan)
+    await cloud.async_set_charging_plan(ChargingPlanCommand(identifier, enable=False))
+    assert [r.operation for r in transport.requests[2:]] == ["set_charging_plan", "set_charging_plan"]
+    assert _plan_body(transport.requests[2])["startTime"] == now
+    assert _plan_body(transport.requests[3])["startTime"] == ""
+    # Everything else stays forbidden, with the opt-in on.
+    for call in (
+        cloud.async_get_charging_plan(identifier),
+        cloud.async_send_apac_control(identifier, "lock", security_password_hash="x"),
+        cloud.async_get_climate_context(identifier, include_status=False),
+        cloud.async_get_remote_command_results(identifier, "1"),
+    ):
+        with pytest.raises(GwmRoutePolicyError):
+            await call
+    from custom_components.gwm_ora.gwm_client import DoorLockCommand
+
+    with pytest.raises(GwmRoutePolicyError):
+        await cloud.async_send_lock_command(DoorLockCommand(identifier, lock=True), security_password_hash="x")
+    # An undiscovered vehicle is refused before any request.
+    with pytest.raises(GwmRoutePolicyError):
+        await cloud.async_set_charging_plan(
+            ChargingPlanCommand(VehicleIdentifier("OTHERVIN0000000001"), enable=False)
+        )
+    assert len(transport.requests) == 4
+    await cloud.aclose()
+
+
+async def _charging_setup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, charging: bool
+) -> tuple[Any, Any, FakeTransport, list[Any]]:
+    forwarded: list[Any] = []
+    credentials, bootstrap = _bootstrap(tmp_path)
+    transport = FakeTransport(envelope(VEHICLES), envelope(STATUS), envelope({}), envelope({}), envelope({}))
+
+    class Coordinator:
+        def __init__(self, hass: object, api: Any, **kwargs: Any) -> None:
+            self.api = api
+            self.data: Any = None
+            self.active: dict[str, bool] = {}
+            self.region = "br"
+            self.last_update_success = True
+
+        async def async_config_entry_first_refresh(self) -> None:
+            self.data = await self.api.async_get_vehicles()
+
+        async def async_cancel_command_tasks(self) -> None:
+            return None
+
+        @property
+        def vehicles(self) -> list[Any]:
+            return list(self.data["vehicles"])
+
+        def vehicle(self, vin: str) -> Any:
+            return next((v for v in self.vehicles if v["vin"] == vin), None)
+
+        def resolve_vehicle(self, identifier: str) -> Any:
+            return self.vehicle(identifier)
+
+        def charging_plan_active(self, vin: str) -> bool | None:
+            return self.active.get(vin)
+
+        def set_charging_plan_active(self, vin: str, active: bool) -> None:
+            self.active[vin] = active
+
+        def async_add_listener(self, *args: Any) -> Any:
+            return lambda: None
+
+    class Entries:
+        async def async_forward_entry_setups(self, entry: object, platforms: list[object]) -> None:
+            forwarded.extend(platforms)
+
+        def async_loaded_entries(self, domain: str) -> list[Any]:
+            return [entry]
+
+    hass = HomeAssistant(str(tmp_path))
+    hass.config_entries = Entries()  # type: ignore[assignment]
+    entry = ConfigEntry(
+        data=cloud_entry_data(credentials), discovery_keys=MappingProxyType({}), domain=DOMAIN,
+        entry_id="br-entry", minor_version=1,
+        options={CONF_ENABLE_CHARGING_CONTROL: True} if charging else {},
+        source="user", subentries_data=None, title="GWM Brazil",
+        unique_id=cloud_unique_id(credentials), version=1,
+    )
+    stage_cloud_bootstrap(hass, entry.unique_id, bootstrap)
+
+    async def save(self: object, credentials: object, state: object) -> None:
+        return None
+
+    async def restore(self: object, data: object) -> tuple[()]:
+        return ()
+
+    monkeypatch.setattr(integration.GwmCloudStateStore, "async_save_auth_state", save)
+    monkeypatch.setattr(integration.GwmCommandApi, "async_restore", restore)
+    monkeypatch.setattr(runtime.AiohttpTransport, "create_owned", lambda **kwargs: transport)
+    monkeypatch.setattr(integration, "GwmDataUpdateCoordinator", Coordinator)
+    monkeypatch.setattr(integration, "_async_register_services", lambda hass: None)
+    assert await integration.async_setup_entry(hass, entry)
+    return hass, entry, transport, forwarded
+
+
+def test_br_platforms_add_switch_only_with_charging_opt_in() -> None:
+    assert "switch" not in {p.value for p in platforms_for_region(REGION_BR)}
+    assert {p.value for p in platforms_for_region(REGION_BR, charging_control=True)} == {
+        "sensor", "binary_sensor", "device_tracker", "switch",
+    }
+    assert len(platforms_for_region("eu")) == len(platforms_for_region("eu", charging_control=True))
+
+
+@pytest.mark.asyncio
+async def test_br_switch_exists_only_with_opt_in_and_is_the_only_switch(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from custom_components.gwm_ora import switch as switch_platform
+
+    for charging in (False, True):
+        hass, entry, transport, forwarded = await _charging_setup(tmp_path, monkeypatch, charging=charging)
+        assert ("switch" in {p.value for p in forwarded}) is charging
+        if charging:
+            added: list[Any] = []
+            entry.async_on_unload = lambda callback: None
+            await switch_platform.async_setup_entry(hass, entry, added.extend)
+            assert [type(e).__name__ for e in added] == ["GwmChargingScheduleSwitch"]
+            assert added[0].available is True and added[0].is_on is None
+
+
+@pytest.mark.asyncio
+async def test_br_switch_sets_an_eight_hour_window_and_off_clears_it(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from custom_components.gwm_ora import switch as switch_platform
+
+    hass, entry, transport, _ = await _charging_setup(tmp_path, monkeypatch, charging=True)
+    monkeypatch.setattr(switch_platform.time, "time", lambda: 1_800_000_000.0)
+    entity = switch_platform.GwmChargingScheduleSwitch(
+        entry.runtime_data.api, entry.runtime_data.coordinator, VIN
+    )
+
+    await entity.async_turn_on()
+    on = _plan_body(transport.requests[2])
+    assert on["enable"] is True and on["startTime"] == 1_800_000_000_000
+    assert on["endTime"] - on["startTime"] == 8 * 3600 * 1000
+    assert entity.is_on is True
+
+    await entity.async_turn_off()
+    off = _plan_body(transport.requests[3])
+    assert off["enable"] is False and off["startTime"] == "" and off["endTime"] == ""
+    assert entity.is_on is False
+    assert [r.operation for r in transport.requests] == [
+        "acquire_vehicles", "get_last_status", "set_charging_plan", "set_charging_plan",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_br_services_route_set_and_clear_to_set_charging_plan(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from datetime import UTC, datetime
+    from types import SimpleNamespace
+
+    from homeassistant.exceptions import ServiceValidationError
+
+    hass, entry, transport, _ = await _charging_setup(tmp_path, monkeypatch, charging=True)
+    handlers: dict[str, Any] = {}
+    fake = SimpleNamespace(
+        services=SimpleNamespace(
+            has_service=lambda domain, name: False,
+            async_register=lambda domain, name, handler, schema=None: handlers.__setitem__(name, handler),
+        ),
+        config_entries=hass.config_entries,
+    )
+    _REAL_REGISTER_SERVICES(fake)  # the helper stubs the module attribute; use the real one
+    start = datetime(2027, 1, 15, 21, 0, tzinfo=UTC)
+    end = datetime(2027, 1, 16, 5, 30, tzinfo=UTC)
+    await handlers["set_charging_plan"](SimpleNamespace(data={"vin": VIN, "start_time": start, "end_time": end}))
+    body = _plan_body(transport.requests[2])
+    assert body["enable"] is True
+    assert body["startTime"] == int(start.timestamp() * 1000) and body["endTime"] == int(end.timestamp() * 1000)
+
+    with pytest.raises(ServiceValidationError):
+        await handlers["set_charging_plan"](
+            SimpleNamespace(data={"vin": VIN, "start_time": start, "end_time": start.replace(minute=4)})
+        )
+    assert len(transport.requests) == 3  # the short window never reached the transport
+
+    await handlers["clear_charging_plan"](SimpleNamespace(data={"vin": VIN}))
+    assert _plan_body(transport.requests[3])["enable"] is False

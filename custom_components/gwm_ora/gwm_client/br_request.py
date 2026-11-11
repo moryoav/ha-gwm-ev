@@ -9,11 +9,13 @@ from __future__ import annotations
 import json
 import re
 import ssl
+import uuid
 from collections.abc import Mapping
 from urllib.parse import quote
 
 from ._protocol import _TransportRequest, _TransportResponse
 from .br_endpoints import (
+    BR_BUSY_CODES,
     BR_CREDENTIAL_REJECTED_CODE,
     BR_SUCCESS_CODE,
     br_app_headers,
@@ -21,6 +23,7 @@ from .br_endpoints import (
     br_endpoint,
 )
 from .br_identity import BrCredentials
+from .charging import ChargingPlanCommand
 from .client import _reject_json_constant, _unique_object, _validate_json_depth
 from .errors import (
     GwmApiError,
@@ -45,6 +48,32 @@ class GwmBrCredentialError(GwmAuthenticationError):
     _message = "GWM BR credentials were rejected"
 
 
+class GwmBrBusyError(GwmApiError):
+    """The vehicle or GWM is busy with another remote operation (do not retry in a loop)."""
+
+    _message = "GWM BR vehicle is busy with another operation"
+
+
+def charging_plan_body(command: ChargingPlanCommand) -> bytes:
+    """Wire body of ``setChargingPlan`` from the shared, already validated command.
+
+    Only the BR field names and constants live here; the window rules are those of
+    ``ChargingPlanCommand``. There is no PIN. Clearing sends empty strings for both
+    times. The sequence number is a hex UUID plus a fixed suffix, as the vendor app does.
+    """
+    if type(command) is not ChargingPlanCommand:
+        raise ValueError("invalid")
+    body = {
+        "enable": command.enable,
+        "startTime": command.start_time_ms if command.enable else "",
+        "endTime": command.end_time_ms if command.enable else "",
+        "seqNo": uuid.uuid4().hex + "1234",
+        "planType": "1",
+        "vin": command.identifier.value,
+    }
+    return json.dumps(body, separators=(",", ":")).encode("utf-8")
+
+
 def prepare_br_request(
     *,
     operation: str,
@@ -53,8 +82,9 @@ def prepare_br_request(
     access_token: str | None = None,
     refresh_token: str = "",
     vehicle_id: str | None = None,
+    plan: ChargingPlanCommand | None = None,
 ) -> _TransportRequest:
-    """Build one allowlisted request (login or one of two reads)."""
+    """Build one allowlisted request (login, two reads, or the opt-in charging-plan write)."""
     try:
         endpoint = br_endpoint(operation)
         if (
@@ -81,7 +111,15 @@ def prepare_br_request(
             ):
                 raise ValueError("invalid")
             headers = {**br_app_headers(access_token, refresh_token), "accept": "application/json"}
-            if operation == "get_last_status":
+            if plan is not None and operation != "set_charging_plan":
+                raise ValueError("invalid")
+            if operation == "set_charging_plan":
+                if vehicle_id is not None or type(plan) is not ChargingPlanCommand:
+                    raise ValueError("invalid")
+                query = "?vin=" + quote(plan.identifier.value, safe="")
+                body = charging_plan_body(plan)
+                headers["content-type"] = "application/json"
+            elif operation == "get_last_status":
                 if not isinstance(vehicle_id, str):
                     raise ValueError("invalid")
                 VehicleIdentifier(vehicle_id)
@@ -116,6 +154,14 @@ def decode_br_envelope(response: _TransportResponse, *, operation: str) -> objec
     mapping = envelope if isinstance(envelope, Mapping) else None
     code = mapping.get("code") if mapping is not None else None
 
+    data = mapping.get("data") if mapping is not None else None
+    if operation == "set_charging_plan" and mapping is not None and (
+        code in BR_BUSY_CODES
+        or mapping.get("running") is True
+        or (isinstance(data, Mapping) and data.get("running") is True)
+        or (isinstance(mapping.get("description"), str) and "REMOTE250502" in mapping["description"])
+    ):
+        raise GwmBrBusyError(operation=operation, api_code=code)
     if code == BR_CREDENTIAL_REJECTED_CODE:
         raise GwmBrCredentialError(operation=operation, api_code=code)
     if response.status in {401, 403}:

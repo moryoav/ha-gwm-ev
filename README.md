@@ -292,13 +292,22 @@ Restrictions vary by vehicle and region. These conditions do not apply to every 
 
 ## Brazil (read-only)
 
-Brazil is available in the setup flow as a read-only region. It signs in with the email and password of the official GWM app (no verification code) and reads the vehicle list and last status. It provides sensors, binary sensors, and a location tracker such as battery level, range, odometer, doors, windows, lock state, plug state, A/C state, and position. It never sends a command: no lock, A/C, window, charging, or number entities are created, and the remote-command and charging options are not shown.
+Brazil is available in the setup flow as a read-only region. It signs in with the email and password of the official GWM app (no verification code) and reads the vehicle list and last status. It provides sensors, binary sensors, and a location tracker such as battery level, range, odometer, doors, windows, lock state, plug state, A/C state, and position. It never sends a vehicle command: no lock, A/C, window, remote-start, or number entities are created, and the remote-command option and PIN field are not shown. The only write is the optional charging schedule below.
 
 The Brazilian vehicle gateway requires a client certificate that comes from the official app. This project does not distribute it. Do this once:
 
 1. Obtain `gwm_general.cer`, `gwm_general.key`, and `gwm_root.cer` from your own copy of the official app. A prebuilt `gwm_client_fullchain.pem` plus `gwm_general.key` also works.
 2. Copy the files into `custom_components/gwm_ora/resources/br/` inside your Home Assistant configuration directory. Create the `br` folder if it does not exist.
 3. Add the **GWM** integration, choose **Brazil**, keep country `BR`, and enter your email and password.
+
+### Scheduled charging (optional)
+
+Open the entry, select **Configure**, and turn on **Enable charging control** (off by default). This adds a single **Scheduled charging** switch per vehicle and enables the `gwm_ora.set_charging_plan` (VIN, start time, end time; at least 5 minutes) and `gwm_ora.clear_charging_plan` (VIN) services. No security PIN is used in Brazil.
+
+- Turning the switch on sets a charging window from now for 8 hours. Turning it off clears the plan; this is a convenience, not a hard stop, because the car may then charge whenever it is plugged in.
+- The switch is assumed-state: the Brazilian service offers no reliable readback of the plan, so Home Assistant shows what it last sent.
+- If the vehicle or GWM is busy with another operation, the action fails with a short message and is not retried; wait a minute and try again.
+- Nothing else is writable: lock, A/C, windows, and remote start stay unavailable in this region.
 
 If the files are missing or unusable, setup shows a clear error naming this folder and the log repeats the path. After a restart the integration retries until the files are present, so copying them and reloading the integration is enough.
 
