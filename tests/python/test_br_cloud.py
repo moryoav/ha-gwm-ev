@@ -1161,3 +1161,15 @@ async def test_readable_region_keeps_the_live_read_and_falls_back_to_the_restore
     failing = _PlanApi(GwmRoutePolicyError(operation="get_charging_plan"))
     entity, _ = await _added_switch(monkeypatch, "eu", failing, "on")
     assert failing.reads == 1 and entity.is_on is True  # read failed: restored state is used
+
+
+@pytest.mark.parametrize("code", [{"x": 1}, ["9999"], 9999, None])
+def test_br_busy_check_ignores_a_non_string_code(code: object) -> None:
+    from custom_components.gwm_ora.gwm_client._protocol import _TransportResponse
+    from custom_components.gwm_ora.gwm_client.br_request import decode_br_envelope
+    from custom_components.gwm_ora.gwm_client.errors import GwmApiError
+
+    body = json.dumps({"code": code, "description": "x", "data": None}).encode()
+    with pytest.raises(GwmApiError) as error:  # normal API error, never a TypeError
+        decode_br_envelope(_TransportResponse(200, {}, body), operation="set_charging_plan")
+    assert type(error.value).__name__ != "GwmBrBusyError"

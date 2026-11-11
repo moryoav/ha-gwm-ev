@@ -134,3 +134,33 @@ async def test_malformed_payload_and_closed_client(tmp_path: Path) -> None:
     await client.aclose()
     with pytest.raises(GwmClosedError):
         await client.acquire_vehicles()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("payload", "temperature"),
+    [
+        ({"latitude": "-1.25", "longitude": "2.5"}, None),  # items missing
+        ({"items": None}, None),
+        ({"items": [{"code": "2201001", "value": "not-a-number"}]}, None),  # non-numeric temperature
+        ({"items": [{"code": "2201001", "value": None}, None, {"code": "  "}]}, None),
+    ],
+)
+async def test_malformed_status_never_breaks_the_snapshot(tmp_path: Path, payload: dict, temperature: object) -> None:
+    client, _ = _client(tmp_path, _login(), envelope(VEHICLES), envelope(payload))
+    vehicles = await client.acquire_vehicles()
+    status = await client.get_last_status(VIN)
+    snapshot = map_vehicle_snapshot(
+        vehicles[0], status, CloudVehicleBasics(), refreshed_at=datetime.now(UTC), remote_commands_available=False,
+    )
+    assert snapshot.values.interior_temperature_c is temperature
+    assert snapshot.values.soc is None and snapshot.values.odometer_km is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("items", ["text", {"code": "2013021"}, 7])
+async def test_status_items_of_invalid_type_are_a_schema_error_not_a_crash(tmp_path: Path, items: object) -> None:
+    client, _ = _client(tmp_path, _login(), envelope({"items": items}))
+    with pytest.raises(GwmSchemaError) as error:
+        await client.get_last_status(VIN)
+    assert error.value.operation == "get_last_status"
