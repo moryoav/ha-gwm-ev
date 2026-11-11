@@ -1079,3 +1079,85 @@ async def test_br_services_route_set_and_clear_to_set_charging_plan(
 
     await handlers["clear_charging_plan"](SimpleNamespace(data={"vin": VIN}))
     assert _plan_body(transport.requests[3])["enable"] is False
+
+
+# ------------------------------------------- restored assumed state of the switch
+
+
+class _PlanCoordinator:
+    last_update_success = True
+
+    def __init__(self, region: str) -> None:
+        self.region = region
+        self.active: dict[str, bool] = {}
+
+    def vehicle(self, vin: str) -> dict[str, Any]:
+        return {"vin": vin, "capabilities": {"charging_control": True}}
+
+    def charging_plan_active(self, vin: str) -> bool | None:
+        return self.active.get(vin)
+
+    def set_charging_plan_active(self, vin: str, active: bool) -> None:
+        self.active[vin] = active
+
+
+class _PlanApi:
+    def __init__(self, response: Any = None) -> None:
+        self.reads = 0
+        self.response = response
+
+    async def async_get_charging_plan(self, vin: str) -> Any:
+        self.reads += 1
+        if isinstance(self.response, Exception):
+            raise self.response
+        return self.response
+
+
+async def _added_switch(
+    monkeypatch: pytest.MonkeyPatch, region: str, api: _PlanApi, restored: str | None
+) -> tuple[Any, _PlanCoordinator]:
+    from unittest.mock import AsyncMock
+
+    from homeassistant.core import State
+    from homeassistant.helpers.update_coordinator import CoordinatorEntity
+
+    from custom_components.gwm_ora import switch as switch_platform
+
+    monkeypatch.setattr(CoordinatorEntity, "async_added_to_hass", AsyncMock())
+    monkeypatch.setattr(
+        switch_platform.GwmChargingScheduleSwitch,
+        "async_get_last_state",
+        AsyncMock(return_value=None if restored is None else State("switch.x", restored)),
+    )
+    coordinator = _PlanCoordinator(region)
+    entity = switch_platform.GwmChargingScheduleSwitch(api, coordinator, VIN)
+    await entity.async_added_to_hass()
+    return entity, coordinator
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("restored", "expected"), [("on", True), ("off", False), ("unknown", None), ("unavailable", None), (None, None)])
+async def test_br_switch_restores_the_last_state_without_reading_the_plan(
+    monkeypatch: pytest.MonkeyPatch, restored: str | None, expected: bool | None
+) -> None:
+    api = _PlanApi()
+    entity, _ = await _added_switch(monkeypatch, REGION_BR, api, restored)
+    assert api.reads == 0  # the blocked read is never attempted (no error, no log)
+    assert entity.is_on is expected
+    assert entity.assumed_state is True
+
+
+@pytest.mark.asyncio
+async def test_readable_region_keeps_the_live_read_and_falls_back_to_the_restored_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from custom_components.gwm_ora.gwm_client import ChargingPlanInfo, ChargingPlanItem
+
+    live = ChargingPlanInfo((ChargingPlanItem(1, "1", 1_800_000_000_000, 1_800_000_028_800),))
+    api = _PlanApi(live.as_dict())
+    entity, _ = await _added_switch(monkeypatch, "eu", api, "off")
+    assert api.reads == 1 and entity.is_on is True  # live value wins over the restored one
+
+    failing = _PlanApi(GwmRoutePolicyError(operation="get_charging_plan"))
+    entity, _ = await _added_switch(monkeypatch, "eu", failing, "on")
+    assert failing.reads == 1 and entity.is_on is True  # read failed: restored state is used
