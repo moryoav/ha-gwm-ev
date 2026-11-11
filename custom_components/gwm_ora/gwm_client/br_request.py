@@ -45,6 +45,14 @@ class GwmBrCredentialError(GwmAuthenticationError):
     _message = "GWM BR credentials were rejected"
 
 
+def _refresh_body(access_token: str, refresh_token: str, device_id: str) -> bytes:
+    """JSON body of the h5 refresh call; the device id is truncated to 16 characters."""
+    return json.dumps(
+        {"accessToken": access_token, "refreshToken": refresh_token, "deviceId": device_id[:16]},
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+
 def prepare_br_request(
     *,
     operation: str,
@@ -53,8 +61,9 @@ def prepare_br_request(
     access_token: str | None = None,
     refresh_token: str = "",
     vehicle_id: str | None = None,
+    device_id: str | None = None,
 ) -> _TransportRequest:
-    """Build one allowlisted request (login or one of two reads)."""
+    """Build one allowlisted request (login, token refresh or one of two reads)."""
     try:
         endpoint = br_endpoint(operation)
         if (
@@ -68,7 +77,12 @@ def prepare_br_request(
         body: bytes | None = None
         query = ""
         if operation == "login":
-            if type(credentials) is not BrCredentials or access_token is not None or vehicle_id is not None:
+            if (
+                type(credentials) is not BrCredentials
+                or access_token is not None
+                or vehicle_id is not None
+                or device_id is not None
+            ):
                 raise ValueError("invalid")
             headers = {**br_auth_headers(), "content-type": "application/json", "accept": "application/json"}
             body = json.dumps(credentials.login_body(), separators=(",", ":")).encode("utf-8")
@@ -82,7 +96,19 @@ def prepare_br_request(
             ):
                 raise ValueError("invalid")
             headers = {**br_app_headers(access_token, refresh_token), "accept": "application/json"}
-            if operation == "get_last_status":
+            if operation == "refresh_token":
+                if (
+                    not refresh_token
+                    or vehicle_id is not None
+                    or not isinstance(device_id, str)
+                    or re.fullmatch(r"[0-9a-f]{32}", device_id) is None
+                ):
+                    raise ValueError("invalid")
+                headers["content-type"] = "application/json"
+                body = _refresh_body(access_token, refresh_token, device_id)
+            elif device_id is not None:
+                raise ValueError("invalid")
+            elif operation == "get_last_status":
                 if not isinstance(vehicle_id, str):
                     raise ValueError("invalid")
                 VehicleIdentifier(vehicle_id)
@@ -133,7 +159,7 @@ def decode_br_envelope(response: _TransportResponse, *, operation: str) -> objec
     if mapping is None:
         raise GwmSchemaError(operation=operation)
     if code != BR_SUCCESS_CODE:
-        if operation == "login":
+        if operation in ("login", "refresh_token"):
             raise GwmAuthenticationError(operation=operation, api_code=code)
         raise GwmApiError(operation=operation, api_code=code)
     return mapping.get("data")

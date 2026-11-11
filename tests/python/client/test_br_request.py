@@ -104,8 +104,16 @@ def test_app_requests_headers_and_urls(context) -> None:
     assert status.url.endswith("/vehicle/getLastStatus?vin=SYNTHETICVIN000001&flag=true")
 
 
-@pytest.mark.parametrize("operation", ["send_command", "sendCmd", "send_climate_command", "refresh_token", ""])
-def test_only_read_operations_exist(operation: str) -> None:
+def test_refresh_endpoint_is_the_h5_host_contract() -> None:
+    endpoint = br_endpoint("refresh_token")
+    assert (endpoint.method, endpoint.authenticated) == ("POST", True)
+    assert endpoint.base_url + endpoint.path == (
+        "https://br-h5-gateway.gwmcloud.com/app-api/api/v1.0/userAuth/refreshToken"
+    )
+
+
+@pytest.mark.parametrize("operation", ["send_command", "sendCmd", "send_climate_command", "refreshToken", ""])
+def test_only_allowlisted_operations_exist(operation: str) -> None:
     with pytest.raises(ValueError, match="^br_operation_not_supported$"):
         br_endpoint(operation)
 
@@ -148,3 +156,60 @@ def test_other_http_and_schema_failures() -> None:
     with pytest.raises(GwmAuthenticationError):
         decode_br_envelope(envelope(None, code="999999"), operation="login")
     assert decode_br_envelope(envelope({"k": 1}), operation="login") == {"k": 1}
+
+
+def test_refresh_request_url_body_headers_and_mtls(context) -> None:
+    request = prepare_br_request(
+        operation="refresh_token", ssl_context=context, access_token="tok-a", refresh_token="tok-r", device_id=DEVICE
+    )
+    assert request.method == "POST"
+    assert request.url == "https://br-h5-gateway.gwmcloud.com/app-api/api/v1.0/userAuth/refreshToken"
+    assert request.ssl_context is context and context.security_level == 0
+    assert json.loads(request.body) == {"accessToken": "tok-a", "refreshToken": "tok-r", "deviceId": DEVICE[:16]}
+    assert len(json.loads(request.body)["deviceId"]) == 16
+    assert b" " not in request.body
+    headers = dict(request.headers)
+    assert headers["accessToken"] == "tok-a" and headers["refreshToken"] == "tok-r"
+    assert headers["terminal"] == "GW_APP_GWM" and headers["content-type"] == "application/json"
+    # The refresh host also demands the mTLS context, never the clean login one.
+    with pytest.raises(ValueError, match="^br_request_invalid$"):
+        prepare_br_request(
+            operation="refresh_token", ssl_context=ssl.create_default_context(),
+            access_token="tok-a", refresh_token="tok-r", device_id=DEVICE,
+        )
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"refresh_token": ""},
+        {"device_id": None},
+        {"device_id": "short"},
+        {"device_id": DEVICE.upper()},
+        {"vehicle_id": "SYNTHETICVIN000001"},
+        {"access_token": None},
+    ],
+)
+def test_refresh_request_rejects_incomplete_input(context, kwargs) -> None:
+    base = {"access_token": "tok-a", "refresh_token": "tok-r", "device_id": DEVICE}
+    with pytest.raises(ValueError, match="^br_request_invalid$"):
+        prepare_br_request(operation="refresh_token", ssl_context=context, **{**base, **kwargs})
+
+
+def test_device_id_is_only_accepted_by_the_refresh_operation(context) -> None:
+    with pytest.raises(ValueError, match="^br_request_invalid$"):
+        prepare_br_request(operation="acquire_vehicles", ssl_context=context, access_token="t", device_id=DEVICE)
+    credentials = BrCredentials.from_password("someone@example.invalid", "Synthetic1", DEVICE)
+    with pytest.raises(ValueError, match="^br_request_invalid$"):
+        prepare_br_request(
+            operation="login", ssl_context=ssl.create_default_context(), credentials=credentials, device_id=DEVICE
+        )
+
+
+def test_refresh_envelope_failure_is_an_authentication_error() -> None:
+    with pytest.raises(GwmAuthenticationError):
+        decode_br_envelope(envelope(None, code="999999"), operation="refresh_token")
+    for status in (401, 403):
+        with pytest.raises(GwmAuthenticationError):
+            decode_br_envelope(html(status, "x"), operation="refresh_token")
+    assert decode_br_envelope(envelope({"accessToken": "a"}), operation="refresh_token") == {"accessToken": "a"}

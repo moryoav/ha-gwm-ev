@@ -12,7 +12,7 @@ This project follows semantic versioning. The Marketplace installs GWM from publ
 
 - Added a read-only Brazil region: password sign-in without a verification code, vehicle discovery, and status polling for sensors, binary sensors, and the location tracker. Brazil never creates command, climate, lock, number, or charging entities.
 - Brazil needs the vehicle-gateway client certificate, which is not distributed. Place `gwm_general.cer`, `gwm_general.key`, and `gwm_root.cer` in `custom_components/gwm_ora/resources/br/` once. Setup and startup report a clear error naming this folder when the files are missing or unusable.
-- Brazil has no token-refresh endpoint and tokens last about 24 hours, so an expired or rejected session asks Home Assistant for reauthentication instead of signing in silently with the saved password.
+- Brazil: renew the session token silently via the h5 gateway refresh endpoint instead of asking to reauthenticate daily. Reauthentication is requested only when the refresh token itself is refused, and the saved password is never used to sign in silently.
 - Added Brazil gateway hosts to the sanitized diagnostics and redacted the password digest.
 
 ## [0.18.0] - 2026-11-10
