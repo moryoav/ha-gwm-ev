@@ -61,12 +61,14 @@ def _client(tmp_path: Path, *responses, clock=lambda: NOW) -> tuple[BrReadClient
 
 
 def test_jwt_expiry_reads_exp_without_trusting_signature() -> None:
+    """Check that the token expiry is read from the exp claim without verifying the signature."""
     assert jwt_expiry(fake_jwt(123)) == 123.0
     assert jwt_expiry("not-a-jwt") is None
 
 
 @pytest.mark.asyncio
 async def test_login_then_discovery_and_golden_status(tmp_path: Path) -> None:
+    """Check that the first read logs in, discovers the vehicle and returns the golden status snapshot."""
     client, transport = _client(tmp_path, _login(), envelope(VEHICLES), envelope(STATUS))
     vehicles = await client.acquire_vehicles()
     assert [v.identifier.value for v in vehicles] == [VIN]
@@ -95,6 +97,7 @@ async def test_login_then_discovery_and_golden_status(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_login_is_done_once_while_token_is_valid(tmp_path: Path) -> None:
+    """Check that a second read reuses the valid token instead of logging in again."""
     client, transport = _client(tmp_path, _login(), envelope(VEHICLES), envelope(VEHICLES))
     await client.acquire_vehicles()
     await client.acquire_vehicles()
@@ -103,6 +106,7 @@ async def test_login_is_done_once_while_token_is_valid(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_expired_token_triggers_relogin_before_request(tmp_path: Path) -> None:
+    """Check that an expired token triggers a new login before the read request."""
     client, transport = _client(tmp_path, _login(), envelope(VEHICLES))
     # first token expires within the 5 minute margin -> next use logs in again
     client.session.restore(BrTokens(fake_jwt(int(NOW) + 100), "r", float(int(NOW) + 100)))
@@ -112,6 +116,7 @@ async def test_expired_token_triggers_relogin_before_request(tmp_path: Path) -> 
 
 @pytest.mark.asyncio
 async def test_rejected_token_relogs_once_and_repeats_the_read(tmp_path: Path) -> None:
+    """Check that a rejected token causes one re-login and a single repeat of the read."""
     client, transport = _client(tmp_path, _login(), html(401, "x"), _login(), envelope(VEHICLES))
     assert len(await client.acquire_vehicles()) == 1
     assert [r.operation for r in transport.requests] == ["login", "acquire_vehicles", "login", "acquire_vehicles"]
@@ -119,6 +124,7 @@ async def test_rejected_token_relogs_once_and_repeats_the_read(tmp_path: Path) -
 
 @pytest.mark.asyncio
 async def test_credential_error_is_not_retried(tmp_path: Path) -> None:
+    """Check that a credential error propagates without any retry."""
     client, transport = _client(tmp_path, envelope(None, code="308001"))
     with pytest.raises(GwmBrCredentialError):
         await client.acquire_vehicles()
@@ -127,6 +133,7 @@ async def test_credential_error_is_not_retried(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_malformed_payload_and_closed_client(tmp_path: Path) -> None:
+    """Check that malformed payloads raise a schema error and a closed client refuses reads."""
     client, _ = _client(tmp_path, _login(), envelope({"not": "a list"}))
     with pytest.raises(GwmSchemaError) as error:
         await client.acquire_vehicles()
@@ -147,6 +154,7 @@ async def test_malformed_payload_and_closed_client(tmp_path: Path) -> None:
     ],
 )
 async def test_malformed_status_never_breaks_the_snapshot(tmp_path: Path, payload: dict, temperature: object) -> None:
+    """Check that malformed status entries are skipped so the snapshot still builds."""
     client, _ = _client(tmp_path, _login(), envelope(VEHICLES), envelope(payload))
     vehicles = await client.acquire_vehicles()
     status = await client.get_last_status(VIN)
@@ -160,6 +168,7 @@ async def test_malformed_status_never_breaks_the_snapshot(tmp_path: Path, payloa
 @pytest.mark.asyncio
 @pytest.mark.parametrize("items", ["text", {"code": "2013021"}, 7])
 async def test_status_items_of_invalid_type_are_a_schema_error_not_a_crash(tmp_path: Path, items: object) -> None:
+    """Check that status items of an invalid type raise a schema error instead of crashing."""
     client, _ = _client(tmp_path, _login(), envelope({"items": items}))
     with pytest.raises(GwmSchemaError) as error:
         await client.get_last_status(VIN)
@@ -171,6 +180,7 @@ def _refresh_response(exp_offset: int = 86_400, refresh: str = "rotated-refresh"
 
 
 def _auth(tmp_path: Path, *responses, refresh: bool = True) -> tuple[BrAuthClient, FakeTransport]:
+    """Build a BR auth client over a fake transport, with or without the mTLS refresh context."""
     write_dummy_material(tmp_path)
     context = create_br_ssl_context(load_br_material(tmp_path))
     transport = FakeTransport(*responses)
@@ -183,6 +193,7 @@ OLD = BrTokens(fake_jwt(1), "old-refresh", 1.0)
 
 @pytest.mark.asyncio
 async def test_auth_client_refresh_returns_new_tokens(tmp_path: Path) -> None:
+    """Check that a refresh call returns the new token pair."""
     auth, transport = _auth(tmp_path, _refresh_response())
     assert auth.can_refresh
     tokens = await auth.refresh(OLD)
@@ -195,6 +206,7 @@ async def test_auth_client_refresh_returns_new_tokens(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_auth_client_refresh_without_context_or_with_bad_input_is_an_auth_error(tmp_path: Path) -> None:
+    """Check that refreshing without a context or with bad input raises an authentication error."""
     auth, transport = _auth(tmp_path, refresh=False)
     assert not auth.can_refresh
     with pytest.raises(GwmAuthenticationError):
@@ -212,6 +224,7 @@ async def test_auth_client_refresh_without_context_or_with_bad_input_is_an_auth_
      {"accessToken": "a", "refreshToken": 5}, {"accessToken": "has space", "refreshToken": "r"}],
 )
 async def test_auth_client_refresh_bad_payload_is_a_schema_error(tmp_path: Path, data: object) -> None:
+    """Check that a malformed refresh payload raises a schema error."""
     auth, _ = _auth(tmp_path, envelope(data))
     with pytest.raises(GwmSchemaError) as error:
         await auth.refresh(OLD)
@@ -220,6 +233,7 @@ async def test_auth_client_refresh_bad_payload_is_a_schema_error(tmp_path: Path,
 
 @pytest.mark.asyncio
 async def test_auth_client_refresh_refused_is_an_auth_error(tmp_path: Path) -> None:
+    """Check that a refused refresh raises an authentication error."""
     auth, _ = _auth(tmp_path, envelope(None, code="999999"))
     with pytest.raises(GwmAuthenticationError):
         await auth.refresh(OLD)
@@ -232,6 +246,7 @@ def _session(tmp_path: Path, *responses, allow_login: bool, refresh: bool = True
 
 @pytest.mark.asyncio
 async def test_session_refreshes_expired_tokens_and_adopts_the_new_ones(tmp_path: Path) -> None:
+    """Check that the session refreshes expired tokens and adopts the rotated ones."""
     session, transport = _session(tmp_path, _refresh_response(), allow_login=False)
     session.restore(OLD)
     tokens = await session.ensure()
@@ -243,6 +258,7 @@ async def test_session_refreshes_expired_tokens_and_adopts_the_new_ones(tmp_path
 
 @pytest.mark.asyncio
 async def test_session_refreshes_a_rejected_snapshot_even_if_unexpired(tmp_path: Path) -> None:
+    """Check that a rejected read triggers a refresh even when the token looks unexpired."""
     session, transport = _session(tmp_path, _refresh_response(), allow_login=False)
     valid = BrTokens(fake_jwt(int(NOW) + 3600), "r", float(int(NOW) + 3600))
     session.restore(valid)
@@ -254,6 +270,7 @@ async def test_session_refreshes_a_rejected_snapshot_even_if_unexpired(tmp_path:
 
 @pytest.mark.asyncio
 async def test_session_refused_refresh_raises_without_login_permission(tmp_path: Path) -> None:
+    """Check that a refused refresh raises when password login is not allowed."""
     session, transport = _session(tmp_path, envelope(None, code="999999"), _login(), allow_login=False)
     session.restore(OLD)
     with pytest.raises(GwmAuthenticationError):
@@ -264,6 +281,7 @@ async def test_session_refused_refresh_raises_without_login_permission(tmp_path:
 
 @pytest.mark.asyncio
 async def test_session_refused_refresh_falls_back_to_login_when_allowed(tmp_path: Path) -> None:
+    """Check that a refused refresh falls back to a password login when allowed."""
     session, transport = _session(tmp_path, html(401, "x"), _login(), allow_login=True)
     session.restore(OLD)
     tokens = await session.ensure()
@@ -273,6 +291,7 @@ async def test_session_refused_refresh_falls_back_to_login_when_allowed(tmp_path
 
 @pytest.mark.asyncio
 async def test_session_without_refresh_context_never_refreshes(tmp_path: Path) -> None:
+    """Check that a session without a refresh context never attempts a refresh."""
     session, transport = _session(tmp_path, allow_login=False, refresh=False)
     session.restore(OLD)
     with pytest.raises(GwmAuthenticationError):

@@ -139,6 +139,7 @@ class _ConfigEntries:
         self.entry = entry
 
     def async_get_known_entry(self, entry_id: str) -> ConfigEntry:
+        """Return the stored entry, asserting one was provided."""
         assert self.entry is not None
         return self.entry
 
@@ -200,6 +201,7 @@ def _authenticator(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *responses: 
 
 
 def test_br_region_is_offered_with_a_br_only_country_selector() -> None:
+    """Check that the BR region is offered with a country selector limited to BR."""
     assert REGION_BR in CONFIGURABLE_CLOUD_REGIONS
     assert {"value": REGION_BR, "label": "Brazil"} in config_flow._REGION_OPTIONS
     schema = config_flow._account_schema(REGION_BR)
@@ -214,6 +216,7 @@ def test_br_region_is_offered_with_a_br_only_country_selector() -> None:
 async def test_br_setup_signs_in_without_otp_and_creates_read_only_entry(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, store: _Store
 ) -> None:
+    """Check that BR setup signs in without an OTP and creates a read-only entry."""
     authenticator, transport = _authenticator(monkeypatch, tmp_path, _login(), envelope(VEHICLES))
     flow = _flow(monkeypatch, authenticator)
 
@@ -236,6 +239,7 @@ async def test_br_setup_signs_in_without_otp_and_creates_read_only_entry(
 async def test_br_rejected_credentials_show_invalid_auth_and_store_nothing(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, store: _Store, caplog: pytest.LogCaptureFixture
 ) -> None:
+    """Check that rejected BR credentials show invalid auth and store nothing."""
     authenticator, _ = _authenticator(monkeypatch, tmp_path, envelope(None, code="308001", description="bad"))
     flow = _flow(monkeypatch, authenticator)
     await flow.async_step_user({CONF_REGION: "br"})
@@ -252,6 +256,7 @@ async def test_br_rejected_credentials_show_invalid_auth_and_store_nothing(
 async def test_br_missing_certificate_folder_gives_a_clear_error(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, store: _Store, caplog: pytest.LogCaptureFixture
 ) -> None:
+    """Check that a missing certificate folder gives a clear form error."""
     component = _component(tmp_path, monkeypatch)
     assert not (component / "resources" / "br").exists()
     flow = _flow(monkeypatch, GwmCloudAuthenticator(br_context_loader=br_installed.load_installed_br_context))
@@ -271,6 +276,7 @@ async def test_br_missing_certificate_folder_gives_a_clear_error(
 async def test_br_unusable_certificate_files_and_gateway_rejection_have_their_own_errors(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, store: _Store
 ) -> None:
+    """Check that unusable certificate files and gateway rejection map to distinct errors."""
     component = _component(tmp_path, monkeypatch)
     directory = component / "resources" / "br"
     directory.mkdir(parents=True)
@@ -289,6 +295,7 @@ async def test_br_unusable_certificate_files_and_gateway_rejection_have_their_ow
 
 @pytest.mark.asyncio
 async def test_br_country_other_than_br_is_rejected(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, store: _Store) -> None:
+    """Check that a country other than BR is rejected for the BR region."""
     authenticator, _ = _authenticator(monkeypatch, tmp_path)
     flow = _flow(monkeypatch, authenticator)
     await flow.async_step_user({CONF_REGION: "br"})
@@ -300,6 +307,7 @@ async def test_br_country_other_than_br_is_rejected(monkeypatch: pytest.MonkeyPa
 async def test_br_reauth_asks_only_for_the_password_and_drops_stale_command_options(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, store: _Store
 ) -> None:
+    """Check that BR reauth asks only for the password and drops stale command options."""
     credentials = _credentials()
     entry = ConfigEntry(
         data=cloud_entry_data(credentials),
@@ -343,6 +351,7 @@ async def test_br_reauth_asks_only_for_the_password_and_drops_stale_command_opti
 
 @pytest.mark.asyncio
 async def test_br_options_expose_only_polling_charging_opt_in_and_log_level() -> None:
+    """Check that BR options expose only polling, the charging opt-in and the log level."""
     entry = ConfigEntry(
         data={CONF_CONNECTION_TYPE: CONNECTION_TYPE_CLOUD, CONF_REGION: REGION_BR},
         discovery_keys=MappingProxyType({}),
@@ -390,6 +399,7 @@ async def test_br_options_expose_only_polling_charging_opt_in_and_log_level() ->
 def test_br_installed_material_lives_in_the_component_and_reports_what_is_missing(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    """Check that installed BR material lives in the component folder and reports missing files."""
     component = _component(tmp_path, monkeypatch)
     directory = component / "resources" / "br"
     assert br_installed.installed_br_directory() == directory
@@ -411,6 +421,7 @@ def test_br_material_is_refused_inside_the_source_tree_but_allowed_in_an_install
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     # A Home Assistant config directory kept under git is NOT the project's source tree.
+    """Check that material is refused inside the source tree but allowed in an installed component."""
     config = tmp_path / "config"
     component = _component(tmp_path, monkeypatch)
     (config / ".git").mkdir()
@@ -430,6 +441,7 @@ def test_br_material_is_refused_inside_the_source_tree_but_allowed_in_an_install
 
 
 def test_br_credentials_binding_state_and_storage_round_trip() -> None:
+    """Check that BR credentials, binding and auth state survive a storage round trip."""
     credentials = _credentials()
     regional = credentials.client_credentials()
     assert isinstance(regional, BrAccountCredentials)
@@ -453,6 +465,7 @@ def test_br_credentials_binding_state_and_storage_round_trip() -> None:
 async def test_br_startup_restore_makes_no_request_and_never_logs_in_by_password(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    """Check that startup restore makes no request and never logs in by password."""
     authenticator, transport = _authenticator(monkeypatch, tmp_path)
     credentials = _credentials()
     regional = credentials.client_credentials()
@@ -484,6 +497,7 @@ async def test_br_startup_restore_makes_no_request_and_never_logs_in_by_password
 
 
 def _bootstrap(tmp_path: Path, state_tokens: bool = True, expired: bool = False) -> tuple[GwmCloudCredentials, runtime.GwmCloudBootstrap]:
+    """Build BR credentials and a bootstrap, optionally without tokens or with an expired session."""
     credentials = _credentials()
     state = BrAuthState.for_credentials(credentials.client_credentials())
     if state_tokens:
@@ -495,6 +509,7 @@ def _bootstrap(tmp_path: Path, state_tokens: bool = True, expired: bool = False)
 
 
 def test_br_bootstrap_requires_tokens_and_an_mtls_context(tmp_path: Path) -> None:
+    """Check that a BR bootstrap requires saved tokens and an mTLS context."""
     credentials = _credentials()
     state = BrAuthState.for_credentials(credentials.client_credentials())
     with pytest.raises(GwmConfigurationError):
@@ -511,6 +526,7 @@ def test_br_bootstrap_requires_tokens_and_an_mtls_context(tmp_path: Path) -> Non
 async def test_br_cloud_client_reads_vehicles_and_status_only_and_is_read_only(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    """Check that the BR client reads only vehicles and status and refuses every command."""
     credentials, bootstrap = _bootstrap(tmp_path)
     transport = FakeTransport(envelope(VEHICLES), envelope(STATUS))
     monkeypatch.setattr(runtime.AiohttpTransport, "create_owned", lambda **kwargs: transport)
@@ -567,6 +583,7 @@ async def _br_cloud(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, transport: 
 async def test_br_expired_token_is_refreshed_silently_and_the_rotated_tokens_are_saved(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    """Check that an expired token is refreshed silently and the rotated tokens are saved."""
     transport = FakeTransport(_refresh(), envelope(VEHICLES), envelope(STATUS))
     cloud, store = await _br_cloud(monkeypatch, tmp_path, transport, expired=True)
 
@@ -585,6 +602,7 @@ async def test_br_expired_token_is_refreshed_silently_and_the_rotated_tokens_are
 async def test_br_rotated_tokens_are_saved_even_when_the_read_is_cancelled(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    """Check that rotated tokens are saved even when the read is cancelled."""
     transport = FakeTransport()
     cloud, store = await _br_cloud(monkeypatch, tmp_path, transport, expired=False)
     session = cloud._client._client.session
@@ -606,6 +624,7 @@ async def test_br_rotated_tokens_are_saved_even_when_the_read_is_cancelled(
 async def test_br_refused_refresh_asks_for_reauthentication_without_a_password_login(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    """Check that a refused refresh asks for reauthentication without a password login."""
     transport = FakeTransport(envelope(None, code="999999"), _login())
     cloud, store = await _br_cloud(monkeypatch, tmp_path, transport, expired=True)
 
@@ -621,6 +640,7 @@ async def test_br_refused_refresh_asks_for_reauthentication_without_a_password_l
 async def test_br_rejected_token_is_refreshed_and_the_read_repeated(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    """Check that a rejected token is refreshed and the read repeated once."""
     transport = FakeTransport(html(401, "unauthorized"), _refresh(), envelope(VEHICLES), envelope(STATUS))
     cloud, store = await _br_cloud(monkeypatch, tmp_path, transport, expired=False)
 
@@ -637,6 +657,7 @@ async def test_br_rejected_token_is_refreshed_and_the_read_repeated(
 async def test_br_rejected_token_with_refused_refresh_asks_for_reauthentication(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    """Check that a rejected token with a refused refresh asks for reauthentication."""
     transport = FakeTransport(html(401, "unauthorized"), html(401, "unauthorized"), _login())
     cloud, store = await _br_cloud(monkeypatch, tmp_path, transport, expired=False)
 
@@ -652,6 +673,7 @@ async def test_br_rejected_token_with_refused_refresh_asks_for_reauthentication(
 async def test_br_startup_with_expired_saved_session_resumes_and_leaves_the_refresh_to_the_first_read(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    """Check that startup with an expired saved session resumes and leaves the refresh to the first read."""
     credentials = _credentials()
     state = _expired_state(credentials)
     transport = FakeTransport(_login(), envelope(VEHICLES))
@@ -685,6 +707,7 @@ async def test_br_startup_with_expired_saved_session_resumes_and_leaves_the_refr
 async def test_br_login_uses_a_clean_tls_context_and_reads_use_the_vehicle_context(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    """Check that login uses a clean TLS context and reads use the vehicle context."""
     authenticator, transport = _authenticator(monkeypatch, tmp_path, _login(), envelope(VEHICLES))
     credentials = _credentials()
     await authenticator.async_authenticate(credentials, allow_password_login=True)
@@ -700,6 +723,7 @@ async def test_br_login_uses_a_clean_tls_context_and_reads_use_the_vehicle_conte
 async def test_br_setup_forwards_only_read_only_platforms_and_never_enables_commands(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    """Check that BR setup forwards only read-only platforms and never enables commands."""
     forwarded: list[object] = []
     unloaded: list[object] = []
     credentials, bootstrap = _bootstrap(tmp_path)
@@ -779,6 +803,7 @@ async def test_br_setup_forwards_only_read_only_platforms_and_never_enables_comm
 async def test_br_startup_without_certificate_files_retries_instead_of_asking_for_reauth(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
+    """Check that startup without certificate files retries instead of asking for reauth."""
     from homeassistant.exceptions import ConfigEntryNotReady
 
     _component(tmp_path, monkeypatch)
@@ -817,6 +842,7 @@ async def test_br_startup_without_certificate_files_retries_instead_of_asking_fo
 
 
 def test_br_sensor_set_has_no_command_status() -> None:
+    """Check that the BR sensor set has no command status sensor."""
     br_keys = {d.key for d in _sensor_descriptions_for_vehicle({"platform": "beantech"}, "br")}
     eu_keys = {d.key for d in _sensor_descriptions_for_vehicle({"platform": "beantech"}, "eu")}
     assert "command_status" in eu_keys and "command_status" not in br_keys
@@ -824,6 +850,7 @@ def test_br_sensor_set_has_no_command_status() -> None:
 
 
 def test_br_diagnostics_know_the_hosts_and_redact_private_values(tmp_path: Path) -> None:
+    """Check that diagnostics know the BR hosts and redact private values."""
     assert _DISCOVERY_GATEWAYS["br-app-gateway.gwmcloud.com"] == ("br", "br_static_mtls")
     assert {"password_md5", "access_token", "refresh_token", "device_id", "vin", "latitude", "longitude", "account"} <= TO_REDACT
 
@@ -848,6 +875,7 @@ def _plan_body(request: Any) -> dict[str, Any]:
 
 
 def test_br_set_charging_plan_request_has_the_documented_url_and_body(tmp_path: Path) -> None:
+    """Check that the set charging plan request has the documented URL and body."""
     from custom_components.gwm_ora.gwm_client import ChargingPlanCommand
 
     context = _context(tmp_path)
@@ -904,6 +932,7 @@ def test_br_set_charging_plan_request_has_the_documented_url_and_body(tmp_path: 
 async def test_br_charging_busy_is_a_friendly_error_and_not_retried(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, response: object
 ) -> None:
+    """Check that a charging busy reply becomes a friendly error and is not retried."""
     from custom_components.gwm_ora.gwm_client.br_request import GwmBrBusyError
 
     credentials, bootstrap = _bootstrap(tmp_path)
@@ -926,6 +955,7 @@ async def test_br_charging_busy_is_a_friendly_error_and_not_retried(
 async def test_br_guard_allows_only_the_charging_plan_and_only_with_opt_in(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    """Check that the BR guard allows only the charging plan and only with the opt-in."""
     from custom_components.gwm_ora.gwm_client import ChargingPlanCommand
 
     identifier = VehicleIdentifier(VIN)
@@ -981,6 +1011,7 @@ async def test_br_guard_allows_only_the_charging_plan_and_only_with_opt_in(
 async def _charging_setup(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, charging: bool
 ) -> tuple[Any, Any, FakeTransport, list[Any]]:
+    """Set up a BR entry with fake coordinator and transport, with the charging opt-in on or off."""
     forwarded: list[Any] = []
     credentials, bootstrap = _bootstrap(tmp_path)
     transport = FakeTransport(envelope(VEHICLES), envelope(STATUS), envelope({}), envelope({}), envelope({}))
@@ -1004,6 +1035,7 @@ async def _charging_setup(
             return list(self.data["vehicles"])
 
         def vehicle(self, vin: str) -> Any:
+            """Return the vehicle with the given VIN, or None."""
             return next((v for v in self.vehicles if v["vin"] == vin), None)
 
         def resolve_vehicle(self, identifier: str) -> Any:
@@ -1052,6 +1084,7 @@ async def _charging_setup(
 
 
 def test_br_platforms_add_switch_only_with_charging_opt_in() -> None:
+    """Check that the switch platform is added only with the charging opt-in."""
     assert "switch" not in {p.value for p in platforms_for_region(REGION_BR)}
     assert {p.value for p in platforms_for_region(REGION_BR, charging_control=True)} == {
         "sensor", "binary_sensor", "device_tracker", "switch",
@@ -1063,6 +1096,7 @@ def test_br_platforms_add_switch_only_with_charging_opt_in() -> None:
 async def test_br_switch_exists_only_with_opt_in_and_is_the_only_switch(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    """Check that the schedule switch exists only with the opt-in and is the only switch."""
     from custom_components.gwm_ora import switch as switch_platform
 
     for charging in (False, True):
@@ -1080,6 +1114,7 @@ async def test_br_switch_exists_only_with_opt_in_and_is_the_only_switch(
 async def test_br_switch_sets_an_eight_hour_window_and_off_clears_it(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    """Check that turning the switch on sets an eight hour window and off clears it."""
     from custom_components.gwm_ora import switch as switch_platform
 
     hass, entry, transport, _ = await _charging_setup(tmp_path, monkeypatch, charging=True)
@@ -1107,6 +1142,7 @@ async def test_br_switch_sets_an_eight_hour_window_and_off_clears_it(
 async def test_br_services_route_set_and_clear_to_set_charging_plan(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    """Check that the set and clear services both route to set_charging_plan."""
     from datetime import UTC, datetime
     from types import SimpleNamespace
 
@@ -1150,6 +1186,7 @@ class _PlanCoordinator:
         self.active: dict[str, bool] = {}
 
     def vehicle(self, vin: str) -> dict[str, Any]:
+        """Return the vehicle with the given VIN, or None."""
         return {"vin": vin, "capabilities": {"charging_control": True}}
 
     def charging_plan_active(self, vin: str) -> bool | None:
@@ -1165,6 +1202,7 @@ class _PlanApi:
         self.response = response
 
     async def async_get_charging_plan(self, vin: str) -> Any:
+        """Count the read and return or raise the configured response."""
         self.reads += 1
         if isinstance(self.response, Exception):
             raise self.response
@@ -1174,6 +1212,7 @@ class _PlanApi:
 async def _added_switch(
     monkeypatch: pytest.MonkeyPatch, region: str, api: _PlanApi, restored: str | None
 ) -> tuple[Any, _PlanCoordinator]:
+    """Add a schedule switch to a fake coordinator with an optional restored state."""
     from unittest.mock import AsyncMock
 
     from homeassistant.core import State
@@ -1198,6 +1237,7 @@ async def _added_switch(
 async def test_br_switch_restores_the_last_state_without_reading_the_plan(
     monkeypatch: pytest.MonkeyPatch, restored: str | None, expected: bool | None
 ) -> None:
+    """Check that the switch restores its last state without reading the plan."""
     api = _PlanApi()
     entity, _ = await _added_switch(monkeypatch, REGION_BR, api, restored)
     assert api.reads == 0  # the blocked read is never attempted (no error, no log)
@@ -1209,6 +1249,7 @@ async def test_br_switch_restores_the_last_state_without_reading_the_plan(
 async def test_readable_region_keeps_the_live_read_and_falls_back_to_the_restored_state(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Check that a readable region keeps the live read and falls back to the restored state."""
     from custom_components.gwm_ora.gwm_client import ChargingPlanInfo, ChargingPlanItem
 
     live = ChargingPlanInfo((ChargingPlanItem(1, "1", 1_800_000_000_000, 1_800_000_028_800),))
@@ -1223,6 +1264,7 @@ async def test_readable_region_keeps_the_live_read_and_falls_back_to_the_restore
 
 @pytest.mark.parametrize("code", [{"x": 1}, ["9999"], 9999, None])
 def test_br_busy_check_ignores_a_non_string_code(code: object) -> None:
+    """Check that the busy check ignores a non-string code."""
     from custom_components.gwm_ora.gwm_client._protocol import _TransportResponse
     from custom_components.gwm_ora.gwm_client.br_request import decode_br_envelope
     from custom_components.gwm_ora.gwm_client.errors import GwmApiError
