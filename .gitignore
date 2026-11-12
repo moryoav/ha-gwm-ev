@@ -22,6 +22,5 @@ options.json
 AGENTS.md
 agents.md
 
-# BR mTLS material (extraido do app; NAO versionar)
+# Brazil mTLS client material: supplied locally at runtime, never committed
 custom_components/gwm_ora/resources/br/
-instalar-no-ha.sh
