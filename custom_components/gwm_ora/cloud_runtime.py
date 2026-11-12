@@ -1307,8 +1307,8 @@ class GwmCloudClient:
                 with suppress(Exception):
                     await self.async_authentication_rejected()
                 raise
-            except Exception:
-                # A re-login may have succeeded before a later failure; keep its tokens.
+            except BaseException:
+                # A re-login or silent refresh may have rotated tokens before this failure or a cancellation; keep them.
                 with suppress(Exception):
                     await self._async_publish_br_tokens()
                 raise
