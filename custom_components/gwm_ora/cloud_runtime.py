@@ -1235,6 +1235,7 @@ class GwmCloudClient:
         *,
         control_action: ChinaRemoteCommandAction | None = None,
     ) -> tuple[RemoteCommandResultItem, ...]:
+        """Fetch remote command results, blocking the read in the read-only BR region and using the China action when given."""
         self._ensure_br_read_only("get_remote_command_result")
         if self.region == REGION_CHINA and control_action is not None:
             return await self._async_with_session_renewal(

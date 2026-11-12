@@ -97,6 +97,7 @@ def write_quirky_material(directory: Path) -> None:
     email = b"dummy@example.invalid"
 
     def quirky(subject: str, issuer: str, public_key, signing_key) -> bytes:
+        """Build a PEM certificate whose subject carries a PrintableString emailAddress that strict parsers reject."""
         now = datetime.now(UTC)
         name = x509.Name(
             [x509.NameAttribute(NameOID.COMMON_NAME, subject), x509.NameAttribute(NameOID.EMAIL_ADDRESS, email.decode())]

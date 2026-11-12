@@ -37,11 +37,13 @@ def context(tmp_path: Path):
 
 
 def test_password_md5_is_lowercase_hex_of_plain_text() -> None:
+    """Check that the password hash is the lowercase hex MD5 of the plain text."""
     assert br_password_md5("Synthetic1") == hashlib.md5(b"Synthetic1").hexdigest()
     assert br_password_md5("Synthetic1") == br_password_md5("Synthetic1").lower()
 
 
 def test_device_id_is_md5_shaped_and_persisted(tmp_path: Path) -> None:
+    """Check that the device id is MD5 shaped and stays stable once persisted."""
     assert len(generate_br_device_id()) == 32
     path = tmp_path / "deviceid"
     first = load_or_create_br_device_id(path)
@@ -50,6 +52,7 @@ def test_device_id_is_md5_shaped_and_persisted(tmp_path: Path) -> None:
 
 
 def test_login_uses_a_clean_default_tls_context_not_the_vehicle_identity(context) -> None:
+    """Check that login uses a default TLS context and never the vehicle mTLS identity."""
     credentials = BrCredentials.from_password("someone@example.invalid", "Synthetic1", DEVICE)
     # The vehicle mTLS context (SECLEVEL=0, client certificate) is refused for the login host.
     with pytest.raises(ValueError, match="^br_request_invalid$"):
@@ -64,6 +67,7 @@ def test_login_uses_a_clean_default_tls_context_not_the_vehicle_identity(context
 
 
 def test_login_request_headers_and_body() -> None:
+    """Check the headers and body of the login request."""
     credentials = BrCredentials.from_password("someone@example.invalid", "Synthetic1", DEVICE)
     request = prepare_br_request(operation="login", ssl_context=ssl.create_default_context(), credentials=credentials)
     assert request.method == "POST"
@@ -89,6 +93,7 @@ def test_login_request_headers_and_body() -> None:
 
 
 def test_app_requests_headers_and_urls(context) -> None:
+    """Check the headers and URLs of app requests."""
     listing = prepare_br_request(operation="acquire_vehicles", ssl_context=context, access_token="tok-a", refresh_token="tok-r")
     assert listing.method == "GET" and listing.body is None
     assert listing.url == "https://br-app-gateway.gwmcloud.com/app-api/api/v1.0/globalapp/vehicle/acquireVehicles"
@@ -105,6 +110,7 @@ def test_app_requests_headers_and_urls(context) -> None:
 
 
 def test_refresh_endpoint_is_the_h5_host_contract() -> None:
+    """Check that the refresh endpoint follows the H5 host contract."""
     endpoint = br_endpoint("refresh_token")
     assert (endpoint.method, endpoint.authenticated) == ("POST", True)
     assert endpoint.base_url + endpoint.path == (
@@ -114,11 +120,13 @@ def test_refresh_endpoint_is_the_h5_host_contract() -> None:
 
 @pytest.mark.parametrize("operation", ["send_command", "sendCmd", "send_climate_command", "refreshToken", ""])
 def test_only_allowlisted_operations_exist(operation: str) -> None:
+    """Check that only allowlisted operations can be built."""
     with pytest.raises(ValueError, match="^br_operation_not_supported$"):
         br_endpoint(operation)
 
 
 def test_app_request_requires_token_and_secure_context(context) -> None:
+    """Check that an app request needs a token and a secure context."""
     with pytest.raises(ValueError, match="^br_request_invalid$"):
         prepare_br_request(operation="acquire_vehicles", ssl_context=context)
     import ssl
@@ -128,6 +136,7 @@ def test_app_request_requires_token_and_secure_context(context) -> None:
 
 
 def test_credential_rejection_308001_is_a_clear_credential_error() -> None:
+    """Check that gateway code 308001 maps to a clear credential error."""
     with pytest.raises(GwmBrCredentialError) as error:
         decode_br_envelope(envelope(None, code="308001", description="bad password"), operation="login")
     assert isinstance(error.value, GwmAuthenticationError)
@@ -136,6 +145,7 @@ def test_credential_rejection_308001_is_a_clear_credential_error() -> None:
 
 
 def test_html_400_without_certificate_is_tls_error() -> None:
+    """Check that an HTML 400 response without a certificate is reported as a TLS error."""
     with pytest.raises(GwmTlsError):
         decode_br_envelope(html(400, "No required SSL certificate was sent"), operation="acquire_vehicles")
     with pytest.raises(GwmTlsError):
@@ -143,6 +153,7 @@ def test_html_400_without_certificate_is_tls_error() -> None:
 
 
 def test_other_http_and_schema_failures() -> None:
+    """Check the error mapping for other HTTP statuses and schema failures."""
     with pytest.raises(GwmHttpError) as http_error:
         decode_br_envelope(html(400, "Bad Request"), operation="get_last_status")
     assert http_error.value.status == 400
@@ -159,6 +170,7 @@ def test_other_http_and_schema_failures() -> None:
 
 
 def test_refresh_request_url_body_headers_and_mtls(context) -> None:
+    """Check the URL, body, headers and mTLS context of the refresh request."""
     request = prepare_br_request(
         operation="refresh_token", ssl_context=context, access_token="tok-a", refresh_token="tok-r", device_id=DEVICE
     )
@@ -191,12 +203,14 @@ def test_refresh_request_url_body_headers_and_mtls(context) -> None:
     ],
 )
 def test_refresh_request_rejects_incomplete_input(context, kwargs) -> None:
+    """Check that the refresh request rejects incomplete input."""
     base = {"access_token": "tok-a", "refresh_token": "tok-r", "device_id": DEVICE}
     with pytest.raises(ValueError, match="^br_request_invalid$"):
         prepare_br_request(operation="refresh_token", ssl_context=context, **{**base, **kwargs})
 
 
 def test_device_id_is_only_accepted_by_the_refresh_operation(context) -> None:
+    """Check that only the refresh operation accepts a device id."""
     with pytest.raises(ValueError, match="^br_request_invalid$"):
         prepare_br_request(operation="acquire_vehicles", ssl_context=context, access_token="t", device_id=DEVICE)
     credentials = BrCredentials.from_password("someone@example.invalid", "Synthetic1", DEVICE)
@@ -207,6 +221,7 @@ def test_device_id_is_only_accepted_by_the_refresh_operation(context) -> None:
 
 
 def test_refresh_envelope_failure_is_an_authentication_error() -> None:
+    """Check that a failed refresh envelope becomes an authentication error."""
     with pytest.raises(GwmAuthenticationError):
         decode_br_envelope(envelope(None, code="999999"), operation="refresh_token")
     for status in (401, 403):

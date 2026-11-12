@@ -17,6 +17,7 @@ def _chain_count(material: BrMaterial) -> int:
 
 
 def test_prefers_prebuilt_fullchain(tmp_path: Path) -> None:
+    """Check that a prebuilt full chain file is used as is and the repr hides PEM content."""
     write_dummy_material(tmp_path)
     material = load_br_material(tmp_path)
     assert _chain_count(material) == 2
@@ -24,6 +25,7 @@ def test_prefers_prebuilt_fullchain(tmp_path: Path) -> None:
 
 
 def test_builds_chain_from_leaf_plus_whole_bundle(tmp_path: Path) -> None:
+    """Check that without a full chain the leaf is followed by the whole CA bundle."""
     write_dummy_material(tmp_path, fullchain=False)
     material = load_br_material(tmp_path)
     assert _chain_count(material) == 4  # leaf + the 3 bundle certificates
@@ -46,6 +48,7 @@ def test_vendor_certificates_rejected_by_cryptography_still_load(tmp_path: Path)
 
 
 def test_material_post_init_is_textual_only() -> None:
+    """Check that BrMaterial validates PEM markers textually and rejects bad chain or key with a redacted error."""
     from custom_components.gwm_ora.gwm_client import br_material
 
     assert not hasattr(br_material, "x509")
@@ -58,6 +61,7 @@ def test_material_post_init_is_textual_only() -> None:
 
 
 def test_context_is_mtls_scoped_security_level_zero(tmp_path: Path) -> None:
+    """Check that the mTLS context uses security level zero while default contexts stay stricter."""
     write_dummy_material(tmp_path)
     context = create_br_ssl_context(load_br_material(tmp_path))
     assert context.security_level == 0
@@ -71,6 +75,7 @@ def create_default_level() -> int:
 
 
 def test_missing_key_fails_redacted(tmp_path: Path) -> None:
+    """Check that a missing key file raises the redacted material error."""
     write_dummy_material(tmp_path)
     (tmp_path / "gwm_general.key").unlink()
     with pytest.raises(ValueError, match="^br_material_invalid$"):
@@ -78,6 +83,7 @@ def test_missing_key_fails_redacted(tmp_path: Path) -> None:
 
 
 def test_key_not_matching_leaf_is_rejected_by_openssl(tmp_path: Path) -> None:
+    """Check that OpenSSL rejects a private key that does not match the leaf certificate."""
     write_dummy_material(tmp_path, key_mismatch=True)
     material = load_br_material(tmp_path)
     with pytest.raises(ValueError, match="^br_material_invalid$"):
@@ -85,6 +91,7 @@ def test_key_not_matching_leaf_is_rejected_by_openssl(tmp_path: Path) -> None:
 
 
 def test_relative_path_and_repository_path_are_rejected(tmp_path: Path) -> None:
+    """Check that relative paths and paths inside the source tree are refused as material folders."""
     with pytest.raises(ValueError, match="^br_material_invalid$"):
         load_br_material(Path("relative"))
     repository = Path(__file__).resolve().parents[3]
