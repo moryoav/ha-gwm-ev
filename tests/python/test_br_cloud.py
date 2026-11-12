@@ -6,6 +6,7 @@ and nothing else. Certificates are throwaway files generated in a temp directory
 
 from __future__ import annotations
 
+import asyncio
 import json
 import ssl
 from dataclasses import replace
@@ -575,6 +576,27 @@ async def test_br_expired_token_is_refreshed_silently_and_the_rotated_tokens_are
     assert "login" not in [r.operation for r in transport.requests]
     assert transport.requests[0].ssl_context.security_level == 0
     assert data["vehicles"][0]["values"]["soc"] == 80.0
+    assert store.cleared == 0
+    assert store.saved and store.saved[-1].tokens.refresh_token == "rotated-refresh"
+    await cloud.aclose()
+
+
+@pytest.mark.asyncio
+async def test_br_rotated_tokens_are_saved_even_when_the_read_is_cancelled(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    transport = FakeTransport()
+    cloud, store = await _br_cloud(monkeypatch, tmp_path, transport, expired=False)
+    session = cloud._client._client.session
+
+    async def rotate_then_get_cancelled() -> None:
+        # The silent refresh swaps the tokens, then Home Assistant cancels the coroutine.
+        session._tokens = BrTokens(fake_jwt(NOW_FAR), "rotated-refresh", float(NOW_FAR))
+        raise asyncio.CancelledError
+
+    with pytest.raises(asyncio.CancelledError):
+        await cloud._async_with_br_session(rotate_then_get_cancelled)
+
     assert store.cleared == 0
     assert store.saved and store.saved[-1].tokens.refresh_token == "rotated-refresh"
     await cloud.aclose()
