@@ -98,7 +98,6 @@ from .gwm_client.br_flow import BrAuthenticated
 from .gwm_client.br_installed import (
     GwmBrMaterialInvalidError,
     GwmBrMaterialMissingError,
-    installed_br_directory,
     load_installed_br_context,
 )
 from .gwm_client.china_crypto import valid_bean_tech_lock_credential
@@ -685,10 +684,8 @@ class GwmConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             return None, "cannot_connect"
         except (GwmBrMaterialMissingError, GwmBrMaterialInvalidError) as error:
             _LOGGER.error(
-                "GWM Brazil mTLS certificate material is %s. Place gwm_general.cer, gwm_general.key and "
-                "gwm_root.cer (or gwm_client_fullchain.pem and gwm_general.key) in %s",
+                "GWM Brazil authentication files bundled with the integration are %s; reinstall the integration",
                 "missing" if isinstance(error, GwmBrMaterialMissingError) else "invalid",
-                installed_br_directory(),
             )
             return None, (
                 "br_material_missing" if isinstance(error, GwmBrMaterialMissingError) else "br_material_invalid"

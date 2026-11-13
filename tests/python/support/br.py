@@ -34,7 +34,7 @@ def _issue(subject: str, issuer: str, public_key, signing_key) -> x509.Certifica
     )
 
 
-def write_dummy_material(directory: Path, *, fullchain: bool = True, key_mismatch: bool = False) -> None:
+def write_dummy_material(directory: Path, *, key_mismatch: bool = False) -> None:
     """Write throwaway certificates shaped like the real set, never the real material."""
     root_key, mid_key, other_key, leaf_key = (rsa.generate_private_key(65537, 2048) for _ in range(4))
     root = _issue("Dummy Root CA", "Dummy Root CA", root_key.public_key(), root_key)
@@ -42,15 +42,13 @@ def write_dummy_material(directory: Path, *, fullchain: bool = True, key_mismatc
     mid = _issue("IOV APP General SubCA", "Dummy Root CA", mid_key.public_key(), root_key)
     leaf = _issue("dummy-client", "IOV APP General SubCA", leaf_key.public_key(), mid_key)
     pem = serialization.Encoding.PEM
-    leaf_pem, mid_pem = leaf.public_bytes(pem), mid.public_bytes(pem)
+    leaf_pem = leaf.public_bytes(pem)
     signer = rsa.generate_private_key(65537, 2048) if key_mismatch else leaf_key
     (directory / "gwm_general.key").write_bytes(
         signer.private_bytes(pem, serialization.PrivateFormat.PKCS8, serialization.NoEncryption())
     )
     (directory / "gwm_general.cer").write_bytes(leaf_pem)
     (directory / "gwm_root.cer").write_bytes(b"".join(c.public_bytes(pem) for c in (root, other, mid)))
-    if fullchain:
-        (directory / "gwm_client_fullchain.pem").write_bytes(leaf_pem + mid_pem)
 
 
 def fake_jwt(exp: int) -> str:

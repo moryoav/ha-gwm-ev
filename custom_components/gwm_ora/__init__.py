@@ -80,7 +80,6 @@ from .gwm_client.br_flow import BrAuthenticated
 from .gwm_client.br_installed import (
     GwmBrMaterialInvalidError,
     GwmBrMaterialMissingError,
-    installed_br_directory,
     load_installed_br_context,
 )
 
@@ -452,17 +451,14 @@ async def _async_load_cloud_bootstrap_once(
             "GWM cloud authentication was rejected"
         ) from err
     except (GwmBrMaterialMissingError, GwmBrMaterialInvalidError) as err:
-        # Not an authentication failure: keep retrying so dropping the files in place recovers setup.
+        # Not an authentication failure: a damaged installation recovers once the integration is reinstalled.
         missing = isinstance(err, GwmBrMaterialMissingError)
         _LOGGER.error(
-            "GWM Brazil mTLS certificate material is %s. Place gwm_general.cer, gwm_general.key and "
-            "gwm_root.cer (or gwm_client_fullchain.pem and gwm_general.key) in %s, then reload the integration",
+            "GWM Brazil authentication files bundled with the integration are %s; reinstall the integration",
             "missing" if missing else "invalid",
-            installed_br_directory(),
         )
         raise ConfigEntryNotReady(
-            f"GWM Brazil certificate material is {'missing' if missing else 'invalid'}; "
-            f"place the files in {installed_br_directory()}"
+            f"GWM Brazil authentication files are {'missing' if missing else 'invalid'}; reinstall the integration"
         ) from err
     except GwmClientError as err:
         status = f" (HTTP {err.status})" if isinstance(err, GwmHttpError) and err.status is not None else ""

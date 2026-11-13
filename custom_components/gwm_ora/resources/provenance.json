@@ -180,6 +180,64 @@
       "source_id": "official-my-gwm-apac-android-3.0.9",
       "apk_entry": "lib/arm64-v8a/libapp.so",
       "source_details": "Production APAC host configuration in the arm64 APK split"
+    },
+    {
+      "path": "br/gwm_general.cer",
+      "region": "br",
+      "role": "shared_vehicle_gateway_client_certificate",
+      "bytes": 1507,
+      "sha256": "40a54928be2bd9ad81708dc2eb007bf9c70acfa212b136014647b3d32126a4c3",
+      "source_id": "official-brazil-my-gwm-android-via-public-mirrors",
+      "source_url": "https://github.com/havaleiros/hassio-haval-h6-to-mqtt",
+      "mirror_url": "https://github.com/ipsBruno/haval-h6-gwm-alexa-chatgpt-mqtt-integration",
+      "source_path": "haval-h6-mqtt/certs/gwm_general.cer",
+      "mirror_path": "certs/gwm_general.cer",
+      "certificate": {
+        "serial_hex": "58b57833dd9d69e94490203e0d362b8b212dac16",
+        "subject_common_name": "LGWGWM-AD-BR-GENERAL",
+        "subject_country": "BR",
+        "issuer_common_name": "IOV APP General SubCA",
+        "not_before": "2022-10-19T09:15:53Z",
+        "not_after": "2027-10-18T09:15:53Z",
+        "renew_by": "2027-07-20T09:15:53Z",
+        "spki_sha256": "2d81ba6a6e335c2ad491e7bdfe0cd4d8fa2f6c88b1bad8576382f41e84c0120c"
+      },
+      "normalized_upstream_sha256": "40a54928be2bd9ad81708dc2eb007bf9c70acfa212b136014647b3d32126a4c3",
+      "app_identity": "Official Brazilian My GWM Android app; exact version and APK digest were not recorded",
+      "redistribution_permission": "unresolved"
+    },
+    {
+      "path": "br/gwm_general.key",
+      "region": "br",
+      "role": "shared_rsa_private_key",
+      "bytes": 1682,
+      "sha256": "f08816ed1c4181cd5b8b96fa8f7b94996dac15e8b2f3a13180ab6868554b0a66",
+      "source_id": "official-brazil-my-gwm-android-via-public-mirrors",
+      "source_url": "https://github.com/havaleiros/hassio-haval-h6-to-mqtt",
+      "mirror_url": "https://github.com/ipsBruno/haval-h6-gwm-alexa-chatgpt-mqtt-integration",
+      "source_path": "haval-h6-mqtt/certs/gwm_general.key",
+      "mirror_path": "certs/gwm_general.key",
+      "paired_certificate": "br/gwm_general.cer",
+      "rsa_bits": 2048,
+      "normalized_upstream_sha256": "f08816ed1c4181cd5b8b96fa8f7b94996dac15e8b2f3a13180ab6868554b0a66",
+      "app_identity": "Official Brazilian My GWM Android app; exact version and APK digest were not recorded",
+      "redistribution_permission": "unresolved"
+    },
+    {
+      "path": "br/gwm_root.cer",
+      "region": "br",
+      "role": "regional_ca_bundle",
+      "bytes": 4513,
+      "sha256": "428b1b29561efd2f5aba7f44909230631fd2315e620a9c235e7d3c3a9eee87a7",
+      "source_id": "official-brazil-my-gwm-android-via-public-mirrors",
+      "source_url": "https://github.com/havaleiros/hassio-haval-h6-to-mqtt",
+      "mirror_url": "https://github.com/ipsBruno/haval-h6-gwm-alexa-chatgpt-mqtt-integration",
+      "source_path": "haval-h6-mqtt/certs/gwm_root.cer",
+      "mirror_path": "certs/gwm_root.cer",
+      "certificate_count": 3,
+      "normalized_upstream_sha256": "428b1b29561efd2f5aba7f44909230631fd2315e620a9c235e7d3c3a9eee87a7",
+      "app_identity": "Official Brazilian My GWM Android app; exact version and APK digest were not recorded",
+      "redistribution_permission": "unresolved"
     }
   ]
 }

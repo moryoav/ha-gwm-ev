@@ -1,8 +1,8 @@
-"""Locate and load the BR mTLS material installed with the component.
+"""Locate and load the BR mTLS material bundled with the component.
 
-The material is NOT distributed. The user copies ``gwm_general.cer``,
-``gwm_general.key`` and ``gwm_root.cer`` (or ``gwm_client_fullchain.pem`` plus the
-key) into ``custom_components/gwm_ora/resources/br/`` once. Nothing here logs file
+The installation ships ``gwm_general.cer``, ``gwm_general.key`` and
+``gwm_root.cer`` in ``resources/br/``, as it does for APAC. A missing or corrupt
+bundle fails setup without falling back to anything else. Nothing here logs file
 contents, and the directory is never created or written by the integration.
 """
 
@@ -18,7 +18,6 @@ from .errors import GwmConfigurationError
 _SOURCE_DIRECTORY: Final = Path(__file__).resolve().parent
 _DIRECTORY_NAME: Final = ("resources", "br")
 _KEY: Final = "gwm_general.key"
-_CHAIN: Final = "gwm_client_fullchain.pem"
 _LEAF: Final = "gwm_general.cer"
 _ROOT_BUNDLE: Final = "gwm_root.cer"
 
@@ -36,23 +35,17 @@ class GwmBrMaterialInvalidError(GwmConfigurationError):
 
 
 def installed_br_directory() -> Path:
-    """Directory inside the installed component where the user places the files."""
+    """Directory of the bundled BR files inside the installed component."""
     return _SOURCE_DIRECTORY.parent.joinpath(*_DIRECTORY_NAME)
 
 
 def missing_br_files(directory: Path) -> list[str]:
-    """Names still needed, or an empty list when a complete set is present."""
-    if not directory.is_dir():
-        return [_LEAF, _KEY, _ROOT_BUNDLE]
-    has = {name for name in (_KEY, _CHAIN, _LEAF, _ROOT_BUNDLE) if (directory / name).is_file()}
-    missing = [] if _KEY in has else [_KEY]
-    if _CHAIN not in has:
-        missing += [name for name in (_LEAF, _ROOT_BUNDLE) if name not in has]
-    return missing
+    """Bundled names that are absent, or an empty list when the set is complete."""
+    return [name for name in (_LEAF, _KEY, _ROOT_BUNDLE) if not (directory / name).is_file()]
 
 
 def load_installed_br_material() -> BrMaterial:
-    """Load the material from the installed component directory (blocking I/O)."""
+    """Load the bundled material from the installed component (blocking I/O)."""
     directory = installed_br_directory()
     if missing_br_files(directory):
         raise GwmBrMaterialMissingError(operation="login")

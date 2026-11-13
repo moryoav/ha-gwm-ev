@@ -65,7 +65,6 @@ from custom_components.gwm_ora.gwm_client import (
     VehicleIdentifier,
     br_flow,
     br_installed,
-    br_material,
 )
 from custom_components.gwm_ora.gwm_client._auth_diagnostics import begin_request
 from custom_components.gwm_ora.gwm_client._diagnostics import _DISCOVERY_GATEWAYS
@@ -109,11 +108,10 @@ def _refresh(exp: int = NOW_FAR, refresh: str = "rotated-refresh") -> object:
 
 
 def _component(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """A fake installed component whose resources/br is empty (nothing placed yet)."""
+    """A fake installed component whose bundled resources/br is absent (a damaged install)."""
     component = tmp_path / "config" / "custom_components" / "gwm_ora"
     (component / "gwm_client").mkdir(parents=True)
     monkeypatch.setattr(br_installed, "_SOURCE_DIRECTORY", component / "gwm_client")
-    monkeypatch.setattr(br_material, "_SOURCE_DIRECTORY", component / "gwm_client")
     return component
 
 
@@ -248,7 +246,7 @@ async def test_br_rejected_credentials_show_invalid_auth_and_store_nothing(
 
 
 @pytest.mark.asyncio
-async def test_br_missing_certificate_folder_gives_a_clear_error(
+async def test_br_missing_bundled_files_give_a_clear_error(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, store: _Store, caplog: pytest.LogCaptureFixture
 ) -> None:
     component = _component(tmp_path, monkeypatch)
@@ -260,14 +258,15 @@ async def test_br_missing_certificate_folder_gives_a_clear_error(
         result = await flow.async_step_account({CONF_COUNTRY: "BR", CONF_ACCOUNT: ACCOUNT, CONF_PASSWORD: PASSWORD})
 
     assert result["errors"] == {"base": "br_material_missing"}
-    assert "resources" in caplog.text and "br" in caplog.text
+    assert "reinstall" in caplog.text
     assert PASSWORD not in caplog.text and ACCOUNT not in caplog.text
     en = json.loads(Path(config_flow.__file__).parent.joinpath("translations", "en.json").read_text())
-    assert "custom_components/gwm_ora/resources/br/" in en["config"]["error"]["br_material_missing"]
+    assert "Reinstall" in en["config"]["error"]["br_material_missing"]
+    assert "resources/br" not in json.dumps(en)
 
 
 @pytest.mark.asyncio
-async def test_br_unusable_certificate_files_and_gateway_rejection_have_their_own_errors(
+async def test_br_unusable_bundled_files_and_gateway_rejection_have_their_own_errors(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, store: _Store
 ) -> None:
     component = _component(tmp_path, monkeypatch)
@@ -372,7 +371,7 @@ async def test_br_options_expose_only_polling_and_log_level() -> None:
 # ------------------------------------------------------ installed material
 
 
-def test_br_installed_material_lives_in_the_component_and_reports_what_is_missing(
+def test_br_bundled_material_lives_in_the_component_and_reports_what_is_missing(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     component = _component(tmp_path, monkeypatch)
@@ -392,23 +391,19 @@ def test_br_installed_material_lives_in_the_component_and_reports_what_is_missin
     assert br_installed.load_installed_br_context().security_level == 0
 
 
-def test_br_material_is_refused_inside_the_source_tree_but_allowed_in_an_installed_component(
+def test_br_bundled_material_loads_even_in_a_git_tracked_config_directory(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    # A Home Assistant config directory kept under git is NOT the project's source tree.
+    """There is no source-checkout guard: the bundled files load wherever the component is installed."""
     config = tmp_path / "config"
     component = _component(tmp_path, monkeypatch)
     (config / ".git").mkdir()
+    (config / "pyproject.toml").write_text("[project]\n")
+    (config / "tests").mkdir()
     directory = component / "resources" / "br"
     directory.mkdir(parents=True)
     write_dummy_material(directory)
     assert br_installed.load_installed_br_material() is not None
-
-    # The project's own checkout (git + pyproject + tests) still refuses it.
-    (config / "pyproject.toml").write_text("[project]\n")
-    (config / "tests").mkdir()
-    with pytest.raises(br_installed.GwmBrMaterialInvalidError):
-        br_installed.load_installed_br_material()
 
 
 # ------------------------------------------------------------- credentials
@@ -793,8 +788,8 @@ async def test_br_startup_without_certificate_files_retries_instead_of_asking_fo
     hass = HomeAssistant(str(tmp_path))
     with caplog.at_level("ERROR"), pytest.raises(ConfigEntryNotReady) as raised:
         await integration._async_load_cloud_bootstrap_once(hass, entry, Store())  # type: ignore[arg-type]
-    assert "resources" in str(raised.value)
-    assert "resources" in caplog.text
+    assert "reinstall" in str(raised.value)
+    assert "reinstall" in caplog.text
     assert PASSWORD not in caplog.text and ACCOUNT not in caplog.text
 
 

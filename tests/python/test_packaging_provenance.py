@@ -31,6 +31,9 @@ EXPECTED_FILES = {
     "apac/bootstrap.key": (728, "177f979899aa36a351e8f37315ed8c711624390bb6bab46fbe14c383def2c8b7"),
     "apac/ca.pem": (5988, "7c092608eec70d500a86c8682c9896adf4dca98e1fe4380eb5e1b82913f5a3b0"),
     "apac/signing.json": (76, "570a5bdc82073666955643a455063f6de83e8127d791939fe5fb30bf70b4281d"),
+    "br/gwm_general.cer": (1507, "40a54928be2bd9ad81708dc2eb007bf9c70acfa212b136014647b3d32126a4c3"),
+    "br/gwm_general.key": (1682, "f08816ed1c4181cd5b8b96fa8f7b94996dac15e8b2f3a13180ab6868554b0a66"),
+    "br/gwm_root.cer": (4513, "428b1b29561efd2f5aba7f44909230631fd2315e620a9c235e7d3c3a9eee87a7"),
 }
 
 
@@ -138,6 +141,52 @@ def test_bootstrap_certificate_metadata_keys_and_renewal_controls_are_exact(
 
     bundle = (RESOURCE_DIRECTORY / bundle_name).read_bytes()
     assert bundle.count(b"-----BEGIN CERTIFICATE-----") == records[bundle_name]["certificate_count"]
+
+
+def test_brazil_bundle_identity_pairing_and_renewal_control_are_exact() -> None:
+    """Check the Brazil files without ``cryptography``'s strict parser.
+
+    The vendor certificates carry an ``emailAddress`` as a PrintableString containing "@",
+    which rust-asn1 refuses, so the certificate is read by OpenSSL and the key by ``cryptography``.
+    """
+    import ssl
+    import tempfile
+
+    records = {record["path"]: record for record in _load_provenance()["resources"]}
+    certificate_record = records["br/gwm_general.cer"]["certificate"]
+    certificate_path = RESOURCE_DIRECTORY / "br" / "gwm_general.cer"
+    decoded = ssl._ssl._test_decode_cert(str(certificate_path))  # OpenSSL-backed, no cryptography parser
+
+    subject = {key: value for rdn in decoded["subject"] for key, value in rdn}
+    issuer = {key: value for rdn in decoded["issuer"] for key, value in rdn}
+    assert subject["commonName"] == certificate_record["subject_common_name"] == "LGWGWM-AD-BR-GENERAL"
+    assert subject["countryName"] == certificate_record["subject_country"] == "BR"
+    assert issuer["commonName"] == certificate_record["issuer_common_name"]
+    assert decoded["serialNumber"].lower() == certificate_record["serial_hex"]
+    not_before = datetime.fromtimestamp(ssl.cert_time_to_seconds(decoded["notBefore"]), UTC)
+    not_after = datetime.fromtimestamp(ssl.cert_time_to_seconds(decoded["notAfter"]), UTC)
+    assert not_before == _parse_instant(certificate_record["not_before"])
+    assert not_after == _parse_instant(certificate_record["not_after"])
+    assert _parse_instant(certificate_record["renew_by"]) == not_after - timedelta(days=90)
+
+    key = serialization.load_pem_private_key((RESOURCE_DIRECTORY / "br" / "gwm_general.key").read_bytes(), None)
+    assert key.key_size == records["br/gwm_general.key"]["rsa_bits"]
+    assert records["br/gwm_general.key"]["paired_certificate"] == "br/gwm_general.cer"
+    assert hashlib.sha256(
+        key.public_key().public_bytes(serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)
+    ).hexdigest() == certificate_record["spki_sha256"]
+
+    bundle = (RESOURCE_DIRECTORY / "br" / "gwm_root.cer").read_bytes()
+    assert bundle.count(b"-----BEGIN CERTIFICATE-----") == records["br/gwm_root.cer"]["certificate_count"]
+    for name in ("gwm_general.cer", "gwm_general.key", "gwm_root.cer"):
+        assert records[f"br/{name}"]["redistribution_permission"] == "unresolved"
+    # Not a trust anchor check: only that OpenSSL accepts the bundled key with the leaf.
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    context.set_ciphers("DEFAULT:@SECLEVEL=0")
+    with tempfile.TemporaryDirectory() as directory:
+        pem = Path(directory) / "chain.pem"
+        pem.write_bytes(certificate_path.read_bytes())
+        context.load_cert_chain(str(pem), str(RESOURCE_DIRECTORY / "br" / "gwm_general.key"))
 
 
 def test_protocol_material_is_confined_to_audited_resources() -> None:
