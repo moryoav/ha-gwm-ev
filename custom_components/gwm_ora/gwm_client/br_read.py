@@ -137,7 +137,7 @@ class BrReadClient:
 async def open_br_read_client(material_directory: Path, credentials: BrCredentials) -> BrReadClient:
     """Entry point for tools and tests: build context, transport and client.
 
-    ``material_directory`` is injected and must be outside the source checkout. The
+    ``material_directory`` is injected (the bundled files live in ``resources/br``). The
     caller must ``await client.aclose()``. The Home Assistant integration builds its
     own client through ``br_flow.create_br_reader`` instead.
     """
