@@ -2,7 +2,7 @@
 
 This custom integration connects Home Assistant directly to supported GWM cloud regions. It does not require the retired Docker add-on.
 
-The setup flow supports Europe, Australia and New Zealand, Russia, mainland China, and Asia-Pacific. Mainland-China accounts use their registered phone number and SMS verification. Asia-Pacific accounts use the standard sign-in flow and select Pakistan (`PK`), Thailand (`TH`), Malaysia (`MY`), or Indonesia (`ID`). The installation includes the Asia-Pacific authentication files. Brazil is read-only and needs the vehicle-gateway certificate files copied once into `custom_components/gwm_ora/resources/br/`; see the project README.
+The setup flow supports Europe, Australia and New Zealand, Russia, mainland China, and Asia-Pacific. Mainland-China accounts use their registered phone number and SMS verification. Asia-Pacific accounts use the standard sign-in flow and select Pakistan (`PK`), Thailand (`TH`), Malaysia (`MY`), or Indonesia (`ID`). The installation includes the Asia-Pacific authentication files. Brazil is read-only, signs in with the official app's email and password, and the installation includes the Brazil authentication files; see the project README.
 
 ## Setup
 

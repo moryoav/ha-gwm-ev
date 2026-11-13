@@ -1,9 +1,8 @@
-"""Load the BR mutual-TLS client identity from an injected directory.
+"""Load the BR mutual-TLS client identity from a directory of PEM files.
 
-The material is extracted from the vendor app and must never be versioned: it is
-refused inside the project's source checkout. In Home Assistant it lives in the
-installed component's ``resources/br`` directory (see ``br_installed``). Nothing here reads or writes
-inside the checkout, and nothing logs file contents.
+The shared app files ship with the integration in ``resources/br`` (see
+``br_installed``). Nothing here writes to that directory, and nothing logs file
+contents.
 """
 
 from __future__ import annotations
@@ -16,7 +15,6 @@ from pathlib import Path
 from typing import Final
 
 _MAX_FILE_BYTES: Final = 256 * 1024
-_SOURCE_DIRECTORY: Final = Path(__file__).resolve().parent
 _CERT_BEGIN: Final = b"-----BEGIN CERTIFICATE-----"
 _CERT_END: Final = b"-----END CERTIFICATE-----"
 
@@ -62,20 +60,6 @@ def _pem_blocks(data: bytes) -> list[bytes]:
     return blocks
 
 
-def _inside_source_checkout(directory: Path) -> bool:
-    """True when the directory lies in the project's Git checkout (never allowed)."""
-    # A Home Assistant config kept under git is not the source tree: require the project markers too.
-    repository = next(
-        (
-            parent
-            for parent in _SOURCE_DIRECTORY.parents
-            if (parent / ".git").exists() and (parent / "pyproject.toml").exists() and (parent / "tests").is_dir()
-        ),
-        None,
-    )
-    return repository is not None and directory.is_relative_to(repository)
-
-
 def _read_file(directory: Path, name: str) -> bytes | None:
     """Read one bounded regular file inside the directory; None when absent."""
     path = directory / name
@@ -93,31 +77,25 @@ def _read_file(directory: Path, name: str) -> bytes | None:
 
 
 def load_br_material(directory: Path) -> BrMaterial:
-    """Load the client identity from an absolute directory outside the source checkout.
+    """Load the client identity from an absolute directory.
 
-    Prefer ``gwm_client_fullchain.pem`` plus ``gwm_general.key``. Otherwise the
-    chain is ``gwm_general.cer`` followed by every block of ``gwm_root.cer``.
+    The chain is ``gwm_general.cer`` followed by every block of ``gwm_root.cer``;
+    the key is ``gwm_general.key``.
     """
     if not isinstance(directory, Path) or not directory.is_absolute():
         raise ValueError("br_material_invalid")
     try:
         directory = directory.resolve(strict=True)
-        if _inside_source_checkout(directory):
-            raise ValueError("br_material_invalid")
         key = _read_file(directory, "gwm_general.key")
-        chain = _read_file(directory, "gwm_client_fullchain.pem")
-        if key is None:
+        leaf = _read_file(directory, "gwm_general.cer")
+        bundle = _read_file(directory, "gwm_root.cer")
+        if key is None or leaf is None or bundle is None:
             raise ValueError("br_material_invalid")
-        if chain is None:
-            leaf = _read_file(directory, "gwm_general.cer")
-            bundle = _read_file(directory, "gwm_root.cer")
-            if leaf is None or bundle is None:
-                raise ValueError("br_material_invalid")
-            leaves, extras = _pem_blocks(leaf), _pem_blocks(bundle)
-            if len(leaves) != 1 or not extras:
-                raise ValueError("br_material_invalid")
-            # Leaf first, then the whole bundle: OpenSSL uses what it needs.
-            chain = b"\n".join(leaves + extras) + b"\n"
+        leaves, extras = _pem_blocks(leaf), _pem_blocks(bundle)
+        if len(leaves) != 1 or not extras:
+            raise ValueError("br_material_invalid")
+        # Leaf first, then the whole bundle: OpenSSL uses what it needs.
+        chain = b"\n".join(leaves + extras) + b"\n"
         return BrMaterial(chain, key)
     except (OSError, RuntimeError, TypeError, ValueError):
         raise ValueError("br_material_invalid") from None
