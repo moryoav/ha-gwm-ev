@@ -16,17 +16,11 @@ def _chain_count(material: BrMaterial) -> int:
     return material.chain_pem.count(b"BEGIN CERTIFICATE")
 
 
-def test_prefers_prebuilt_fullchain(tmp_path: Path) -> None:
+def test_builds_chain_from_leaf_plus_whole_bundle(tmp_path: Path) -> None:
     write_dummy_material(tmp_path)
     material = load_br_material(tmp_path)
-    assert _chain_count(material) == 2
-    assert "BEGIN" not in repr(material)
-
-
-def test_builds_chain_from_leaf_plus_whole_bundle(tmp_path: Path) -> None:
-    write_dummy_material(tmp_path, fullchain=False)
-    material = load_br_material(tmp_path)
     assert _chain_count(material) == 4  # leaf + the 3 bundle certificates
+    assert "BEGIN" not in repr(material)
     assert material.chain_pem.startswith((tmp_path / "gwm_general.cer").read_bytes().strip())
     assert material.chain_pem.strip().endswith(b"-----END CERTIFICATE-----")
 
@@ -84,9 +78,21 @@ def test_key_not_matching_leaf_is_rejected_by_openssl(tmp_path: Path) -> None:
         create_br_ssl_context(material)
 
 
-def test_relative_path_and_repository_path_are_rejected(tmp_path: Path) -> None:
+def test_relative_path_is_rejected() -> None:
     with pytest.raises(ValueError, match="^br_material_invalid$"):
         load_br_material(Path("relative"))
-    repository = Path(__file__).resolve().parents[3]
-    with pytest.raises(ValueError, match="^br_material_invalid$"):
-        load_br_material(repository / "custom_components" / "gwm_ora")
+
+
+def test_bundled_material_loads_from_the_integration_package() -> None:
+    """The shipped files work with no setup, and nothing in the checkout is refused."""
+    from custom_components.gwm_ora.gwm_client import br_installed
+
+    directory = br_installed.installed_br_directory()
+    assert directory.is_relative_to(Path(__file__).resolve().parents[3] / "custom_components" / "gwm_ora")
+    assert br_installed.missing_br_files(directory) == []
+    material = br_installed.load_installed_br_material()
+    assert _chain_count(material) == 4  # leaf + the 3 certificates of gwm_root.cer
+    context = br_installed.load_installed_br_context()
+    assert context.security_level == 0
+    assert context.check_hostname is True
+    assert context.verify_mode == ssl.CERT_REQUIRED

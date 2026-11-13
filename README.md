@@ -43,7 +43,7 @@ The setup flow currently offers:
 - Russia.
 - Mainland China, using the phone number registered in the official GWM app.
 - Asia-Pacific, including Pakistan (`PK`), Thailand (`TH`), Malaysia (`MY`), and Indonesia (`ID`).
-- Brazil (`BR`), read-only, using the email and password of the official GWM app. It needs a one-time certificate step; see [Brazil](#brazil-read-only).
+- Brazil (`BR`), read-only, using the email and password of the official GWM app. See [Brazil](#brazil-read-only).
 
 The account region must match the region used by the official GWM app. It is not based on the vehicle's current location.
 
@@ -294,18 +294,12 @@ Restrictions vary by vehicle and region. These conditions do not apply to every 
 
 Brazil is available in the setup flow as a read-only region. It signs in with the email and password of the official GWM app (no verification code) and reads the vehicle list and last status. It provides sensors, binary sensors, and a location tracker such as battery level, range, odometer, doors, windows, lock state, plug state, A/C state, and position. It never sends a command: no lock, A/C, window, charging, or number entities are created, and the remote-command and charging options are not shown.
 
-The Brazilian vehicle gateway requires a client certificate that comes from the official app. This project does not distribute it. Do this once:
+The Brazilian vehicle gateway requires a client certificate from the official app. The installation includes the Brazil authentication files, so there is nothing to copy. Add the **GWM** integration, choose **Brazil**, keep country `BR`, and enter your email and password.
 
-1. Obtain `gwm_general.cer`, `gwm_general.key`, and `gwm_root.cer` from your own copy of the official app. A prebuilt `gwm_client_fullchain.pem` plus `gwm_general.key` also works.
-2. Copy the files into `custom_components/gwm_ora/resources/br/` inside your Home Assistant configuration directory. Create the `br` folder if it does not exist.
-3. Add the **GWM** integration, choose **Brazil**, keep country `BR`, and enter your email and password.
-
-If the files are missing or unusable, setup shows a clear error naming this folder and the log repeats the path. After a restart the integration retries until the files are present, so copying them and reloading the integration is enough.
+If the bundled files are missing or unusable (a damaged installation), setup shows a clear error and the log says to reinstall the integration.
 
 Notes:
 
-- Updating or reinstalling the integration (including through the Marketplace) replaces the `custom_components/gwm_ora/` folder and removes `resources/br/`. Copy the three files back after each update.
-- Keep the files private. If your Home Assistant configuration directory is under version control, add `custom_components/gwm_ora/resources/br/` to its `.gitignore`. The integration refuses to load them from this project's source checkout.
 - Brazil access tokens last about 24 hours and are renewed silently with the refresh token (about 60 days, rotated on each renewal), without using your password. Home Assistant asks you to reconnect only if the refresh token itself is refused.
 - The password is stored in the Home Assistant config entry, as for the other regions, and is redacted from diagnostics together with tokens, the device identity, the VIN, and the location.
 

@@ -21,6 +21,3 @@ options.json
 # Local agent notes
 AGENTS.md
 agents.md
-
-# Brazil mTLS client material: supplied locally at runtime, never committed
-custom_components/gwm_ora/resources/br/

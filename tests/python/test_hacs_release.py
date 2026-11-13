@@ -45,6 +45,9 @@ def test_release_zip_has_integration_files_at_root(tmp_path: Path) -> None:
             "resources/apac/bootstrap.key",
             "resources/apac/ca.pem",
             "resources/apac/signing.json",
+            "resources/br/gwm_general.cer",
+            "resources/br/gwm_general.key",
+            "resources/br/gwm_root.cer",
         }.issubset(names)
         assert "gwm_ora/manifest.json" not in names
         assert json.loads(archive.read("manifest.json")) == manifest
