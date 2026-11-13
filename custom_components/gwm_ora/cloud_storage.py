@@ -33,6 +33,7 @@ from .const import (
     DOMAIN,
     REGION_ANZ,
     REGION_APAC,
+    REGION_BR,
     REGION_CHINA,
     REGION_EU,
     REGION_RUSSIA,
@@ -45,6 +46,7 @@ from .gwm_client import (
     RussiaAuthState,
 )
 from .gwm_client.apac_state import ApacAuthState, decode_apac_state, encode_apac_state
+from .gwm_client.br_state import BrAuthState, decode_br_state, encode_br_state
 
 _STORAGE_VERSION = 1
 _LOGGER = logging.getLogger(__name__)
@@ -166,7 +168,7 @@ class _GwmCloudRecord:
     def __post_init__(self) -> None:
         """Validate regional bindings and the bounded private command and charging records."""
         if (
-            self.region not in {REGION_EU, REGION_ANZ, REGION_RUSSIA, REGION_CHINA, REGION_APAC}
+            self.region not in {REGION_EU, REGION_ANZ, REGION_RUSSIA, REGION_CHINA, REGION_APAC, REGION_BR}
             or not isinstance(self.account_binding, str)
             or _HASH.fullmatch(self.account_binding) is None
             or not isinstance(self.context_binding, str)
@@ -691,7 +693,7 @@ def credentials_for_auth_state(
 
     if not isinstance(
         auth_state,
-        (EuAuthState, AnzAuthState, RussiaAuthState, ChinaAuthState, ApacAuthState),
+        (EuAuthState, AnzAuthState, RussiaAuthState, ChinaAuthState, ApacAuthState, BrAuthState),
     ):
         raise ValueError("auth_state_invalid")
     base = _credentials_from_entry(entry_data)
@@ -744,6 +746,7 @@ def _validate_regional_state(
         REGION_RUSSIA: RussiaAuthState,
         REGION_CHINA: ChinaAuthState,
         REGION_APAC: ApacAuthState,
+        REGION_BR: BrAuthState,
     }.get(region)
     if expected_type is None or type(state) is not expected_type or state.account_binding != account_binding:
         raise ValueError("auth_state_invalid")
@@ -817,6 +820,8 @@ def _encode_auth_state(state: CloudAuthState) -> dict[str, Any]:
     """Encode regional authentication state for account-bound private storage."""
     if type(state) is ApacAuthState:
         return {"kind": REGION_APAC, **encode_apac_state(state)}
+    if isinstance(state, BrAuthState):
+        return {"kind": REGION_BR, **encode_br_state(state)}
     common: dict[str, Any] = {
         "account_binding": state.account_binding,
         "device_id": state.device_id,
@@ -888,6 +893,8 @@ def _decode_auth_state(region: str, data: object) -> CloudAuthState:
         raise ValueError("auth_state_invalid")
     if region == REGION_APAC:
         return decode_apac_state({key: value for key, value in data.items() if key != "kind"})
+    if region == REGION_BR:
+        return decode_br_state({key: value for key, value in data.items() if key != "kind"})
     common = {
         "account_binding": _required_text(data.get("account_binding"), 64),
         "device_id": _required_text(data.get("device_id"), 128),

@@ -8,6 +8,13 @@ This project follows semantic versioning. The Marketplace installs GWM from publ
 
 ## [Unreleased]
 
+### Added
+
+- Added a read-only Brazil region: password sign-in without a verification code, vehicle discovery, and status polling for sensors, binary sensors, and the location tracker. Brazil never creates command, climate, lock, number, or charging entities.
+- The installation includes the Brazil vehicle-gateway authentication files, so Brazil setup needs no manual file copy. Setup and startup report a clear error if the bundled files are missing or unusable.
+- Brazil: renew the session token silently via the h5 gateway refresh endpoint instead of asking to reauthenticate daily. Reauthentication is requested only when the refresh token itself is refused, and the saved password is never used to sign in silently.
+- Added Brazil gateway hosts to the sanitized diagnostics and redacted the password digest.
+
 ## [0.18.0] - 2026-11-10
 
 ### Added

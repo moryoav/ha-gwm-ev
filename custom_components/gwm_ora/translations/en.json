@@ -13,7 +13,7 @@
       },
       "account": {
         "title": "Sign in to GWM",
-        "description": "Enter the account details used by the official app. Authentication is performed directly against the selected GWM cloud. The generated device identity and account-bound authentication state are stored privately for restart recovery and excluded from diagnostics.",
+        "description": "Enter the account details used by the official app. Authentication is performed directly against the selected GWM cloud. The generated device identity and account-bound authentication state are stored privately for restart recovery and excluded from diagnostics. Brazil is read-only; sign in with the email and password of the official app.",
         "data": {
           "country": "Registration country",
           "authentication_method": "ANZ authentication method",
@@ -81,6 +81,9 @@
       "rate_limited": "GWM rate-limited the request. Wait before trying again.",
       "service_error": "GWM rejected the request with an unsupported or unexpected response.",
       "local_configuration_error": "The regional security material is missing or invalid.",
+      "br_material_missing": "The Brazil authentication files bundled with the integration are missing. Reinstall the integration and try again.",
+      "br_material_invalid": "The Brazil authentication files bundled with the integration are unreadable or do not match each other. Reinstall the integration.",
+      "br_tls_rejected": "The Brazil vehicle gateway rejected the client certificate.",
       "unsupported_region": "This cloud region is not available for setup yet.",
       "initialization_failed": "The downstream GWM services still could not initialize.",
       "session_reclaim_not_confirmed": "Confirm that you understand the ANZ single-session effect before continuing."

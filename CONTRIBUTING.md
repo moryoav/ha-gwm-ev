@@ -98,7 +98,7 @@ Keep field names, data types, relevant prefixes, and approximate lengths where t
 
 ### Protocol Materials and Provenance
 
-I do not accept new app-derived certificates, private keys, signing secrets, native libraries, decompiled source, or other proprietary assets in a public pull request. Existing audited files in this repository do not grant permission to add more material. Contact me privately before preparing a change that appears to require one of these items.
+I do not accept new app-derived certificates, private keys, signing secrets, native libraries, decompiled source, or other proprietary assets in a public pull request. Existing audited files in this repository do not grant permission to add more material. Contact me privately before preparing a change that appears to require one of these items. The one exception is the shared Brazil app certificate: I approved bundling it, as for APAC, and [Third-Party and Protocol Material Notice](THIRD_PARTY_NOTICES.md) records its provenance.
 
 For an authorized replacement of an existing shared bootstrap file, I require the official app identity and version, acquisition channel, source package digest, extracted file digest, certificate identity and validity, and the applicable permission or review decision. Perform extraction outside the Git workspace and share only the minimum sanitized evidence needed for review. See [Third-Party and Protocol Material Notice](THIRD_PARTY_NOTICES.md) for the current inventory and release holds.
 

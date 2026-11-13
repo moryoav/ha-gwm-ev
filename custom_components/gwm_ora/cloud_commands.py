@@ -18,7 +18,7 @@ from .cloud_storage import (
     GwmOwnedChargingPlan,
     async_finish_apac_state_save,
 )
-from .const import REGION_APAC
+from .const import REGION_APAC, REGION_BR
 from .errors import GwmCommandError, GwmCommandForbidden
 from .gwm_client import (
     DEFAULT_OPERATION_TIME_MINUTES,
@@ -821,6 +821,8 @@ class GwmCommandApi:
 
     def _ensure_available(self) -> None:
         """Require remote-command consent and a writable regional backend."""
+        if self._cloud.region == REGION_BR:
+            raise GwmCommandForbidden("GWM Brazil is read-only")
         if self._cloud.region == REGION_APAC:
             if not getattr(self, "_apac_remote_enabled", False) or not self._security_pin:
                 raise GwmCommandForbidden("GWM vehicle controls require opt-in and a security PIN")
@@ -945,7 +947,7 @@ class GwmCommandApi:
     ) -> None:
         """Clear only unchanged integration-owned plans after opt-out."""
 
-        if self._charging_enabled:
+        if self._charging_enabled or self._cloud.region == REGION_BR:
             return
         owned_plans = await self._state_store.async_get_owned_charging_plans(entry_data)
         for owned in owned_plans:
@@ -981,6 +983,8 @@ class GwmCommandApi:
 
     def _ensure_charging_available(self) -> None:
         """Require charging consent and a writable regional backend."""
+        if self._cloud.region == REGION_BR:
+            raise GwmCommandForbidden("GWM Brazil is read-only")
         if self._cloud.region == REGION_APAC:
             raise GwmCommandForbidden("Charging schedules are not supported for this region")
         if not self._charging_enabled:
