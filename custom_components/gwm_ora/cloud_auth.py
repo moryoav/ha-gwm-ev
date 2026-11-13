@@ -25,6 +25,7 @@ from .const import (
     CONNECTION_TYPE_CLOUD,
     REGION_ANZ,
     REGION_APAC,
+    REGION_BR,
     REGION_CHINA,
     REGION_EU,
     REGION_RUSSIA,
@@ -55,21 +56,26 @@ from .gwm_client.apac_flow import ApacAuthenticated, ApacVerificationRequired, a
 from .gwm_client.apac_material import ApacMaterial
 from .gwm_client.apac_restore import ApacSessionUpdated
 from .gwm_client.apac_state import ApacAuthState
+from .gwm_client.br_flow import BrAuthenticated, authenticate_br
+from .gwm_client.br_state import BrAccountCredentials, BrAuthState
 from .gwm_client.china_client import ChinaAuthenticationResult
 from .gwm_client.eu_auth import EuAuthenticationResult
 from .gwm_client.russia_auth import RussiaAuthenticationResult
 from .gwm_client.transport import AiohttpTransport
 
-type ClientCredentials = EuCredentials | AnzCredentials | RussiaCredentials | ChinaCredentials | ApacCredentials
-type CloudAuthState = EuAuthState | AnzAuthState | RussiaAuthState | ChinaAuthState | ApacAuthState
+type ClientCredentials = (
+    EuCredentials | AnzCredentials | RussiaCredentials | ChinaCredentials | ApacCredentials | BrAccountCredentials
+)
+type CloudAuthState = EuAuthState | AnzAuthState | RussiaAuthState | ChinaAuthState | ApacAuthState | BrAuthState
 type CloudAuthenticationResult = (
     EuAuthenticationResult | AnzAuthenticationResult | RussiaAuthenticationResult | ChinaAuthenticationResult
-    | ApacAuthenticated | ApacVerificationRequired
+    | ApacAuthenticated | ApacVerificationRequired | BrAuthenticated
 )
 type BootstrapMaterial = EuBootstrapMaterial | RussiaBootstrapMaterial | None
 type OverseasClientFactory = Callable[[GwmClientConfig], GwmClient]
 type ChinaClientFactory = Callable[[ChinaClientConfig], ChinaClient]
 type ResourceLoader = Callable[[str], BootstrapMaterial]
+type BrContextLoader = Callable[[], ssl.SSLContext]
 
 _RESOURCE_DIRECTORY = Path(__file__).resolve().parent / "resources"
 
@@ -121,6 +127,13 @@ class GwmCloudCredentials:
     def client_credentials(self) -> ClientCredentials:
         """Return the exact regional credential model for one client call."""
 
+        if self.region == REGION_BR:
+            return BrAccountCredentials(
+                account=self.account,
+                password=_required_password(self.password),
+                device_id=self.device_id,
+                country=self.country,
+            )
         if self.region == REGION_APAC:
             return ApacCredentials(
                 account=self.account,
@@ -173,12 +186,14 @@ class GwmCloudAuthenticator:
         china_client_factory: ChinaClientFactory | None = None,
         resource_loader: ResourceLoader | None = None,
         apac_material_loader: Callable[[], ApacMaterial] | None = None,
+        br_context_loader: BrContextLoader | None = None,
     ) -> None:
-        """Retain regional client factories and the optional APAC material loader."""
+        """Retain regional client factories and the optional APAC and BR material loaders."""
         self._overseas_client_factory = overseas_client_factory or GwmClient
         self._china_client_factory = china_client_factory or ChinaClient
         self._resource_loader = resource_loader or _load_bootstrap_material
         self._apac_material_loader = apac_material_loader
+        self._br_context_loader = br_context_loader
 
     async def async_authenticate(
         self,
@@ -201,6 +216,28 @@ class GwmCloudAuthenticator:
             raise GwmConfigurationError(operation="login")
 
         regional_credentials = credentials.client_credentials()
+        if credentials.region == REGION_BR:
+            if (
+                type(regional_credentials) is not BrAccountCredentials
+                or (state is not None and type(state) is not BrAuthState)
+                or self._br_context_loader is None
+                or allow_session_reclaim
+                or verification_code is not None
+            ):
+                raise GwmConfigurationError(operation="login")
+            # Material errors (missing or invalid) propagate as their own GwmConfigurationError types.
+            br_context = await asyncio.to_thread(self._br_context_loader)
+            br_transport = AiohttpTransport.create_owned()
+            try:
+                return await authenticate_br(
+                    credentials=regional_credentials,
+                    state=state,
+                    ssl_context=br_context,
+                    transport=br_transport,
+                    allow_password_login=allow_password_login,
+                )
+            finally:
+                await br_transport.aclose()
         if credentials.region == REGION_APAC:
             if (
                 type(regional_credentials) is not ApacCredentials
@@ -337,6 +374,7 @@ def cloud_entry_title(region: str) -> str:
 
     names = {
         REGION_APAC: "GWM Asia-Pacific",
+        REGION_BR: "GWM Brazil",
         REGION_EU: "GWM Europe",
         REGION_ANZ: "GWM Australia / New Zealand",
         REGION_RUSSIA: "GWM Russia",

@@ -31,8 +31,11 @@ REGION_APAC = "ap"
 REGION_ANZ = "aus"
 REGION_RUSSIA = "rus"
 REGION_CHINA = "cn"
-SUPPORTED_CLOUD_REGIONS = (REGION_EU, REGION_ANZ, REGION_RUSSIA, REGION_CHINA, REGION_APAC)
+REGION_BR = "br"
+SUPPORTED_CLOUD_REGIONS = (REGION_EU, REGION_ANZ, REGION_RUSSIA, REGION_CHINA, REGION_APAC, REGION_BR)
 CONFIGURABLE_CLOUD_REGIONS = SUPPORTED_CLOUD_REGIONS
+# Regions whose client cannot read the charging plan back (BR is write-only: assumed state).
+CHARGING_PLAN_UNREADABLE_REGIONS = frozenset({REGION_APAC, REGION_BR})
 
 ANZ_AUTHENTICATION_METHOD_CURRENT = "current_v2"
 ANZ_AUTHENTICATION_METHOD_LEGACY = "legacy_v1"
@@ -54,6 +57,22 @@ PLATFORMS: list[Platform] = [
     Platform.SELECT,
     Platform.SWITCH,
 ]
+
+# Brazil is read-only except the opt-in charging schedule: no command, climate or lock platform is ever loaded.
+BR_COUNTRY = "BR"
+BR_PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.BINARY_SENSOR, Platform.DEVICE_TRACKER]
+
+
+def platforms_for_region(region: object, *, charging_control: bool = False) -> list[Platform]:
+    """Return the platforms loaded for one region.
+
+    Brazil loads read-only platforms; the switch platform (which only holds the
+    "Scheduled charging" switch there) is added only when charging control is on.
+    """
+    if region != REGION_BR:
+        return PLATFORMS
+    return [*BR_PLATFORMS, Platform.SWITCH] if charging_control else BR_PLATFORMS
+
 
 # Charging schedule control (behind the integration option).
 SERVICE_SET_CHARGING_PLAN = "set_charging_plan"

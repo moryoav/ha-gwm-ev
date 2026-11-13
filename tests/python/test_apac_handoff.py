@@ -8,7 +8,7 @@ import pytest
 
 import custom_components.gwm_ora.cloud_runtime as runtime
 from custom_components.gwm_ora.cloud_auth import GwmCloudCredentials
-from custom_components.gwm_ora.const import REGION_APAC
+from custom_components.gwm_ora.const import PLATFORMS, REGION_APAC
 from custom_components.gwm_ora.gwm_client.apac_auth_client import ApacTokens
 from custom_components.gwm_ora.gwm_client.apac_flow import ApacAuthenticated
 from custom_components.gwm_ora.gwm_client.apac_material import ApacMaterial
@@ -1140,7 +1140,7 @@ async def test_unload_waits_for_apac_acceptance_publication(tmp_path, monkeypatc
     api = GwmCommandApi(cloud, store, credentials, enabled=True,
                         apac_remote_enabled=True, security_pin="1234")
     entry = _synthetic_config_entry(credentials)
-    entry.runtime_data = SimpleNamespace(api=api, cloud=cloud, state_store=store,
+    entry.runtime_data = SimpleNamespace(api=api, cloud=cloud, state_store=store, platforms=list(PLATFORMS),
         coordinator=SimpleNamespace(async_cancel_command_tasks=AsyncMock()))
     started = asyncio.Event()
     release = asyncio.Event()

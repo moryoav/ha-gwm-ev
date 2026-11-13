@@ -13,7 +13,7 @@
       },
       "account": {
         "title": "登录 GWM",
-        "description": "输入官方应用使用的账号信息。身份验证将直接连接所选 GWM 云。生成的设备身份和账号绑定认证状态会被私密保存以便重启恢复，并且不会出现在诊断信息中。",
+        "description": "输入官方应用使用的账号信息。身份验证将直接连接所选 GWM 云。生成的设备身份和账号绑定认证状态会被私密保存以便重启恢复，并且不会出现在诊断信息中。巴西区域为只读，请使用官方应用的电子邮件和密码登录。",
         "data": {
           "country": "注册国家或地区",
           "authentication_method": "ANZ 身份验证方式",
@@ -81,6 +81,9 @@
       "rate_limited": "GWM 限制了请求频率，请稍后重试。",
       "service_error": "GWM 返回了不支持或意外的响应。",
       "local_configuration_error": "区域安全材料缺失或无效。",
+      "br_material_missing": "集成自带的巴西认证文件缺失。请重新安装该集成后重试。",
+      "br_material_invalid": "集成自带的巴西认证文件无法读取或彼此不匹配。请重新安装该集成。",
+      "br_tls_rejected": "巴西车辆网关拒绝了客户端证书。",
       "unsupported_region": "此云区域暂不可用于设置。",
       "initialization_failed": "下游 GWM 服务仍无法初始化。",
       "session_reclaim_not_confirmed": "继续前请确认您了解 ANZ 单会话的影响。"
@@ -135,6 +138,9 @@
     },
     "remote_command_unavailable": {
       "message": "远程命令不可用。请在集成选项中启用，并在需要时配置安全 PIN。"
+    },
+    "br_charging_busy": {
+      "message": "车辆或 GWM 巴西服务正忙于其他操作。请稍等一分钟后重试。"
     },
     "charging_control_unavailable": {
       "message": "充电控制不可用。请在集成选项中启用。"

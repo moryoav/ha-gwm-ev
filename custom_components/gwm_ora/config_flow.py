@@ -63,6 +63,7 @@ from .const import (
     MIN_POLL_INTERVAL_SECONDS,
     REGION_ANZ,
     REGION_APAC,
+    REGION_BR,
     REGION_CHINA,
     REGION_EU,
     REGION_RUSSIA,
@@ -84,6 +85,7 @@ from .gwm_client import (
     GwmClientError,
     GwmConfigurationError,
     GwmRateLimitError,
+    GwmTlsError,
     GwmTransportError,
     RussiaAuthenticated,
     RussiaIdentityError,
@@ -92,6 +94,12 @@ from .gwm_client import (
 from .gwm_client.apac_flow import ApacAuthenticated, ApacVerificationRequired
 from .gwm_client.apac_material import load_installed_apac_material
 from .gwm_client.apac_restore import ApacRestored
+from .gwm_client.br_flow import BrAuthenticated
+from .gwm_client.br_installed import (
+    GwmBrMaterialInvalidError,
+    GwmBrMaterialMissingError,
+    load_installed_br_context,
+)
 from .gwm_client.china_crypto import valid_bean_tech_lock_credential
 
 _LOGGER = logging.getLogger(__name__)
@@ -102,6 +110,7 @@ _REGION_OPTIONS = [
     {"value": REGION_RUSSIA, "label": "Russia"},
     {"value": REGION_CHINA, "label": "Mainland China"},
     {"value": REGION_APAC, "label": "Asia-Pacific"},
+    {"value": REGION_BR, "label": "Brazil"},
 ]
 _ANZ_AUTHENTICATION_OPTIONS = [
     {
@@ -119,6 +128,7 @@ _DEFAULT_COUNTRIES = {
     REGION_RUSSIA: "RU",
     REGION_CHINA: "CN",
     REGION_APAC: "PK",
+    REGION_BR: "BR",
 }
 _AUTHENTICATED_TYPES = (
     EuAuthenticated,
@@ -126,6 +136,7 @@ _AUTHENTICATED_TYPES = (
     RussiaAuthenticated,
     ChinaAuthenticated,
     ApacAuthenticated,
+    BrAuthenticated,
 )
 _VERIFICATION_TYPES = (
     EuVerificationRequired,
@@ -172,6 +183,23 @@ def _apac_options_after_authentication(
     return {key: value for key, value in options.items() if key not in blocked}
 
 
+def _br_options_after_authentication(
+    options: Mapping[str, Any], *, preserve_charging: bool = False
+) -> dict[str, Any]:
+    """Brazil allows only the charging opt-in: drop command consent, PIN or credential from other regions."""
+    blocked = {
+        CONF_ENABLE_REMOTE_COMMANDS,
+        CONF_ENABLE_APAC_CLIMATE,
+        CONF_ENABLE_APAC_REMOTE,
+        CONF_ENABLE_APAC_CHARGING,
+        CONF_SECURITY_PIN,
+        CONF_BEAN_TECH_LOCK_CREDENTIAL,
+    }
+    if not preserve_charging:
+        blocked.add(CONF_ENABLE_CHARGING_CONTROL)
+    return {key: value for key, value in options.items() if key not in blocked}
+
+
 def _account_schema(
     region: str,
     defaults: dict[str, Any] | None = None,
@@ -179,7 +207,11 @@ def _account_schema(
     """Build account fields appropriate to the selected regional authentication flow."""
     defaults = defaults or {}
     fields: dict[vol.Marker, object] = {}
-    if region == REGION_APAC:
+    if region == REGION_BR:
+        fields[vol.Required(CONF_COUNTRY, default=defaults.get(CONF_COUNTRY, "BR"))] = (
+            selector.CountrySelector(selector.CountrySelectorConfig(countries=["BR"]))
+        )
+    elif region == REGION_APAC:
         fields[vol.Required(CONF_COUNTRY, default=defaults.get(CONF_COUNTRY, "PK"))] = (
             selector.CountrySelector(selector.CountrySelectorConfig(countries=["PK", "TH", "MY", "ID"]))
         )
@@ -247,6 +279,13 @@ def _cloud_options_schema(entry: ConfigEntry, defaults: dict[str, Any] | None = 
             default=current.get(CONF_LOG_LEVEL, DEFAULT_LOG_LEVEL),
         ): vol.In(LOG_LEVELS),
     }
+    if region == REGION_BR:
+        fields = {
+            marker: value
+            for marker, value in fields.items()
+            if marker.schema != CONF_ENABLE_REMOTE_COMMANDS
+        }
+        return vol.Schema(fields)
     if region == REGION_APAC:
         fields = {
             marker: value
@@ -609,15 +648,16 @@ class GwmConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if credentials is None:
             return None, "invalid_account"
         if self._cloud_authenticator is None:
-            self._cloud_authenticator = (
-                GwmCloudAuthenticator(
+            if credentials.region == REGION_APAC:
+                self._cloud_authenticator = GwmCloudAuthenticator(
                     apac_material_loader=lambda: load_installed_apac_material(
                         Path(self.hass.config.path(".storage", "gwm_apac_material"))
                     )
                 )
-                if credentials.region == REGION_APAC
-                else GwmCloudAuthenticator()
-            )
+            elif credentials.region == REGION_BR:
+                self._cloud_authenticator = GwmCloudAuthenticator(br_context_loader=load_installed_br_context)
+            else:
+                self._cloud_authenticator = GwmCloudAuthenticator()
         try:
             result = await self._cloud_authenticator.async_authenticate(
                 credentials,
@@ -639,9 +679,20 @@ class GwmConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             return None, (
                 "invalid_verification_code" if verification_code is not None else "invalid_auth"
             )
+        except GwmTlsError as error:
+            _log_cloud_auth_failure(error, credentials)
+            return None, "br_tls_rejected" if credentials.region == REGION_BR else "cannot_connect"
         except GwmTransportError as error:
             _log_cloud_auth_failure(error, credentials)
             return None, "cannot_connect"
+        except (GwmBrMaterialMissingError, GwmBrMaterialInvalidError) as error:
+            _LOGGER.error(
+                "GWM Brazil authentication files bundled with the integration are %s; reinstall the integration",
+                "missing" if isinstance(error, GwmBrMaterialMissingError) else "invalid",
+            )
+            return None, (
+                "br_material_missing" if isinstance(error, GwmBrMaterialMissingError) else "br_material_invalid"
+            )
         except GwmConfigurationError as error:
             _log_cloud_auth_failure(error, credentials)
             return None, "local_configuration_error"
@@ -796,7 +847,17 @@ class GwmConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 entry,
                 data={**entry.data, **data},
                 title=title,
-                **({"options": _apac_options_after_authentication(entry.options, preserve_consent=True)} if credentials.region == REGION_APAC else {}),
+                **(
+                    {"options": _apac_options_after_authentication(entry.options, preserve_consent=True)}
+                    if credentials.region == REGION_APAC
+                    else {
+                        "options": _br_options_after_authentication(
+                            entry.options, preserve_charging=entry.data.get(CONF_REGION) == REGION_BR
+                        )
+                    }
+                    if credentials.region == REGION_BR
+                    else {}
+                ),
             )
 
         if self._cloud_mode == "reconfigure":
@@ -821,7 +882,9 @@ class GwmConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 **({"options": _apac_options_after_authentication(
                     entry.options,
                     preserve_consent=entry.data.get(CONF_REGION) == REGION_APAC and previous_unique_id == unique_id,
-                )} if credentials.region == REGION_APAC else {}),
+                )} if credentials.region == REGION_APAC
+                else {"options": _br_options_after_authentication(entry.options)}
+                if credentials.region == REGION_BR else {}),
             )
             if previous_unique_id != unique_id:
                 await async_remove_cloud_state(self.hass, previous_unique_id)
@@ -862,7 +925,10 @@ class GwmOptionsFlow(config_entries.OptionsFlowWithReload):
         if user_input is not None:
             region = entry.data.get(CONF_REGION)
             normalized = dict(user_input)
-            if region == REGION_APAC:
+            if region == REGION_BR:
+                normalized = _br_options_after_authentication(normalized, preserve_charging=True)
+                enabled = False
+            elif region == REGION_APAC:
                 normalized.pop(CONF_ENABLE_APAC_CLIMATE, None)
                 normalized.pop(CONF_ENABLE_CHARGING_CONTROL, None)
                 normalized.pop(CONF_ENABLE_REMOTE_COMMANDS, None)
