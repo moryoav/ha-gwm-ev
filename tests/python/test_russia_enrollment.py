@@ -48,7 +48,12 @@ from custom_components.gwm_ora.gwm_client._protocol import _TransportRequest
 from custom_components.gwm_ora.gwm_client.client import GwmClient
 from custom_components.gwm_ora.gwm_client.config import GwmClientConfig
 from custom_components.gwm_ora.gwm_client.crypto import generate_client_certificate_request
-from custom_components.gwm_ora.gwm_client.errors import GwmApiError, GwmHttpError, GwmSchemaError
+from custom_components.gwm_ora.gwm_client.errors import (
+    GwmApiError,
+    GwmAuthenticationError,
+    GwmHttpError,
+    GwmSchemaError,
+)
 from custom_components.gwm_ora.gwm_client.russia_auth import RussiaAuthenticated, RussiaAuthState
 from custom_components.gwm_ora.gwm_client.russia_identity import (
     RussiaBootstrapMaterial,
@@ -359,6 +364,41 @@ async def test_rotated_tokens_survive_enrollment_failure_cancellation_and_restar
         assert not any(request.operation in {"login", "request_verification"} for request in provider.requests)
     finally:
         finish_save.set()
+        await runtime.aclose()
+
+
+@pytest.mark.asyncio
+async def test_command_preflight_rejection_retires_private_state_without_deadlock(monkeypatch, tmp_path, chain):
+    _patch_contexts(monkeypatch, tmp_path, chain)
+    credentials = _credentials()
+    first = await _authenticator(_EnrollmentProvider(chain), chain).async_authenticate(credentials, state=_state(credentials))
+
+    class RejectedProvider(_EnrollmentProvider):
+        async def execute(self, request, **kwargs):
+            self.requests.append(request)
+            return _response(status=401)
+
+    provider = RejectedProvider(chain)
+    authenticator = _authenticator(provider, chain)
+    monkeypatch.setattr(cloud_runtime, "GwmCloudAuthenticator", lambda: authenticator)
+    monkeypatch.setattr(cloud_runtime, "is_russia_issued_identity_usable", lambda *args, **kwargs: False)
+    hass = HomeAssistant(str(tmp_path / "ha"))
+    store = cloud_state_store(hass, cloud_unique_id(credentials))
+    await store.async_save_auth_state(credentials, first.state)
+    client = GwmClient(GwmClientConfig("rus", russia_certificate_enrollment=True), first.session, transport=provider)
+    runtime = GwmCloudClient(
+        "rus", client, bootstrap=GwmCloudBootstrap.from_authentication(credentials, first), credentials=credentials,
+        state_store=store, entry_data=cloud_entry_data(credentials),
+    )
+    action = AsyncMock()
+    try:
+        with pytest.raises(GwmAuthenticationError):
+            await asyncio.wait_for(runtime._async_with_session_renewal(action), 5)
+        action.assert_not_awaited()
+        assert runtime._current_auth_state() is None
+        assert await store.async_load_auth_state(cloud_entry_data(credentials)) is None
+        assert [request.operation for request in provider.requests] == ["get_user_info", "refresh_token"]
+    finally:
         await runtime.aclose()
 
 

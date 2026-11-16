@@ -1195,10 +1195,16 @@ class GwmCloudClient:
         if self.region == REGION_APAC:
             return await self._async_with_apac_session_renewal(action)
 
-        async with self._session_renewal_lock:
-            await self._async_flush_pending_auth_state()
-            await self._async_renew_russia_identity_if_needed()
-            observed_state = self._current_auth_state()
+        try:
+            async with self._session_renewal_lock:
+                await self._async_flush_pending_auth_state()
+                await self._async_renew_russia_identity_if_needed()
+                observed_state = self._current_auth_state()
+        except GwmAuthenticationError:
+            # Retire outside the renewal lock, including command-only callers.
+            with suppress(Exception):
+                await self.async_authentication_rejected()
+            raise
         try:
             return await action()
         except (GwmAuthenticationError, GwmApiError) as error:
