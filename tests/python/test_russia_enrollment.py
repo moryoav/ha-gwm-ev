@@ -168,11 +168,19 @@ async def test_enrollment_validates_returned_key_chain_and_request_contract(monk
 
 
 @pytest.mark.asyncio
-async def test_default_path_never_enrolls_and_removes_optional_identity(monkeypatch, tmp_path, chain):
+@pytest.mark.parametrize("previously_enrolled", [False, True])
+async def test_default_path_never_enrolls_and_removes_optional_identity(monkeypatch, tmp_path, chain, previously_enrolled):
     bootstrap = _patch_contexts(monkeypatch, tmp_path, chain)
     provider = _EnrollmentProvider(chain)
     credentials = _credentials(False)
-    result = await _authenticator(provider, chain).async_authenticate(credentials, state=_state(credentials))
+    authenticator = _authenticator(provider, chain)
+    state = _state(credentials)
+    if previously_enrolled:
+        enrolled = await authenticator.async_authenticate(_credentials(), state=state)
+        state = enrolled.state
+        assert state.issued_identity is not None
+        provider.requests.clear()
+    result = await authenticator.async_authenticate(credentials, state=state)
     assert result.session.app_ssl_context is bootstrap
     assert result.state.issued_identity is None
     assert [request.operation for request in provider.requests] == ["get_user_info"]
