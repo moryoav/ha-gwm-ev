@@ -30,6 +30,7 @@ from .const import (
     CONF_COUNTRY,
     CONF_PASSWORD,
     CONF_REGION,
+    CONF_RUSSIA_CERTIFICATE_ENROLLMENT,
     DOMAIN,
     REGION_ANZ,
     REGION_APAC,
@@ -45,6 +46,7 @@ from .gwm_client import (
     RussiaAuthState,
 )
 from .gwm_client.apac_state import ApacAuthState, decode_apac_state, encode_apac_state
+from .gwm_client.russia_identity import RussiaIssuedIdentity
 
 _STORAGE_VERSION = 1
 _LOGGER = logging.getLogger(__name__)
@@ -680,6 +682,7 @@ def _credentials_from_entry(entry_data: dict[str, object]) -> GwmCloudCredential
             else None
         ),
         device_id=_PLACEHOLDER_DEVICE_ID,
+        russia_certificate_enrollment=entry_data.get(CONF_RUSSIA_CERTIFICATE_ENROLLMENT, False),
     )
 
 
@@ -702,6 +705,7 @@ def credentials_for_auth_state(
         password=base.password,
         device_id=auth_state.device_id,
         authentication_method=base.authentication_method,
+        russia_certificate_enrollment=base.russia_certificate_enrollment,
     )
 
 
@@ -860,6 +864,10 @@ def _encode_auth_state(state: CloudAuthState) -> dict[str, Any]:
             "refresh_token": state.refresh_token,
             "gw_id": state.gw_id,
             "bean_id": state.bean_id,
+            **({"issued_identity": {
+                "certificate": state.issued_identity.certificate,
+                "private_key": state.issued_identity.private_key,
+            }} if state.issued_identity is not None else {}),
         }
     if type(state) is ChinaAuthState:
         return {
@@ -950,6 +958,14 @@ def _decode_auth_state(region: str, data: object) -> CloudAuthState:
             session_reclaim_required=_required_bool(data["session_reclaim_required"]),
         )
     if region == REGION_RUSSIA:
+        identity_data = data.get("issued_identity")
+        identity = None
+        if identity_data is not None:
+            identity_value = _exact_dict(identity_data, {"certificate", "private_key"})
+            identity = RussiaIssuedIdentity(
+                certificate=_required_text(identity_value["certificate"], 64 * 1024),
+                private_key=_required_text(identity_value["private_key"], 64 * 1024),
+            )
         _require_keys(
             data,
             {
@@ -960,6 +976,7 @@ def _decode_auth_state(region: str, data: object) -> CloudAuthState:
                 "refresh_token",
                 "gw_id",
                 "bean_id",
+                *({"issued_identity"} if "issued_identity" in data else set()),
             },
         )
         return RussiaAuthState(
@@ -969,6 +986,7 @@ def _decode_auth_state(region: str, data: object) -> CloudAuthState:
             refresh_token=_optional_text(data["refresh_token"], 16 * 1024),
             gw_id=_optional_text(data["gw_id"], 4 * 1024),
             bean_id=_optional_text(data["bean_id"], 4 * 1024),
+            issued_identity=identity,
         )
     if region == REGION_CHINA:
         names = {

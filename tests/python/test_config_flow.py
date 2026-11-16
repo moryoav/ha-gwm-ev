@@ -34,6 +34,7 @@ from custom_components.gwm_ora.const import (
     CONF_PASSWORD,
     CONF_POLL_INTERVAL_SECONDS,
     CONF_REGION,
+    CONF_RUSSIA_CERTIFICATE_ENROLLMENT,
     CONF_SECURITY_PIN,
     CONF_VERIFICATION_CODE,
     CONNECTION_TYPE_CLOUD,
@@ -513,8 +514,10 @@ async def test_anz_verification_preserves_explicit_session_reclaim_consent(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("enrollment", [False, True])
 async def test_russia_authentication_can_complete_without_verification(
     monkeypatch: pytest.MonkeyPatch,
+    enrollment: bool,
 ) -> None:
     class Authenticator:
         async def async_authenticate(
@@ -522,17 +525,19 @@ async def test_russia_authentication_can_complete_without_verification(
             credentials: config_flow.GwmCloudCredentials,
             **kwargs: Any,
         ) -> object:
+            assert credentials.russia_certificate_enrollment is enrollment
             return _authenticated(credentials)
 
     flow = _prepare_user_flow(monkeypatch, Authenticator())
     await flow.async_step_user({CONF_REGION: "rus"})
     result = await flow.async_step_account(
-        {CONF_ACCOUNT: "synthetic-account", CONF_PASSWORD: "password"}
+        {CONF_ACCOUNT: "synthetic-account", CONF_PASSWORD: "password", CONF_RUSSIA_CERTIFICATE_ENROLLMENT: enrollment}
     )
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["data"][CONF_COUNTRY] == "RU"
     assert result["title"] == "GWM Russia"
+    assert result["data"].get(CONF_RUSSIA_CERTIFICATE_ENROLLMENT, False) is enrollment
     assert consume_cloud_bootstrap(flow.hass, flow.context["unique_id"]) is not None
 
 

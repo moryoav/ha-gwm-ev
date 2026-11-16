@@ -2,9 +2,9 @@ name: Python
 
 on:
   push:
-    branches: [main, feature/apac]
+    branches: [main, feature/apac, test/russia-certificate-enrollment]
   pull_request:
-    branches: [main, feature/apac]
+    branches: [main, feature/apac, test/russia-certificate-enrollment]
 
 permissions:
   contents: read

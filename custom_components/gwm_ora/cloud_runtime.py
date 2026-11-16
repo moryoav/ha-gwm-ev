@@ -21,6 +21,7 @@ from homeassistant.core import HomeAssistant
 from .cloud_auth import (
     CloudAuthenticationResult,
     CloudAuthState,
+    GwmCloudAuthenticator,
     GwmCloudCredentials,
     cloud_unique_id,
 )
@@ -31,6 +32,7 @@ from .const import (
     CONF_COUNTRY,
     CONF_PASSWORD,
     CONF_REGION,
+    CONF_RUSSIA_CERTIFICATE_ENROLLMENT,
     DOMAIN,
     REGION_ANZ,
     REGION_APAC,
@@ -94,6 +96,7 @@ from .gwm_client.apac_restore import ApacRestored, restore_apac_session
 from .gwm_client.apac_state import ApacAuthState
 from .gwm_client.commands import ChinaRemoteCommandAction
 from .gwm_client.regions import TlsMode
+from .gwm_client.russia_identity import is_russia_issued_identity_usable
 from .gwm_client.transport import AiohttpTransport
 
 _HANDOFF_TTL_SECONDS = 5 * 60
@@ -574,6 +577,7 @@ class GwmCloudClient:
             account=str(data.get(CONF_ACCOUNT, "")),
             password=(str(data[CONF_PASSWORD]) if isinstance(data.get(CONF_PASSWORD), str) else None),
             device_id=bootstrap.state.device_id,
+            russia_certificate_enrollment=data.get(CONF_RUSSIA_CERTIFICATE_ENROLLMENT, False),
             authentication_method=(
                 str(data[CONF_AUTHENTICATION_METHOD]) if isinstance(data.get(CONF_AUTHENTICATION_METHOD), str) else None
             ),
@@ -637,6 +641,7 @@ class GwmCloudClient:
         client = GwmClient(
             GwmClientConfig(
                 region,
+                russia_certificate_enrollment=credentials.russia_certificate_enrollment,
                 anz_authentication_method=(
                     credentials.authentication_method if credentials.region == REGION_ANZ else None
                 ),
@@ -1191,6 +1196,7 @@ class GwmCloudClient:
 
         async with self._session_renewal_lock:
             await self._async_flush_pending_auth_state()
+            await self._async_renew_russia_identity_if_needed()
             observed_state = self._current_auth_state()
         try:
             return await action()
@@ -1235,6 +1241,29 @@ class GwmCloudClient:
             with suppress(Exception):
                 await self.async_authentication_rejected()
             raise
+
+    async def _async_renew_russia_identity_if_needed(self) -> None:
+        """Renew an opted-in identity before expiry without replaying any action."""
+        credentials = self._credentials
+        state = self._current_auth_state()
+        if (
+            credentials is None or not credentials.russia_certificate_enrollment
+            or self.region != REGION_RUSSIA or type(state) is not RussiaAuthState
+        ):
+            return
+        if state.issued_identity is not None and await asyncio.to_thread(
+            is_russia_issued_identity_usable, state.issued_identity, now=self._clock(),
+        ):
+            return
+        result = await GwmCloudAuthenticator().async_authenticate(
+            credentials, state=state, allow_password_login=False,
+        )
+        if type(result) is not RussiaAuthenticated or type(self._client) is not GwmClient:
+            raise GwmConfigurationError(operation="enroll_certificate")
+        self._client.replace_session(result.session)
+        self._bootstrap = GwmCloudBootstrap.from_authentication(credentials, result)
+        self._pending_auth_state = result.state
+        await self._async_flush_pending_auth_state()
 
     async def _async_with_apac_session_renewal[T](self, action: Callable[[], Awaitable[T]]) -> T:
         """Serialize APAC reads and retry once after safe token restoration."""

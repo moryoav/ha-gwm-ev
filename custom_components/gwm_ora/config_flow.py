@@ -51,6 +51,7 @@ from .const import (
     CONF_PASSWORD,
     CONF_POLL_INTERVAL_SECONDS,
     CONF_REGION,
+    CONF_RUSSIA_CERTIFICATE_ENROLLMENT,
     CONF_SECURITY_PIN,
     CONF_VERIFICATION_CODE,
     CONFIGURABLE_CLOUD_REGIONS,
@@ -209,6 +210,11 @@ def _account_schema(
     fields[vol.Required(CONF_ACCOUNT, default=defaults.get(CONF_ACCOUNT, ""))] = str
     if region != REGION_CHINA:
         fields[vol.Required(CONF_PASSWORD)] = _password_selector()
+    if region == REGION_RUSSIA:
+        fields[vol.Optional(
+            CONF_RUSSIA_CERTIFICATE_ENROLLMENT,
+            default=defaults.get(CONF_RUSSIA_CERTIFICATE_ENROLLMENT, False),
+        )] = bool
     return vol.Schema(fields)
 
 
@@ -468,6 +474,7 @@ class GwmConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     account=str(entry.data.get(CONF_ACCOUNT, "")),
                     password=password,
                     device_id=generate_device_id(),
+                    russia_certificate_enrollment=entry.data.get(CONF_RUSSIA_CERTIFICATE_ENROLLMENT, False),
                     authentication_method=(
                         str(
                             entry.data.get(
@@ -588,6 +595,7 @@ class GwmConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             account=user_input[CONF_ACCOUNT],
             password=None if region == REGION_CHINA else user_input.get(CONF_PASSWORD),
             device_id=generate_device_id(),
+            russia_certificate_enrollment=user_input.get(CONF_RUSSIA_CERTIFICATE_ENROLLMENT, False),
             authentication_method=(
                 user_input.get(
                     CONF_AUTHENTICATION_METHOD,

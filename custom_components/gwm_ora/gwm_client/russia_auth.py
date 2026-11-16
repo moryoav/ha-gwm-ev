@@ -12,18 +12,22 @@ import asyncio
 import contextlib
 import hashlib
 import json
+import logging
 import math
 import re
 import ssl
+import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from types import MappingProxyType
 from urllib.parse import urlsplit
 
+from ._auth_diagnostics import authentication_scope, identity_check
 from ._dotnet_json import encode_dotnet_json
 from ._protocol import _AsyncTransport, _Deadline, _TransportRequest, _TransportResponse
 from .config import GwmClientConfig
+from .crypto import generate_client_certificate_request
 from .errors import (
     GwmApiError,
     GwmAuthenticationError,
@@ -43,11 +47,14 @@ from .errors import (
     is_overseas_refresh_rejected,
     is_overseas_session_expired,
 )
+from .eu_identity import EuIdentityError
 from .models import GwmSession
 from .regions import GatewayRole, Region, TlsMode, get_region_protocol
 from .russia_identity import (
     RussiaBootstrapMaterial,
+    RussiaIssuedIdentity,
     create_russia_bootstrap_ssl_context,
+    create_russia_issued_ssl_context,
 )
 from .signing import SignedRequest, SigningProfile, sign_request
 
@@ -66,6 +73,7 @@ _RUSSIA_AGREEMENTS = (1, 2, 18, 19)
 # These values are persisted or proven wire contracts, not vehicle-scope names.
 _LEGACY_ACCOUNT_BINDING_DOMAIN = b"gwm-ora-russia-account-v1\0"
 _LEGACY_APP_MODEL = "ha-gwm-ora"
+_LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,6 +135,7 @@ class RussiaAuthState:
     gw_id: str | None = field(default=None, repr=False)
     bean_id: str | None = field(default=None, repr=False)
     verification_requested_at: datetime | None = field(default=None, repr=False)
+    issued_identity: RussiaIssuedIdentity | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         valid_device = False
@@ -149,6 +158,10 @@ class RussiaAuthState:
         _validate_optional_token(self.refresh_token)
         _validate_optional_identifier(self.gw_id)
         _validate_optional_identifier(self.bean_id)
+        if self.issued_identity is not None and (
+            type(self.issued_identity) is not RussiaIssuedIdentity or self.gw_id is None
+        ):
+            raise ValueError("auth_state_invalid")
         requested_at = self.verification_requested_at
         if requested_at is not None and (
             not isinstance(requested_at, datetime)
@@ -233,6 +246,7 @@ class _AuthEndpoint:
     method: str
     access_token: bool
     require_data: bool
+    role: GatewayRole = GatewayRole.H5_V1
 
 
 _LOGIN = _AuthEndpoint(
@@ -270,6 +284,9 @@ _USER_INFO = _AuthEndpoint(
     True,
     True,
 )
+_ENROLL = _AuthEndpoint(
+    "enroll_certificate", "appAuth/applyCertificate", "POST", True, True, GatewayRole.CERTIFICATE_V1,
+)
 _AUTH_ENDPOINTS = MappingProxyType(
     {
         endpoint.operation: endpoint
@@ -279,12 +296,44 @@ _AUTH_ENDPOINTS = MappingProxyType(
             _REQUEST_VERIFICATION,
             _REFRESH,
             _USER_INFO,
+            _ENROLL,
         )
     }
 )
 
 
 async def authenticate_russia(
+    *,
+    config: GwmClientConfig,
+    transport: _AsyncTransport,
+    credentials: RussiaCredentials,
+    state: RussiaAuthState | None,
+    verification_code: str | None,
+    bootstrap_material: RussiaBootstrapMaterial,
+    deadline: _Deadline,
+    progress: _RussiaAuthProgress,
+    allow_password_login: bool = True,
+) -> RussiaAuthenticationResult:
+    """Trace a Russian authentication attempt using only bounded metadata."""
+    saved = state if type(state) is RussiaAuthState else None
+    with authentication_scope(
+        region="rus", flow="interactive" if allow_password_login else "startup_resume",
+        saved_state=saved is not None,
+        access_present=saved is not None and saved.access_token is not None,
+        refresh_present=saved is not None and saved.refresh_token is not None,
+        identity_present=saved is not None and saved.issued_identity is not None,
+        password_login_allowed=allow_password_login, verification_supplied=verification_code is not None,
+    ) as attempt:
+        result = await _authenticate_russia(
+            config=config, transport=transport, credentials=credentials, state=state,
+            verification_code=verification_code, bootstrap_material=bootstrap_material,
+            deadline=deadline, progress=progress, allow_password_login=allow_password_login,
+        )
+        attempt.complete("authenticated" if type(result) is RussiaAuthenticated else "verification_required")
+        return result
+
+
+async def _authenticate_russia(
     *,
     config: GwmClientConfig,
     transport: _AsyncTransport,
@@ -336,6 +385,13 @@ async def authenticate_russia(
         raise GwmConfigurationError(operation="login")
     _ensure_deadline(deadline, operation="login")
 
+    async def finish(candidate: RussiaAuthState) -> RussiaAuthenticated:
+        assert app_context is not None
+        return await _finish_authentication(
+            config=config, transport=transport, credentials=credentials, state=candidate,
+            bootstrap_material=bootstrap_material, bootstrap_context=app_context, deadline=deadline,
+        )
+
     access_rejected = False
     if candidate.access_token is not None:
         try:
@@ -356,7 +412,7 @@ async def authenticate_russia(
             progress.existing_session_rejected = True
         else:
             candidate = _apply_user_info(candidate, profile)
-            return _authenticated_result(candidate, app_context)
+            return await finish(candidate)
 
     if candidate.access_token is not None and candidate.refresh_token is not None:
         try:
@@ -413,7 +469,7 @@ async def authenticate_russia(
                     ),
                     profile,
                 )
-                return _authenticated_result(candidate, app_context)
+                return await finish(candidate)
     elif access_rejected or candidate.access_token is None:
         candidate = replace(
             candidate,
@@ -494,6 +550,7 @@ async def authenticate_russia(
         refresh_token=refresh_token,
         gw_id=gw_id,
         bean_id=bean_id,
+        issued_identity=candidate.issued_identity if candidate.gw_id == gw_id else None,
         verification_requested_at=None,
     )
     try:
@@ -511,7 +568,71 @@ async def authenticate_russia(
         progress.existing_session_rejected = True
         raise
     candidate = _apply_user_info(candidate, profile)
-    return _authenticated_result(candidate, app_context)
+    return await finish(candidate)
+
+
+async def _finish_authentication(
+    *, config: GwmClientConfig, transport: _AsyncTransport, credentials: RussiaCredentials,
+    state: RussiaAuthState, bootstrap_material: RussiaBootstrapMaterial,
+    bootstrap_context: ssl.SSLContext, deadline: _Deadline,
+) -> RussiaAuthenticated:
+    """Enroll only after explicit consent; retain the default bootstrap path."""
+    if not config.russia_certificate_enrollment:
+        return _authenticated_result(replace(state, issued_identity=None), bootstrap_context)
+    operation = "enroll_certificate"
+    if state.access_token is None or state.gw_id is None:
+        raise GwmSchemaError(operation=operation)
+    identity = state.issued_identity
+    if identity is not None:
+        try:
+            context = await _blocking_call(lambda: create_russia_issued_ssl_context(
+                identity, ca_bundle=bootstrap_material.ca_bundle, now=_utc_now(),
+            ))
+        except EuIdentityError as error:
+            identity_check("issued_context", "rejected", reason=error.category)
+            if error.category not in {"identity_renewal_required", "identity_expired", "identity_not_yet_valid"}:
+                raise GwmConfigurationError(operation=operation) from None
+        else:
+            _ensure_deadline(deadline, operation=operation)
+            _LOGGER.info("GWM Russia certificate test: stage=identity outcome=reused")
+            return _authenticated_result(state, context)
+    try:
+        now = _utc_now()
+        account_device_hash = hashlib.sha256(
+            ("com.gwm.russia" + state.gw_id + credentials.device_id).encode("utf-8")
+        ).hexdigest().upper()[16:48]
+        subject = f"LGWGWM-AD-RU{account_device_hash}{int(now.timestamp())}"
+        generated = await _blocking_call(lambda: generate_client_certificate_request(
+            credentials.country, credentials.device_id, now=now, common_name=subject,
+        ))
+    except (TypeError, ValueError):
+        raise GwmConfigurationError(operation=operation) from None
+    _ensure_deadline(deadline, operation=operation)
+    _LOGGER.warning("GWM Russia certificate test: stage=enrollment outcome=started")
+    try:
+        enrolled = await _request_data(
+            config=config, transport=transport, endpoint=_ENROLL, credentials=credentials,
+            body={"csr": generated.csr, "phone": state.gw_id}, access_token=state.access_token,
+            ssl_context=bootstrap_context, deadline=deadline,
+            enrollment_device_id=uuid.uuid4().hex + str(int(now.timestamp() * 1000)),
+        )
+        encoded = _required_text(enrolled, "encoded", operation=operation, maximum=64 * 1024, allow_integer=False)
+        issued_identity = RussiaIssuedIdentity(encoded, generated.private_key)
+        context = await _blocking_call(lambda: create_russia_issued_ssl_context(
+            issued_identity, ca_bundle=bootstrap_material.ca_bundle, now=_utc_now(),
+        ))
+    except GwmClientError as error:
+        _LOGGER.warning(
+            "GWM Russia certificate test: stage=enrollment outcome=failed category=%s api_code=%s http_status=%s",
+            error.category, getattr(error, "api_code", None), getattr(error, "status", None),
+        )
+        raise
+    except (TypeError, ValueError) as error:
+        identity_check("enrolled_identity", "rejected", reason=getattr(error, "category", None))
+        raise GwmSchemaError(operation=operation) from None
+    _ensure_deadline(deadline, operation=operation)
+    _LOGGER.warning("GWM Russia certificate test: stage=enrollment outcome=completed identity_valid=True")
+    return _authenticated_result(replace(state, issued_identity=issued_identity), context)
 
 
 async def refresh_russia_session(
@@ -591,6 +712,8 @@ async def refresh_russia_session(
         ),
         profile,
     )
+    if config.russia_certificate_enrollment and updated.issued_identity is None:
+        raise GwmAuthenticationError(operation="get_user_info")
     return _authenticated_result(updated, ssl_context)
 
 
@@ -622,6 +745,7 @@ async def _request_data(
     access_token: str | None,
     ssl_context: ssl.SSLContext,
     deadline: _Deadline,
+    enrollment_device_id: str | None = None,
 ) -> object:
     request = _prepare_request(
         endpoint=endpoint,
@@ -629,6 +753,7 @@ async def _request_data(
         body=body,
         access_token=access_token,
         ssl_context=ssl_context,
+        enrollment_device_id=enrollment_device_id,
     )
     failure: GwmClientError | None = None
     try:
@@ -670,11 +795,16 @@ def _prepare_request(
     body: dict[str, object] | None,
     access_token: str | None,
     ssl_context: ssl.SSLContext,
+    enrollment_device_id: str | None = None,
 ) -> _TransportRequest:
     if _AUTH_ENDPOINTS.get(endpoint.operation) is not endpoint:
         raise GwmRoutePolicyError(operation=endpoint.operation)
     protocol = get_region_protocol(Region.RUSSIA)
-    gateway = protocol.gateway(GatewayRole.H5_V1)
+    gateway = protocol.gateway(endpoint.role)
+    if (endpoint is _ENROLL) != (enrollment_device_id is not None):
+        raise GwmRoutePolicyError(operation=endpoint.operation)
+    if enrollment_device_id is not None and re.fullmatch(r"[0-9a-f]{32}[0-9]{10,17}", enrollment_device_id) is None:
+        raise GwmRoutePolicyError(operation=endpoint.operation)
     body_text: str | None
     if endpoint.method == "GET":
         if body is not None:
@@ -703,7 +833,7 @@ def _prepare_request(
             endpoint=endpoint,
             expected_body=body_text,
         )
-        device_id = protocol.normalize_device_id(credentials.device_id)
+        device_id = enrollment_device_id or protocol.normalize_device_id(credentials.device_id)
         headers = {
             **protocol.base_headers,
             "country": credentials.country,
@@ -741,7 +871,7 @@ def _validate_signed_auth_request(
     if type(signed) is not SignedRequest:
         raise ValueError("route_invalid")
     protocol = get_region_protocol(Region.RUSSIA)
-    gateway = protocol.gateway(GatewayRole.H5_V1)
+    gateway = protocol.gateway(endpoint.role)
     parsed = urlsplit(signed.url)
     expected = urlsplit(gateway.base_url)
     try:
@@ -805,9 +935,9 @@ def _validate_gateway_tls(endpoint: _AuthEndpoint, context: object) -> None:
                 or context.maximum_version < context.minimum_version
             )
         )
-        or context.security_level <= 0
-        or get_region_protocol(Region.RUSSIA).gateway(GatewayRole.H5_V1).tls_mode
-        is not TlsMode.DEFAULT
+        or (context.security_level != 0 if endpoint is _ENROLL else context.security_level <= 0)
+        or get_region_protocol(Region.RUSSIA).gateway(endpoint.role).tls_mode
+        is not (TlsMode.RUSSIA_BOOTSTRAP_MTLS if endpoint is _ENROLL else TlsMode.DEFAULT)
     ):
         raise ValueError("tls_context_invalid")
     if _AUTH_ENDPOINTS.get(endpoint.operation) is not endpoint:
@@ -961,6 +1091,7 @@ def _apply_user_info(state: RussiaAuthState, data: object) -> RussiaAuthState:
         state,
         gw_id=state.gw_id if gw_id is None else gw_id,
         bean_id=state.bean_id if bean_id is None else bean_id,
+        issued_identity=state.issued_identity if gw_id is None or gw_id == state.gw_id else None,
     )
 
 

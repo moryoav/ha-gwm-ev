@@ -67,7 +67,10 @@
     {
       "region": "aus",
       "device_id_length": 16,
-      "allowed_countries": ["AU", "NZ"],
+      "allowed_countries": [
+        "AU",
+        "NZ"
+      ],
       "base_headers": {
         "rs": "2",
         "terminal": "GW_APP_Haval",
@@ -96,7 +99,9 @@
           "tls_mode": "default"
         }
       },
-      "unsupported_gateways": ["certificate_v1"],
+      "unsupported_gateways": [
+        "certificate_v1"
+      ],
       "synthetic_request": {
         "country": "AU",
         "device_id": "feedface-dead-beef-cafe-0123456789ab",
@@ -123,7 +128,9 @@
     {
       "region": "rus",
       "device_id_length": null,
-      "allowed_countries": ["RU"],
+      "allowed_countries": [
+        "RU"
+      ],
       "base_headers": {
         "rs": "2",
         "terminal": "GW_APP_Haval",
@@ -148,9 +155,16 @@
           "base_url": "https://rus-app-gateway.gwmcloud.com/app-api/api/v1.0/",
           "signing_profile": "russia-gwm-auth",
           "tls_mode": "russia_bootstrap_mtls"
+        },
+        "certificate_v1": {
+          "base_url": "https://rus-app-gateway-common.gwmcloud.com/app-api/api/v1.0/",
+          "signing_profile": "russia-gwm-auth",
+          "tls_mode": "russia_bootstrap_mtls"
         }
       },
-      "unsupported_gateways": ["auth_v2", "certificate_v1"],
+      "unsupported_gateways": [
+        "auth_v2"
+      ],
       "synthetic_request": {
         "country": "RU",
         "device_id": "feedface-dead-beef-cafe-0123456789ab",
