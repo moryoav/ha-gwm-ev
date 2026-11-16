@@ -76,6 +76,7 @@ def generate_client_certificate_request(
     device_id: str | None,
     *,
     now: datetime | None = None,
+    common_name: str | None = None,
 ) -> GeneratedClientCertificateRequest:
     """Create the DER CSR and RSA key expected by certificate enrollment."""
 
@@ -91,7 +92,10 @@ def generate_client_certificate_request(
         if len(normalized_device) >= 32
         else normalized_device.ljust(32, "0")
     ).upper()
-    common_name = f"LGWMy GWM-AD-{normalized_country}{normalized_device}{timestamp}"
+    if common_name is None:
+        common_name = f"LGWMy GWM-AD-{normalized_country}{normalized_device}{timestamp}"
+    if not isinstance(common_name, str) or not 1 <= len(common_name.encode("utf-8")) <= 64:
+        raise ValueError("certificate_subject_invalid")
 
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     subject = x509.Name(

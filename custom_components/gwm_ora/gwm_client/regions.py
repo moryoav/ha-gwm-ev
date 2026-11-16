@@ -281,6 +281,12 @@ _PROTOCOLS: Final[Mapping[Region, RegionProtocol]] = MappingProxyType(
                     RUSSIA_GWM_AUTH,
                     TlsMode.RUSSIA_BOOTSTRAP_MTLS,
                 ),
+                GatewayRole.CERTIFICATE_V1: _gateway(
+                    GatewayRole.CERTIFICATE_V1,
+                    "https://rus-app-gateway-common.gwmcloud.com/app-api/api/v1.0/",
+                    RUSSIA_GWM_AUTH,
+                    TlsMode.RUSSIA_BOOTSTRAP_MTLS,
+                ),
             },
             base_headers=_RUSSIA_HEADERS,
             device_id_length=None,

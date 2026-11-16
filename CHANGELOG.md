@@ -8,6 +8,10 @@ This project follows semantic versioning. The Marketplace installs GWM from publ
 
 ## [Unreleased]
 
+### Added
+
+- Added an opt-in Russian client-certificate enrollment test, with private certificate storage, restart reuse, renewal, and sanitized enrollment diagnostics. The existing Russian connection remains the default until real-account testing confirms the new path.
+
 ## [0.18.0] - 2026-11-10
 
 ### Added

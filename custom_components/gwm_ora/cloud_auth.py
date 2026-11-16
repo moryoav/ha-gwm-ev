@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import secrets
 import ssl
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -22,6 +22,7 @@ from .const import (
     CONF_COUNTRY,
     CONF_PASSWORD,
     CONF_REGION,
+    CONF_RUSSIA_CERTIFICATE_ENROLLMENT,
     CONNECTION_TYPE_CLOUD,
     REGION_ANZ,
     REGION_APAC,
@@ -84,6 +85,7 @@ class GwmCloudCredentials:
     password: str | None = field(default=None, repr=False)
     device_id: str = field(default="", repr=False)
     authentication_method: str | None = None
+    russia_certificate_enrollment: bool = False
 
     def __post_init__(self) -> None:
         """Normalize credentials and validate the selected regional account context."""
@@ -93,6 +95,10 @@ class GwmCloudCredentials:
         if region not in SUPPORTED_CLOUD_REGIONS and region != REGION_APAC:
             raise ValueError("credentials_invalid")
         object.__setattr__(self, "region", region)
+        if type(self.russia_certificate_enrollment) is not bool or (
+            self.russia_certificate_enrollment and region != REGION_RUSSIA
+        ):
+            raise ValueError("credentials_invalid")
 
         if region == REGION_ANZ:
             try:
@@ -189,6 +195,7 @@ class GwmCloudAuthenticator:
         allow_session_reclaim: bool = False,
         allow_password_login: bool = True,
         apac_session_updated: ApacSessionUpdated | None = None,
+        russia_state_updated: Callable[[RussiaAuthState], Awaitable[None]] | None = None,
     ) -> CloudAuthenticationResult:
         """Authenticate once and close the temporary protocol client."""
 
@@ -247,6 +254,7 @@ class GwmCloudAuthenticator:
         client = self._overseas_client_factory(
             GwmClientConfig(
                 _overseas_region(credentials.region),
+                russia_certificate_enrollment=credentials.russia_certificate_enrollment,
                 anz_authentication_method=(
                     credentials.authentication_method if credentials.region == REGION_ANZ else None
                 ),
@@ -290,6 +298,7 @@ class GwmCloudAuthenticator:
                     verification_code=verification_code,
                     allow_password_login=allow_password_login,
                     bootstrap_material=material,
+                    **({"on_state": russia_state_updated} if russia_state_updated is not None else {}),
                 )
             raise GwmConfigurationError(operation="login")
         finally:
@@ -321,6 +330,8 @@ def cloud_entry_data(credentials: GwmCloudCredentials) -> dict[str, object]:
     }
     if credentials.password is not None:
         data[CONF_PASSWORD] = credentials.password
+    if credentials.region == REGION_RUSSIA and credentials.russia_certificate_enrollment:
+        data[CONF_RUSSIA_CERTIFICATE_ENROLLMENT] = True
     if credentials.region == REGION_ANZ:
         data[CONF_AUTHENTICATION_METHOD] = credentials.authentication_method
     return data
