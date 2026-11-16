@@ -458,6 +458,7 @@ async def test_real_https_presents_general_certificate_for_enrollment_and_issued
     site = web.TCPSite(runner, "127.0.0.1", 0, ssl_context=server_context)
     await site.start()
     original_hosts = []
+    transports = []
 
     class LocalResolver(aiohttp.abc.AbstractResolver):
         async def resolve(self, host, port=0, family=socket.AF_INET):
@@ -475,6 +476,7 @@ async def test_real_https_presents_general_certificate_for_enrollment_and_issued
             )
             session._retry_connection = False
             self.transport = AiohttpTransport(session, owns_session=True)
+            transports.append(self)
 
         async def execute(self, request: _TransportRequest, **kwargs):
             original_hosts.append(urlsplit(request.url).hostname)
@@ -497,4 +499,8 @@ async def test_real_https_presents_general_certificate_for_enrollment_and_issued
         assert [issuer for path, issuer in observed] == [None, "IOV APP General SubCA", "IOV APP SubCA"]
         assert original_hosts == ["rus-h5-gateway.gwmcloud.com", "rus-app-gateway-common.gwmcloud.com", "rus-app-gateway.gwmcloud.com"]
     finally:
+        for transport in transports:
+            await transport.aclose()
         await runner.cleanup()
+    assert len(transports) == 2
+    assert all(transport.transport.closed for transport in transports)
