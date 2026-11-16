@@ -643,6 +643,7 @@ class GwmClient:
         allow_password_login: bool = True,
         bootstrap_material: RussiaBootstrapMaterial,
         timeout: float | None = None,
+        on_state: Callable[[RussiaAuthState], Awaitable[None]] | None = None,
     ) -> RussiaAuthenticationResult:
         """Authenticate Russia and install its static-bootstrap-mTLS read session."""
 
@@ -653,6 +654,7 @@ class GwmClient:
             or (state is not None and type(state) is not RussiaAuthState)
             or type(allow_password_login) is not bool
             or type(bootstrap_material) is not RussiaBootstrapMaterial
+            or (on_state is not None and not callable(on_state))
         ):
             raise GwmConfigurationError(operation=operation)
         if self._closed or self._closing:
@@ -692,6 +694,7 @@ class GwmClient:
                             bootstrap_material=bootstrap_material,
                             deadline=deadline,
                             progress=progress,
+                            on_state=on_state,
                         )
                         replacement = (
                             self._validated_session(result.session) if type(result) is RussiaAuthenticated else None

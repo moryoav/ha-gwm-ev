@@ -251,7 +251,10 @@ class GwmCloudStateStore:
         auth_state: CloudAuthState,
     ) -> None:
         """Atomically publish a complete or recoverable partial state revision."""
-        if self._apac_storage:
+        if self._apac_storage or (
+            type(credentials) is GwmCloudCredentials
+            and credentials.region == REGION_RUSSIA and credentials.russia_certificate_enrollment
+        ):
             await async_finish_apac_state_save(self._async_save_auth_state(credentials, auth_state))
         else:
             await self._async_save_auth_state(credentials, auth_state)
@@ -585,8 +588,8 @@ class GwmCloudStateStore:
         self._invalid_loaded_data = False
 
 
-async def async_finish_apac_state_save(save: Coroutine[Any, Any, None]) -> None:
-    """Finish an APAC state publication before propagating caller cancellation."""
+async def async_finish_cloud_state_save(save: Coroutine[Any, Any, None]) -> None:
+    """Finish a private state publication before propagating caller cancellation."""
     task = asyncio.create_task(save)
     cancelled = False
     while not task.done():
@@ -599,6 +602,10 @@ async def async_finish_apac_state_save(save: Coroutine[Any, Any, None]) -> None:
     task.result()
     if cancelled:
         raise asyncio.CancelledError
+
+
+# Preserve the existing APAC import contract while sharing the same durability boundary.
+async_finish_apac_state_save = async_finish_cloud_state_save
 
 
 def _stored_record_matches(path: str, expected: dict[str, Any]) -> bool:

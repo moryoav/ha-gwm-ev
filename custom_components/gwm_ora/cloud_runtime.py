@@ -25,7 +25,7 @@ from .cloud_auth import (
     GwmCloudCredentials,
     cloud_unique_id,
 )
-from .cloud_storage import async_finish_apac_state_save
+from .cloud_storage import async_finish_apac_state_save, async_finish_cloud_state_save
 from .const import (
     CONF_ACCOUNT,
     CONF_AUTHENTICATION_METHOD,
@@ -519,6 +519,7 @@ class GwmCloudClient:
         self._clock = clock or (lambda: datetime.now(UTC))
         self._bootstrap = bootstrap
         self._china_partial_state: ChinaAuthState | None = None
+        self._russia_partial_state: RussiaAuthState | None = None
         self._credentials = credentials
         self._state_store = state_store
         self._entry_data = dict(entry_data or {})
@@ -671,7 +672,7 @@ class GwmCloudClient:
             or self._session_renewal_lock.locked()
         ):
             return None
-        return self._bootstrap if self._client.authenticated else None
+        return self._bootstrap if self._client.authenticated and self._russia_partial_state is None else None
 
     async def async_get_vehicle_data(self) -> dict[str, object]:
         """Perform one atomic account discovery/status/basics refresh."""
@@ -1251,19 +1252,28 @@ class GwmCloudClient:
             or self.region != REGION_RUSSIA or type(state) is not RussiaAuthState
         ):
             return
-        if state.issued_identity is not None and await asyncio.to_thread(
+        if self._russia_partial_state is None and state.issued_identity is not None and await asyncio.to_thread(
             is_russia_issued_identity_usable, state.issued_identity, now=self._clock(),
         ):
             return
         result = await GwmCloudAuthenticator().async_authenticate(
             credentials, state=state, allow_password_login=False,
+            russia_state_updated=self._async_publish_russia_partial_state,
         )
         if type(result) is not RussiaAuthenticated or type(self._client) is not GwmClient:
             raise GwmConfigurationError(operation="enroll_certificate")
         self._client.replace_session(result.session)
         self._bootstrap = GwmCloudBootstrap.from_authentication(credentials, result)
+        self._russia_partial_state = None
         self._pending_auth_state = result.state
         await self._async_flush_pending_auth_state()
+
+    async def _async_publish_russia_partial_state(self, state: RussiaAuthState) -> None:
+        """Durably retain rotated tokens without publishing a vehicle session."""
+        self._russia_partial_state = state
+        self._bootstrap = None
+        self._pending_auth_state = state
+        await async_finish_cloud_state_save(self._async_flush_pending_auth_state())
 
     async def _async_with_apac_session_renewal[T](self, action: Callable[[], Awaitable[T]]) -> T:
         """Serialize APAC reads and retry once after safe token restoration."""
@@ -1450,7 +1460,9 @@ class GwmCloudClient:
                 self._pending_auth_state = None
 
         try:
-            if self.region == REGION_APAC:
+            if self.region == REGION_APAC or (
+                self.region == REGION_RUSSIA and credentials.russia_certificate_enrollment
+            ):
                 await async_finish_apac_state_save(save_state())
             else:
                 await save_state()
@@ -1462,6 +1474,8 @@ class GwmCloudClient:
     def _current_auth_state(
         self,
     ) -> EuAuthState | AnzAuthState | RussiaAuthState | ChinaAuthState | None:
+        if self.region == REGION_RUSSIA and self._russia_partial_state is not None:
+            return self._russia_partial_state
         if self.region == REGION_CHINA and self._china_partial_state is not None:
             return self._china_partial_state
         bootstrap = self._bootstrap
@@ -1504,6 +1518,7 @@ class GwmCloudClient:
 
         self._bootstrap = None
         self._china_partial_state = None
+        self._russia_partial_state = None
         self._pending_auth_state = None
         if self.region == REGION_APAC:
             self._apac_validation_pending = False

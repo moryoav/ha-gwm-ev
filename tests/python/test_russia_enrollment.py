@@ -1,6 +1,7 @@
 """Russian enrollment, real local mutual TLS, and private restart journeys."""
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import logging
@@ -9,6 +10,7 @@ import socket
 import ssl
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from urllib.parse import urlsplit
 
@@ -24,6 +26,7 @@ from support.overseas import _response
 pytest.importorskip("homeassistant")
 from homeassistant.core import HomeAssistant
 
+import custom_components.gwm_ora as integration
 from custom_components.gwm_ora import cloud_runtime, config_flow
 from custom_components.gwm_ora.cloud_auth import (
     GwmCloudAuthenticator,
@@ -262,8 +265,101 @@ async def test_runtime_renews_before_action_and_persists_without_command_replay(
     action = AsyncMock(return_value="sent-once")
     assert await runtime._async_with_session_renewal(action) == "sent-once"
     action.assert_awaited_once()
-    store.async_save_auth_state.assert_awaited_once()
+    assert store.async_save_auth_state.await_count == 2
     await runtime.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["http_503", "cancel_enrollment", "cancel_save"])
+async def test_rotated_tokens_survive_enrollment_failure_cancellation_and_restart(monkeypatch, tmp_path, chain, failure):
+    _patch_contexts(monkeypatch, tmp_path, chain)
+    credentials = _credentials()
+    enrollment_started, saving_started, finish_save = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+    class RotatingProvider(_EnrollmentProvider):
+        rotating = False
+        refreshed = False
+        enrollment_failure = False
+
+        async def execute(self, request, **kwargs):
+            if self.rotating:
+                if request.operation == "get_user_info" and request.headers["accessToken"] == "synthetic-access":
+                    self.requests.append(request)
+                    return _response(status=401)
+                if request.operation == "refresh_token":
+                    self.requests.append(request)
+                    assert not self.refreshed, "The invalidated old refresh token was used again"
+                    self.refreshed = True
+                    return _response({"accessToken": "rotated-access", "refreshToken": "rotated-refresh"})
+                if request.operation == "enroll_certificate" and self.enrollment_failure:
+                    self.requests.append(request)
+                    enrollment_started.set()
+                    if failure == "cancel_enrollment":
+                        await asyncio.Event().wait()
+                    return _response(status=503)
+            return await super().execute(request, **kwargs)
+
+    provider = RotatingProvider(chain)
+    authenticator = _authenticator(provider, chain)
+    first = await authenticator.async_authenticate(credentials, state=_state(credentials))
+    future = datetime.now(UTC) + timedelta(days=29, hours=12)
+    monkeypatch.setattr(russia_auth, "_utc_now", lambda: future)
+    monkeypatch.setattr(cloud_runtime, "GwmCloudAuthenticator", lambda: authenticator)
+    provider.rotating = provider.enrollment_failure = True
+    provider.days = 60
+    hass = HomeAssistant(str(tmp_path / "ha"))
+    store = cloud_state_store(hass, cloud_unique_id(credentials))
+    await store.async_save_auth_state(credentials, first.state)
+    original_save = store.async_save_auth_state
+
+    async def delayed_save(credentials, state):
+        if failure == "cancel_save" and state.access_token == "rotated-access":
+            saving_started.set()
+            await finish_save.wait()
+        await original_save(credentials, state)
+
+    monkeypatch.setattr(store, "async_save_auth_state", delayed_save)
+    client = GwmClient(GwmClientConfig("rus", russia_certificate_enrollment=True), first.session, transport=provider)
+    runtime = GwmCloudClient(
+        "rus", client, bootstrap=GwmCloudBootstrap.from_authentication(credentials, first),
+        credentials=credentials, state_store=store, entry_data=cloud_entry_data(credentials), clock=lambda: future,
+    )
+    action = AsyncMock()
+    try:
+        if failure == "http_503":
+            with pytest.raises(GwmHttpError):
+                await runtime._async_with_session_renewal(action)
+        else:
+            task = asyncio.create_task(runtime._async_with_session_renewal(action))
+            await asyncio.wait_for((saving_started if failure == "cancel_save" else enrollment_started).wait(), 5)
+            task.cancel()
+            await asyncio.sleep(0)
+            if failure == "cancel_save":
+                assert not task.done()
+                task.cancel()
+                finish_save.set()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        action.assert_not_awaited()
+        assert runtime.reusable_bootstrap is None
+        assert runtime._current_auth_state().access_token == "rotated-access"
+        restarted_hass = HomeAssistant(str(tmp_path / "ha"))
+        restarted_store = cloud_state_store(restarted_hass, cloud_unique_id(credentials))
+        saved = await restarted_store.async_load_auth_state(cloud_entry_data(credentials))
+        assert saved.access_token == "rotated-access"
+        assert saved.refresh_token == "rotated-refresh"
+        # Restart through the actual integration boundary; no password/SMS or second token rotation is allowed.
+        provider.enrollment_failure = False
+        monkeypatch.setattr(integration, "GwmCloudAuthenticator", lambda: authenticator)
+        entry = SimpleNamespace(data=cloud_entry_data(credentials), unique_id=cloud_unique_id(credentials))
+        resumed = await integration._async_load_cloud_bootstrap(restarted_hass, entry, restarted_store)
+        assert resumed.state.access_token == "rotated-access"
+        assert resumed.state.issued_identity != first.state.issued_identity
+        assert sum(request.operation == "refresh_token" for request in provider.requests) == 1
+        assert not any(request.operation in {"login", "request_verification"} for request in provider.requests)
+    finally:
+        finish_save.set()
+        await runtime.aclose()
 
 
 def test_legacy_storage_and_opt_in_validation():

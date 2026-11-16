@@ -29,6 +29,7 @@ from .cloud_runtime import (
 )
 from .cloud_storage import (
     async_finish_apac_state_save,
+    async_finish_cloud_state_save,
     async_remove_cloud_state,
     cloud_state_store,
     credentials_for_auth_state,
@@ -87,6 +88,7 @@ from .gwm_client import (
     GwmRateLimitError,
     GwmTransportError,
     RussiaAuthenticated,
+    RussiaAuthState,
     RussiaIdentityError,
     RussiaVerificationRequired,
 )
@@ -638,6 +640,8 @@ class GwmConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     {"apac_session_updated": self._async_apac_session_updated}
                     if credentials.region == REGION_APAC else {}
                 ),
+                **({"russia_state_updated": self._async_russia_state_updated}
+                   if credentials.russia_certificate_enrollment else {}),
             )
         except GwmRateLimitError as error:
             _log_cloud_auth_failure(error, credentials)
@@ -664,6 +668,11 @@ class GwmConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         except (TypeError, ValueError):
             return None, "invalid_account"
         return result, ""
+
+    async def _async_russia_state_updated(self, state: RussiaAuthState) -> None:
+        """Keep rotated tokens even when later certificate enrollment cannot finish."""
+        self._auth_state = state
+        await async_finish_cloud_state_save(self._async_persist_auth_state(state))
 
     async def _async_apac_session_updated(self, restored: ApacRestored) -> None:
         """Retain and persist refreshed APAC state before subsequent requests."""

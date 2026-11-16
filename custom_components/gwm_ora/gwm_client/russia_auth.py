@@ -17,7 +17,7 @@ import math
 import re
 import ssl
 import uuid
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from types import MappingProxyType
@@ -313,6 +313,7 @@ async def authenticate_russia(
     deadline: _Deadline,
     progress: _RussiaAuthProgress,
     allow_password_login: bool = True,
+    on_state: Callable[[RussiaAuthState], Awaitable[None]] | None = None,
 ) -> RussiaAuthenticationResult:
     """Trace a Russian authentication attempt using only bounded metadata."""
     saved = state if type(state) is RussiaAuthState else None
@@ -328,6 +329,7 @@ async def authenticate_russia(
             config=config, transport=transport, credentials=credentials, state=state,
             verification_code=verification_code, bootstrap_material=bootstrap_material,
             deadline=deadline, progress=progress, allow_password_login=allow_password_login,
+            on_state=on_state,
         )
         attempt.complete("authenticated" if type(result) is RussiaAuthenticated else "verification_required")
         return result
@@ -344,6 +346,7 @@ async def _authenticate_russia(
     deadline: _Deadline,
     progress: _RussiaAuthProgress,
     allow_password_login: bool = True,
+    on_state: Callable[[RussiaAuthState], Awaitable[None]] | None = None,
 ) -> RussiaAuthenticationResult:
     """Run one serialized, finite Russia authentication continuation."""
 
@@ -356,6 +359,7 @@ async def _authenticate_russia(
         or type(bootstrap_material) is not RussiaBootstrapMaterial
         or type(deadline) is not _Deadline
         or type(progress) is not _RussiaAuthProgress
+        or (on_state is not None and not callable(on_state))
     ):
         raise GwmConfigurationError(operation="login")
     candidate = (
@@ -387,6 +391,10 @@ async def _authenticate_russia(
 
     async def finish(candidate: RussiaAuthState) -> RussiaAuthenticated:
         assert app_context is not None
+        if config.russia_certificate_enrollment and on_state is not None:
+            # Rotated tokens must survive a later enrollment failure/cancellation.
+            # This is recoverable private state, not an authenticated vehicle session.
+            await on_state(candidate)
         return await _finish_authentication(
             config=config, transport=transport, credentials=credentials, state=candidate,
             bootstrap_material=bootstrap_material, bootstrap_context=app_context, deadline=deadline,

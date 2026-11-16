@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import secrets
 import ssl
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -195,6 +195,7 @@ class GwmCloudAuthenticator:
         allow_session_reclaim: bool = False,
         allow_password_login: bool = True,
         apac_session_updated: ApacSessionUpdated | None = None,
+        russia_state_updated: Callable[[RussiaAuthState], Awaitable[None]] | None = None,
     ) -> CloudAuthenticationResult:
         """Authenticate once and close the temporary protocol client."""
 
@@ -297,6 +298,7 @@ class GwmCloudAuthenticator:
                     verification_code=verification_code,
                     allow_password_login=allow_password_login,
                     bootstrap_material=material,
+                    **({"on_state": russia_state_updated} if russia_state_updated is not None else {}),
                 )
             raise GwmConfigurationError(operation="login")
         finally:
