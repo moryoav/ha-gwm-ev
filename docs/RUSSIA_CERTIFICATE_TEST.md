@@ -11,7 +11,7 @@ The new option is off by default. Installing this branch alone keeps the existin
 1. Download the ZIP linked in my issue comment and extract it. Find `custom_components/gwm_ora` inside the extracted folder.
 2. Move `/config/custom_components/gwm_ora` outside `custom_components` as a backup. Copy the ZIP's `gwm_ora` folder to `/config/custom_components/`. Keep the existing GWM entry and settings.
 3. Restart Home Assistant.
-4. If Home Assistant asks for reauthentication, use that prompt. Otherwise open **Settings > Devices & services > GWM**, open the entry's three-dot menu, and choose **Reconfigure**. Select **Russia**. Use the same dedicated account's email and keep **Test Russian certificate enrollment** enabled. Complete verification if GWM asks for it.
+4. Open **Settings > Devices & services > GWM**, open the entry's three-dot menu, and choose **Reconfigure**. Select **Russia**. Use the same dedicated account's email and enable **Test Russian certificate enrollment**. Complete verification if GWM asks for it. If Home Assistant asks for reauthentication, that prompt keeps the saved enrollment setting and asks only for the password. If enrollment was not already enabled, reconfigure the entry afterward and enable the option there.
 5. Check whether the vehicle appears and its readings update. Wait for at least two normal polling cycles. Use a read-only test and leave vehicle controls alone.
 6. If that works, restart Home Assistant again. Check that readings resume without another verification code or certificate-enrollment request. Keep the Android mobile app signed out of the dedicated Home Assistant account during this test.
 
