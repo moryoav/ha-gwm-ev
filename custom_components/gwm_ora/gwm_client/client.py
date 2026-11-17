@@ -64,6 +64,7 @@ from .errors import (
     GwmRoutePolicyError,
     GwmSchemaError,
     GwmTlsError,
+    is_russia_session_rejected,
 )
 from .eu_auth import (
     EuAuthenticated,
@@ -1370,7 +1371,7 @@ class GwmClient:
         )
         if type(response) is not _TransportResponse:
             raise GwmProtocolError(operation=request.operation)
-        return _decode_envelope(response, operation=request.operation)
+        return _decode_envelope(response, operation=request.operation, region=self.region)
 
     async def _execute[T](
         self,
@@ -1432,7 +1433,7 @@ class GwmClient:
                             operation=operation,
                             api_code="607099",
                         )
-                    data = _decode_envelope(response, operation=operation)
+                    data = _decode_envelope(response, operation=operation, region=self.region)
                     if deadline.remaining(loop.time()) <= 0:
                         raise GwmDeadlineExceededError(operation=operation)
                     try:
@@ -1704,7 +1705,7 @@ def _classify_regional_read_error[T](
     return None
 
 
-def _decode_envelope(response: _TransportResponse, *, operation: str) -> object:
+def _decode_envelope(response: _TransportResponse, *, operation: str, region: Region | None = None) -> object:
     """Validate overseas success; payload requirements belong to each reader."""
 
     if response.status in {401, 403}:
@@ -1736,6 +1737,9 @@ def _decode_envelope(response: _TransportResponse, *, operation: str) -> object:
 
     code = envelope.get("code")
     if code != "000000":
+        error = GwmAuthenticationError(operation=operation, api_code=code)
+        if region == Region.RUSSIA and code == error.api_code and is_russia_session_rejected(error):
+            raise error
         raise GwmApiError(operation=operation, api_code=code)
     return envelope.get("data")
 

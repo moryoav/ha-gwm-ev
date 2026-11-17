@@ -96,6 +96,7 @@ from .gwm_client.apac_flow import ApacAuthenticated, ApacVerificationRequired
 from .gwm_client.apac_material import load_installed_apac_material
 from .gwm_client.apac_restore import ApacRestored
 from .gwm_client.china_crypto import valid_bean_tech_lock_credential
+from .gwm_client.errors import is_russia_session_rejected
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -648,6 +649,10 @@ class GwmConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             return None, "rate_limited"
         except GwmAuthenticationError as error:
             _log_cloud_auth_failure(error, credentials)
+            if credentials.region == REGION_RUSSIA and is_russia_session_rejected(error):
+                self._auth_state = None
+                await self._async_clear_persisted_auth_state()
+                return None, "russia_session_rejected"
             return None, (
                 "invalid_verification_code" if verification_code is not None else "invalid_auth"
             )

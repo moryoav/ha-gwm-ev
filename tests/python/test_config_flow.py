@@ -730,6 +730,25 @@ def test_cloud_error_log_identifies_safe_anz_authentication_route(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("code", ["570062", "607501"])
+@pytest.mark.parametrize("verification_code", [None, "123456"])
+async def test_russia_terminal_session_has_actionable_error_and_clears_flow_state(code, verification_code):
+    flow = config_flow.GwmConfigFlow()
+    flow.hass = _Hass()
+    flow._cloud_credentials = config_flow.GwmCloudCredentials("rus", "RU", "a@example.invalid", "password", _DEVICE_ID)
+    flow._auth_state = _authenticated(flow._cloud_credentials).state
+    flow._async_clear_persisted_auth_state = AsyncMock()
+    flow._cloud_authenticator = type("Authenticator", (), {
+        "async_authenticate": AsyncMock(side_effect=GwmAuthenticationError(operation="login", api_code=code)),
+    })()
+    result, error = await flow._async_authenticate(verification_code=verification_code)
+    assert result is None
+    assert error == "russia_session_rejected"
+    assert flow._auth_state is None
+    flow._async_clear_persisted_auth_state.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_cloud_reauth_updates_password_only_after_authentication(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -18,7 +18,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from .cloud_commands import GwmCommandApi
 from .cloud_runtime import GwmCloudClient
 from .const import DOMAIN
-from .errors import GwmCommandError
+from .errors import GwmCommandError, cloud_authentication_message
 from .gwm_client import GwmAuthenticationError, GwmClientError
 
 _LOGGER = logging.getLogger(__name__)
@@ -69,7 +69,7 @@ class GwmDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             with suppress(Exception):
                 await self.cloud_client.async_authentication_rejected()
             raise ConfigEntryAuthFailed(
-                "GWM cloud authentication was rejected"
+                cloud_authentication_message(self.cloud_client.region, err)
             ) from err
         except GwmClientError as err:
             self._log_cloud_refresh_failure(err)

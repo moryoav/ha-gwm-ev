@@ -59,6 +59,7 @@ from .const import (
 )
 from .coordinator import GwmDataUpdateCoordinator
 from .entity import async_call_gwm_api
+from .errors import cloud_authentication_message
 from .gwm_client import (
     AnzAuthenticated,
     ChinaAuthenticated,
@@ -428,7 +429,7 @@ async def _async_load_cloud_bootstrap_once(
     except GwmAuthenticationError as err:
         await state_store.async_clear_auth_state(dict(entry.data))
         raise ConfigEntryAuthFailed(
-            "GWM cloud authentication was rejected"
+            cloud_authentication_message(credentials.region, err)
         ) from err
     except GwmClientError as err:
         status = f" (HTTP {err.status})" if isinstance(err, GwmHttpError) and err.status is not None else ""

@@ -46,6 +46,7 @@ from .errors import (
     GwmTlsError,
     is_overseas_refresh_rejected,
     is_overseas_session_expired,
+    is_russia_session_rejected,
 )
 from .eu_identity import EuIdentityError
 from .models import GwmSession
@@ -401,6 +402,7 @@ async def _authenticate_russia(
         )
 
     access_rejected = False
+    rejection_code = None
     if candidate.access_token is not None:
         try:
             profile = await _request_data(
@@ -418,6 +420,11 @@ async def _authenticate_russia(
                 raise
             access_rejected = True
             progress.existing_session_rejected = True
+            if is_russia_session_rejected(error):
+                # Another login or a protocol change invalidates both tokens.
+                # Only an explicit interactive sign-in may establish a new session.
+                rejection_code = error.api_code
+                candidate = replace(candidate, access_token=None, refresh_token=None)
         else:
             candidate = _apply_user_info(candidate, profile)
             return await finish(candidate)
@@ -437,6 +444,8 @@ async def _authenticate_russia(
         except (GwmAuthenticationError, GwmApiError) as error:
             if not is_overseas_refresh_rejected(error):
                 raise
+            rejection_code = error.api_code
+            progress.existing_session_rejected = True
             candidate = replace(
                 candidate,
                 access_token=None,
@@ -461,6 +470,7 @@ async def _authenticate_russia(
             except (GwmAuthenticationError, GwmApiError) as error:
                 if not is_overseas_session_expired(error):
                     raise
+                rejection_code = error.api_code
                 progress.existing_session_rejected = True
                 candidate = replace(
                     candidate,
@@ -486,7 +496,7 @@ async def _authenticate_russia(
         )
 
     if not allow_password_login:
-        raise GwmAuthenticationError(operation="login")
+        raise GwmAuthenticationError(operation="login", api_code=rejection_code)
 
     if code is not None:
         try:
@@ -993,6 +1003,9 @@ def _decode_auth_envelope(
     if valid_json:
         assert isinstance(envelope, Mapping)
         if code != "000000":
+            error = GwmAuthenticationError(operation=operation, api_code=safe_code)
+            if is_russia_session_rejected(error):
+                raise error
             raise GwmApiError(operation=operation, api_code=safe_code)
     if not valid_json:
         raise GwmSchemaError(operation=operation)

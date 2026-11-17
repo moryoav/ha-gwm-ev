@@ -82,6 +82,7 @@
       "invalid_auth": "GWM rejected the account credentials.",
       "invalid_account": "Check the account, password, country, and selected region.",
       "invalid_verification_code": "The verification code was rejected or expired.",
+      "russia_session_rejected": "GWM invalidated this Russian session (570062 or 607501). Sign in to the same account in the GWM Android mobile app, complete any pending prompts, then sign out and retry here. Use a separate account for Home Assistant.",
       "rate_limited": "GWM rate-limited the request. Wait before trying again.",
       "service_error": "GWM rejected the request with an unsupported or unexpected response.",
       "local_configuration_error": "The regional security material is missing or invalid.",

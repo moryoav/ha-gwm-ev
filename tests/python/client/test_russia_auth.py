@@ -258,6 +258,57 @@ def _read_response(operation: str) -> object:
     }
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code", ["570062", "607501"])
+@pytest.mark.parametrize("stage", ["profile", "refresh", "refreshed_profile"])
+async def test_terminal_session_rejection_never_reclaims_in_background(monkeypatch, code, stage):
+    _patch_identity(monkeypatch)
+    state = _state(access_token="old-access", refresh_token="old-refresh")
+    responses = [] if stage == "profile" else [{"code": "550004"}]
+    if stage == "refreshed_profile":
+        responses.append(_success_data("refresh"))
+    transport = _FakeTransport(*responses, {"code": code, "description": SENSITIVE})
+    with pytest.raises(GwmAuthenticationError) as raised:
+        await _authenticate(transport, state=state, allow_password_login=False)
+    assert raised.value.api_code == code
+    expected = ["get_user_info"]
+    if stage != "profile":
+        expected.append("refresh_token")
+    if stage == "refreshed_profile":
+        expected.append("get_user_info")
+    assert [request.operation for request in transport.requests] == expected
+    assert SENSITIVE not in str(raised.value) + repr(raised.value)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code", ["570062", "607501"])
+async def test_explicit_sign_in_skips_rejected_tokens_without_refresh(monkeypatch, code):
+    _patch_identity(monkeypatch)
+    transport = _FakeTransport(
+        {"code": code}, _success_data("login"), _success_data("get_user_info"),
+    )
+    result = await _authenticate(transport, state=_state(access_token="old-access", refresh_token="old-refresh"))
+    assert type(result) is RussiaAuthenticated
+    assert result.state.access_token != "old-access"
+    assert [request.operation for request in transport.requests] == ["get_user_info", "login", "get_user_info"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code", ["570062", "607501"])
+async def test_russia_vehicle_rejection_retires_session_before_next_read(code):
+    transport = _FakeTransport({"code": code}, _read_response("acquire_vehicles"))
+    client = _client(transport, session=_session(_state(access_token="old-access")))
+    try:
+        with pytest.raises(GwmAuthenticationError) as raised:
+            await client.acquire_vehicles()
+        assert raised.value.api_code == code
+        with pytest.raises(GwmAuthenticationError):
+            await client.acquire_vehicles()
+        assert len(transport.requests) == 1
+    finally:
+        await client.aclose()
+
+
 def test_credentials_state_and_outcomes_are_bound_immutable_and_repr_safe() -> None:
     credentials = _credentials(device_id="feedface-dead-beef-cafe-0123456789ab")
     state = _state(
@@ -842,12 +893,12 @@ async def test_unknown_access_error_does_not_refresh_login_or_retire_state(
         refresh_token="SYNTHETIC-OLD-REFRESH",
     )
     progress = _RussiaAuthProgress()
-    transport = _FakeTransport({"code": "607501", "data": None})
+    transport = _FakeTransport({"code": "999999", "data": None})
 
     with pytest.raises(GwmApiError) as raised:
         await _authenticate(transport, state=state, progress=progress)
 
-    assert raised.value.api_code == "607501"
+    assert raised.value.api_code == "999999"
     assert not progress.existing_session_rejected
     assert len(transport.requests) == 1
 

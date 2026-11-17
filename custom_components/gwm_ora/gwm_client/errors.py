@@ -75,6 +75,7 @@ _OVERSEAS_SESSION_EXPIRED_API_CODES: Final = frozenset(
 _OVERSEAS_REFRESH_REJECTED_API_CODES: Final = (
     _OVERSEAS_SESSION_EXPIRED_API_CODES | {"551011"}
 )
+_RUSSIA_SESSION_REJECTED_API_CODES: Final = frozenset({"570062", "607501"})
 
 
 def _safe_operation(value: object) -> str:
@@ -282,6 +283,14 @@ def is_overseas_session_expired(error: object) -> bool:
     )
 
 
+def is_russia_session_rejected(error: object) -> bool:
+    """Identify Russian terminal session errors, which must not auto-refresh."""
+
+    return type(error) is GwmAuthenticationError and (
+        error.api_code in _RUSSIA_SESSION_REJECTED_API_CODES
+    )
+
+
 def is_overseas_refresh_rejected(error: object) -> bool:
     """Return whether an overseas refresh token was conclusively rejected."""
 
@@ -312,4 +321,5 @@ __all__ = [
     "GwmTransportError",
     "is_overseas_refresh_rejected",
     "is_overseas_session_expired",
+    "is_russia_session_rejected",
 ]

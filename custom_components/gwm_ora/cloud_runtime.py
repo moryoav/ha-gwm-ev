@@ -95,6 +95,7 @@ from .gwm_client.apac_read import ApacReadClient, ApacReadSession
 from .gwm_client.apac_restore import ApacRestored, restore_apac_session
 from .gwm_client.apac_state import ApacAuthState
 from .gwm_client.commands import ChinaRemoteCommandAction
+from .gwm_client.errors import is_russia_session_rejected
 from .gwm_client.regions import TlsMode
 from .gwm_client.russia_identity import is_russia_issued_identity_usable
 from .gwm_client.transport import AiohttpTransport
@@ -1198,6 +1199,8 @@ class GwmCloudClient:
         try:
             async with self._session_renewal_lock:
                 await self._async_flush_pending_auth_state()
+                if self.region == REGION_RUSSIA and self._credentials is not None and self._current_auth_state() is None:
+                    raise GwmAuthenticationError(operation="request")
                 await self._async_renew_russia_identity_if_needed()
                 observed_state = self._current_auth_state()
         except GwmAuthenticationError:
@@ -1208,6 +1211,15 @@ class GwmCloudClient:
         try:
             return await action()
         except (GwmAuthenticationError, GwmApiError) as error:
+            if self.region == REGION_RUSSIA and is_russia_session_rejected(error):
+                async with self._session_renewal_lock:
+                    current_state = self._current_auth_state()
+                    if current_state is not None and current_state != observed_state:
+                        # A late response must not discard a newer installed session.
+                        raise GwmApiError(operation=error.operation, api_code=error.api_code) from None
+                    with suppress(Exception):
+                        await self.async_authentication_rejected()
+                raise GwmAuthenticationError(operation=error.operation, api_code=error.api_code) from None
             if observed_state is None or not self._is_session_expired(error):
                 raise
             trigger = error
