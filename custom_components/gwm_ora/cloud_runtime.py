@@ -14,7 +14,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Protocol, cast
+from typing import NoReturn, Protocol, cast
 
 from homeassistant.core import HomeAssistant
 
@@ -1212,14 +1212,7 @@ class GwmCloudClient:
             return await action()
         except (GwmAuthenticationError, GwmApiError) as error:
             if self.region == REGION_RUSSIA and is_russia_session_rejected(error):
-                async with self._session_renewal_lock:
-                    current_state = self._current_auth_state()
-                    if current_state is not None and current_state != observed_state:
-                        # A late response must not discard a newer installed session.
-                        raise GwmApiError(operation=error.operation, api_code=error.api_code) from None
-                    with suppress(Exception):
-                        await self.async_authentication_rejected()
-                raise GwmAuthenticationError(operation=error.operation, api_code=error.api_code) from None
+                await self._async_raise_russia_session_rejection(error)
             if observed_state is None or not self._is_session_expired(error):
                 raise
             trigger = error
@@ -1260,6 +1253,17 @@ class GwmCloudClient:
             with suppress(Exception):
                 await self.async_authentication_rejected()
             raise
+
+    async def _async_raise_russia_session_rejection(self, error: GwmApiError) -> NoReturn:
+        """Retire the session rejected by the actual request, not a preflight snapshot."""
+        async with self._session_renewal_lock:
+            if type(self._client) is GwmClient and self._client.authenticated:
+                # The client retires the request's revision before raising. An
+                # installed session here is a newer, untested replacement.
+                raise GwmApiError(operation=error.operation, api_code=error.api_code) from None
+            with suppress(Exception):
+                await self.async_authentication_rejected()
+        raise GwmAuthenticationError(operation=error.operation, api_code=error.api_code) from None
 
     async def _async_renew_russia_identity_if_needed(self) -> None:
         """Renew an opted-in identity before expiry without replaying any action."""
