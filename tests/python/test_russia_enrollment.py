@@ -646,7 +646,9 @@ async def test_terminal_retry_retires_current_session_but_preserves_later_replac
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("code", ["570062", "607501"])
-async def test_late_old_session_rejection_preserves_partial_renewal_and_restart(monkeypatch, tmp_path, chain, code):
+@pytest.mark.parametrize("rotate", [False, True])
+@pytest.mark.parametrize("command", [False, True])
+async def test_late_old_session_rejection_preserves_only_rotated_partial_renewal(monkeypatch, tmp_path, chain, code, rotate, command):
     _patch_contexts(monkeypatch, tmp_path, chain)
     credentials = _credentials()
     first = await _authenticator(_EnrollmentProvider(chain), chain).async_authenticate(credentials, state=_state(credentials))
@@ -656,12 +658,12 @@ async def test_late_old_session_rejection_preserves_partial_renewal_and_restart(
     class Provider(_EnrollmentProvider):
         enrollment_fails = True
         async def execute(self, request, **kwargs):
-            if request.operation == "acquire_vehicles":
+            if request.operation in {"acquire_vehicles", "update_climate_defaults"}:
                 self.requests.append(request)
                 read_entered.set()
                 await release_read.wait()
                 return _response(code=code)
-            if request.operation == "get_user_info" and request.headers["accessToken"] == "synthetic-access":
+            if rotate and request.operation == "get_user_info" and request.headers["accessToken"] == "synthetic-access":
                 self.requests.append(request)
                 return _response(code="550004")
             if request.operation == "refresh_token":
@@ -690,7 +692,12 @@ async def test_late_old_session_rejection_preserves_partial_renewal_and_restart(
         rejection_entered.set()
         await original_rejection(error)
     monkeypatch.setattr(runtime, "_async_raise_russia_session_rejection", observe_rejection)
-    read = asyncio.create_task(runtime._async_with_session_renewal(client.acquire_vehicles, retry_after_renewal=True))
+    from custom_components.gwm_ora.gwm_client import VehicleIdentifier
+    operation = "update_climate_defaults" if command else "acquire_vehicles"
+    request_action = (
+        lambda: client.update_climate_defaults(VehicleIdentifier("LGWTEST0000000001"), temperature=21, operation_time_minutes=10)
+    ) if command else client.acquire_vehicles
+    read = asyncio.create_task(runtime._async_with_session_renewal(request_action, retry_after_renewal=not command))
     renewal = None
     action = AsyncMock()
     try:
@@ -700,7 +707,7 @@ async def test_late_old_session_rejection_preserves_partial_renewal_and_restart(
         renewal = asyncio.create_task(runtime._async_with_session_renewal(action))
         await asyncio.wait_for(enrollment_entered.wait(), 5)
         partial = runtime._current_auth_state()
-        assert partial.access_token == "rotated-access"
+        assert partial.access_token == ("rotated-access" if rotate else first.state.access_token)
         release_read.set()
         await asyncio.wait_for(rejection_entered.wait(), 5)
         assert not client.authenticated
@@ -709,11 +716,16 @@ async def test_late_old_session_rejection_preserves_partial_renewal_and_restart(
             await asyncio.wait_for(renewal, 5)
         with pytest.raises(GwmApiError) as raised:
             await asyncio.wait_for(read, 5)
-        assert type(raised.value) is GwmApiError
+        assert type(raised.value) is (GwmApiError if rotate else GwmAuthenticationError)
         action.assert_not_awaited()
+        assert sum(request.operation == operation for request in provider.requests) == 1
         restarted_hass = HomeAssistant(str(tmp_path / "ha"))
         restarted_store = cloud_state_store(restarted_hass, cloud_unique_id(credentials))
-        assert await restarted_store.async_load_auth_state(cloud_entry_data(credentials)) == partial
+        assert await restarted_store.async_load_auth_state(cloud_entry_data(credentials)) == (partial if rotate else None)
+        if not rotate:
+            assert runtime._current_auth_state() is None
+            assert not any(request.operation in {"login", "refresh_token", "request_verification"} for request in provider.requests)
+            return
         provider.enrollment_fails = False
         monkeypatch.setattr(integration, "GwmCloudAuthenticator", lambda: authenticator)
         entry = SimpleNamespace(data=cloud_entry_data(credentials), unique_id=cloud_unique_id(credentials))

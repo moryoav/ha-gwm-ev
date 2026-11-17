@@ -1200,6 +1200,7 @@ class GwmClient:
         loop = asyncio.get_running_loop()
         deadline = _Deadline(loop.time() + total_timeout)
         attempt_revision: int | None = None
+        attempt_token: str | None = None
         failure: GwmClientError | None = None
         try:
             async with asyncio.timeout_at(deadline.expires_at):
@@ -1210,6 +1211,7 @@ class GwmClient:
                         raise GwmAuthenticationError(operation=operation)
                     attempt_revision = self._session_revision
                     session = self._validated_session(self._session)
+                    attempt_token = session.access_token
                     await self._async_prepare_h5_ssl_context(operation=operation)
                     result = await action(session, deadline)
                     if deadline.remaining(loop.time()) <= 0:
@@ -1240,6 +1242,8 @@ class GwmClient:
                 if deadline.remaining(loop.time()) <= 0
                 else GwmNetworkError(operation=operation)
             )
+        if self.region is Region.RUSSIA and attempt_token is not None and is_russia_session_rejected(failure):
+            failure._bind_session_token(attempt_token)
         raise failure or GwmNetworkError(operation=operation)
 
     async def _async_prepare_h5_ssl_context(self, *, operation: str) -> None:
@@ -1395,6 +1399,7 @@ class GwmClient:
         deadline = _Deadline(loop.time() + total_timeout)
         failure: GwmClientError | None = None
         attempt_revision: int | None = None
+        attempt_token: str | None = None
 
         try:
             async with asyncio.timeout_at(deadline.expires_at):
@@ -1405,6 +1410,7 @@ class GwmClient:
                         raise GwmAuthenticationError(operation=operation)
                     attempt_revision = self._session_revision
                     session = self._validated_session(self._session)
+                    attempt_token = session.access_token
                     request = self._prepare_read_request(endpoint, session, identifier)
                     response = await self._transport.execute(
                         request,
@@ -1476,6 +1482,8 @@ class GwmClient:
             )
 
         if failure is not None:
+            if self.region is Region.RUSSIA and attempt_token is not None and is_russia_session_rejected(failure):
+                failure._bind_session_token(attempt_token)
             raise failure
         raise GwmSchemaError(operation=operation)
 

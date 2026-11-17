@@ -8,7 +8,9 @@ maps them into this hierarchy.
 
 from __future__ import annotations
 
-from typing import Final
+import hmac
+import secrets
+from typing import Final, TypeGuard
 
 _UNKNOWN_OPERATION: Final = "unknown"
 _SAFE_OPERATION_ALIASES: Final = frozenset(
@@ -76,6 +78,7 @@ _OVERSEAS_REFRESH_REJECTED_API_CODES: Final = (
     _OVERSEAS_SESSION_EXPIRED_API_CODES | {"551011"}
 )
 _RUSSIA_SESSION_REJECTED_API_CODES: Final = frozenset({"570062", "607501"})
+_SESSION_BINDING_KEY: Final = secrets.token_bytes(32)
 
 
 def _safe_operation(value: object) -> str:
@@ -240,6 +243,22 @@ class GwmAuthenticationError(GwmApiError):
     _category = "authentication_error"
     _message = "GWM authentication was rejected"
 
+    __slots__ = ("_session_binding",)
+
+    def __init__(self, *, operation: object = _UNKNOWN_OPERATION, api_code: object = None) -> None:
+        self._session_binding: bytes | None = None
+        super().__init__(operation=operation, api_code=api_code)
+
+    def _bind_session_token(self, token: str) -> None:
+        """Bind the actual request privately without retaining its token."""
+        self._session_binding = hmac.digest(_SESSION_BINDING_KEY, token.encode("utf-8"), "sha256")
+
+    def matches_session_token(self, token: str | None) -> bool:
+        """Compare a private candidate without exposing either token or its binding."""
+        return token is not None and self._session_binding is not None and hmac.compare_digest(
+            self._session_binding, hmac.digest(_SESSION_BINDING_KEY, token.encode("utf-8"), "sha256"),
+        )
+
 
 class GwmSignatureError(GwmApiError):
     """GWM rejected the request signature before processing the operation."""
@@ -283,7 +302,7 @@ def is_overseas_session_expired(error: object) -> bool:
     )
 
 
-def is_russia_session_rejected(error: object) -> bool:
+def is_russia_session_rejected(error: object) -> TypeGuard[GwmAuthenticationError]:
     """Identify Russian terminal session errors, which must not auto-refresh."""
 
     return type(error) is GwmAuthenticationError and (

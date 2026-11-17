@@ -1256,10 +1256,11 @@ class GwmCloudClient:
                 await self.async_authentication_rejected()
             raise
 
-    async def _async_raise_russia_session_rejection(self, error: GwmApiError) -> NoReturn:
+    async def _async_raise_russia_session_rejection(self, error: GwmAuthenticationError) -> NoReturn:
         """Retire the session rejected by the actual request, not a preflight snapshot."""
         async with self._session_renewal_lock:
-            if self._russia_partial_state is not None or (
+            partial = self._russia_partial_state
+            if (partial is not None and not error.matches_session_token(partial.access_token)) or (
                 type(self._client) is GwmClient and self._client.authenticated
             ):
                 # The client retires the request's revision before raising. An
