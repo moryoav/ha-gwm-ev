@@ -665,6 +665,8 @@ async def test_late_old_session_rejection_preserves_only_rotated_renewal(monkeyp
         async def execute(self, request, **kwargs):
             if request.operation in {"acquire_vehicles", "update_climate_defaults"}:
                 self.requests.append(request)
+                if request.headers["accessToken"] != first.state.access_token:
+                    return _response([]) if request.operation == "acquire_vehicles" else _response()
                 read_entered.set()
                 await release_read.wait()
                 return _response(code=code)
@@ -706,12 +708,11 @@ async def test_late_old_session_rejection_preserves_only_rotated_renewal(monkeyp
     ) if command else client.acquire_vehicles
     read = asyncio.create_task(runtime._async_with_session_renewal(request_action, retry_after_renewal=not command))
     renewal = None
-    action = AsyncMock()
     try:
         await asyncio.wait_for(read_entered.wait(), 5)
         now[0] += timedelta(days=29, hours=12)
         monkeypatch.setattr(russia_auth, "_utc_now", lambda: now[0])
-        renewal = asyncio.create_task(runtime._async_with_session_renewal(action))
+        renewal = asyncio.create_task(runtime._async_with_session_renewal(request_action))
         await asyncio.wait_for(enrollment_entered.wait(), 5)
         partial = runtime._current_auth_state()
         assert partial.access_token == ("rotated-access" if rotate else first.state.access_token)
@@ -722,14 +723,16 @@ async def test_late_old_session_rejection_preserves_only_rotated_renewal(monkeyp
         if enrollment_failure:
             with pytest.raises(GwmHttpError):
                 await asyncio.wait_for(renewal, 5)
-            action.assert_not_awaited()
+        elif not rotate:
+            with pytest.raises(GwmAuthenticationError) as renewal_rejected:
+                await asyncio.wait_for(renewal, 5)
+            assert renewal_rejected.value.api_code == code
         else:
             await asyncio.wait_for(renewal, 5)
-            action.assert_awaited_once()
         with pytest.raises(GwmApiError) as raised:
             await asyncio.wait_for(read, 5)
         assert type(raised.value) is (GwmApiError if rotate else GwmAuthenticationError)
-        assert sum(request.operation == operation for request in provider.requests) == 1
+        assert sum(request.operation == operation for request in provider.requests) == (2 if rotate and not enrollment_failure else 1)
         restarted_hass = HomeAssistant(str(tmp_path / "ha"))
         restarted_store = cloud_state_store(restarted_hass, cloud_unique_id(credentials))
         saved = await restarted_store.async_load_auth_state(cloud_entry_data(credentials))

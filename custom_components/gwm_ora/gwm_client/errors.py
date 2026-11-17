@@ -81,6 +81,11 @@ _RUSSIA_SESSION_REJECTED_API_CODES: Final = frozenset({"570062", "607501"})
 _SESSION_BINDING_KEY: Final = secrets.token_bytes(32)
 
 
+def _session_token_binding(token: str) -> bytes:
+    """Return an opaque process-local credential identity, never a raw token."""
+    return hmac.digest(_SESSION_BINDING_KEY, token.encode("utf-8"), "sha256")
+
+
 def _safe_operation(value: object) -> str:
     return value if isinstance(value, str) and value in _SAFE_OPERATION_ALIASES else _UNKNOWN_OPERATION
 
@@ -251,14 +256,14 @@ class GwmAuthenticationError(GwmApiError):
 
     def _bind_session_token(self, token: str) -> None:
         """Bind the actual request privately without retaining its token."""
-        self._session_binding = hmac.digest(_SESSION_BINDING_KEY, token.encode("utf-8"), "sha256")
+        self._session_binding = _session_token_binding(token)
 
     def matches_session_token(self, token: str | None) -> bool | None:
         """Compare credentials privately; None means no request binding is available."""
         if token is None or self._session_binding is None:
             return None
         return hmac.compare_digest(
-            self._session_binding, hmac.digest(_SESSION_BINDING_KEY, token.encode("utf-8"), "sha256"),
+            self._session_binding, _session_token_binding(token),
         )
 
 

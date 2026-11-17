@@ -64,6 +64,7 @@ from .errors import (
     GwmRoutePolicyError,
     GwmSchemaError,
     GwmTlsError,
+    _session_token_binding,
     is_russia_session_rejected,
 )
 from .eu_auth import (
@@ -160,6 +161,7 @@ class GwmClient:
             raise GwmConfigurationError()
         self._config = config
         self._protocol = get_region_protocol(config.region)
+        self._russia_rejected_session_bindings: dict[bytes, str] = {}
         self._session = None if session is None else self._validated_session(session)
         self._session_revision = 0
         if sequence_source is not None and not callable(sequence_source):
@@ -233,10 +235,15 @@ class GwmClient:
 
     def retire_rejected_russia_session(self, error: GwmAuthenticationError) -> None:
         """Retire an installed session only when its token was conclusively rejected."""
+        if self.region is not Region.RUSSIA or not is_russia_session_rejected(error):
+            return
+        binding = error._session_binding
+        if type(binding) is bytes and len(binding) == 32 and error.api_code is not None:
+            # Keep only opaque bindings and safe codes, never exceptions/tracebacks.
+            self._russia_rejected_session_bindings[binding] = error.api_code
         current = self._session
         if (
-            self.region is Region.RUSSIA and current is not None
-            and is_russia_session_rejected(error)
+            current is not None
             and error.matches_session_token(current.access_token) is True
         ):
             self._replace_session_if_revision(expected_revision=self._session_revision, session=None)
@@ -1220,8 +1227,8 @@ class GwmClient:
                     if self._session is None:
                         raise GwmAuthenticationError(operation=operation)
                     attempt_revision = self._session_revision
+                    attempt_token = self._session.access_token
                     session = self._validated_session(self._session)
-                    attempt_token = session.access_token
                     await self._async_prepare_h5_ssl_context(operation=operation)
                     result = await action(session, deadline)
                     if deadline.remaining(loop.time()) <= 0:
@@ -1254,6 +1261,7 @@ class GwmClient:
             )
         if self.region is Region.RUSSIA and attempt_token is not None and is_russia_session_rejected(failure):
             failure._bind_session_token(attempt_token)
+            self.retire_rejected_russia_session(failure)
         raise failure or GwmNetworkError(operation=operation)
 
     async def _async_prepare_h5_ssl_context(self, *, operation: str) -> None:
@@ -1419,8 +1427,8 @@ class GwmClient:
                     if self._session is None:
                         raise GwmAuthenticationError(operation=operation)
                     attempt_revision = self._session_revision
+                    attempt_token = self._session.access_token
                     session = self._validated_session(self._session)
-                    attempt_token = session.access_token
                     request = self._prepare_read_request(endpoint, session, identifier)
                     response = await self._transport.execute(
                         request,
@@ -1494,6 +1502,7 @@ class GwmClient:
         if failure is not None:
             if self.region is Region.RUSSIA and attempt_token is not None and is_russia_session_rejected(failure):
                 failure._bind_session_token(attempt_token)
+                self.retire_rejected_russia_session(failure)
             raise failure
         raise GwmSchemaError(operation=operation)
 
@@ -1552,6 +1561,10 @@ class GwmClient:
             invalid = True
         if invalid:
             raise GwmConfigurationError()
+        if self.region is Region.RUSSIA:
+            code = self._russia_rejected_session_bindings.get(_session_token_binding(session.access_token))
+            if code is not None:
+                raise GwmAuthenticationError(operation="request", api_code=code)
         return session
 
     def _validated_timeout(self, value: float | None, *, operation: str) -> float:
