@@ -8,6 +8,10 @@ This project follows semantic versioning. The Marketplace installs GWM from publ
 
 ## [Unreleased]
 
+### Added
+
+- Added a default-off **Request a new SMS verification code** option to Mainland-China account reconfiguration for manual recovery when a saved session cannot be restored. Preserved the restored device identity and existing sign-in continuation handling.
+
 ## [0.18.0] - 2026-11-10
 
 ### Added

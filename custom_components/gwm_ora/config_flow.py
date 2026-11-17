@@ -536,7 +536,7 @@ class GwmConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self,
         user_input: dict[str, Any] | None = None,
     ) -> ConfigFlowResult:
-        """Authenticate replacement account settings before applying them."""
+        """Authenticate replacement settings, optionally starting a fresh China SMS login."""
 
         entry = self._get_reconfigure_entry()
         if self._cloud_region not in SUPPORTED_CLOUD_REGIONS:
@@ -551,6 +551,7 @@ class GwmConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             and CONF_AUTHENTICATION_METHOD not in defaults
         ):
             defaults[CONF_AUTHENTICATION_METHOD] = ANZ_AUTHENTICATION_METHOD_LEGACY
+        china_account = self._cloud_region == REGION_CHINA
         errors: dict[str, str] = {}
         if user_input is not None:
             try:
@@ -566,14 +567,20 @@ class GwmConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             else:
                 if early_result is not None:
                     return early_result
+                if china_account and user_input.get("request_new_sms") is True:
+                    # Restore the device identity before bypassing the saved session.
+                    self._auth_state = None
                 result, error = await self._async_authenticate()
                 if error:
                     errors["base"] = error
                 elif result is not None:
                     return await self._async_route_authentication(result)
+        schema = _account_schema(self._cloud_region, {**defaults, **(user_input or {})})
+        if china_account:
+            schema = schema.extend({vol.Optional("request_new_sms", default=False): bool})
         return self.async_show_form(
             step_id="reconfigure_account",
-            data_schema=_account_schema(self._cloud_region, {**defaults, **(user_input or {})}),
+            data_schema=schema,
             errors=errors,
         )
 
