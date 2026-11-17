@@ -392,6 +392,18 @@ class GwmConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 verification_code=code,
                 allow_session_reclaim=self._anz_session_reclaim_confirmed,
             )
+            if error == "russia_session_rejected":
+                # The continuation was retired. Return to an explicit sign-in
+                # instead of leaving an unusable verification form on screen.
+                if self._cloud_mode == "reauth":
+                    form = await self.async_step_reauth_confirm()
+                elif self._cloud_mode == "reconfigure":
+                    form = await self.async_step_reconfigure_account()
+                else:
+                    form = await self.async_step_account()
+                if form["type"] == "form":
+                    form["errors"] = {"base": error}
+                return form
             if error:
                 errors[CONF_VERIFICATION_CODE if error == "invalid_verification_code" else "base"] = error
             elif result is not None:
