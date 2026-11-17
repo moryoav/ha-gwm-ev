@@ -253,9 +253,11 @@ class GwmAuthenticationError(GwmApiError):
         """Bind the actual request privately without retaining its token."""
         self._session_binding = hmac.digest(_SESSION_BINDING_KEY, token.encode("utf-8"), "sha256")
 
-    def matches_session_token(self, token: str | None) -> bool:
-        """Compare a private candidate without exposing either token or its binding."""
-        return token is not None and self._session_binding is not None and hmac.compare_digest(
+    def matches_session_token(self, token: str | None) -> bool | None:
+        """Compare credentials privately; None means no request binding is available."""
+        if token is None or self._session_binding is None:
+            return None
+        return hmac.compare_digest(
             self._session_binding, hmac.digest(_SESSION_BINDING_KEY, token.encode("utf-8"), "sha256"),
         )
 

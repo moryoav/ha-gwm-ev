@@ -499,7 +499,8 @@ async def test_startup_requests_reauth_and_explicit_sign_in_reuses_certificate(m
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("code", ["570062", "607501"])
-async def test_late_terminal_response_does_not_clear_newer_russia_state(monkeypatch, tmp_path, chain, code):
+@pytest.mark.parametrize("rotate", [False, True])
+async def test_late_terminal_response_preserves_only_newer_credentials(monkeypatch, tmp_path, chain, code, rotate):
     _patch_contexts(monkeypatch, tmp_path, chain)
     credentials = _credentials()
     first = await _authenticator(_EnrollmentProvider(chain), chain).async_authenticate(credentials, state=_state(credentials))
@@ -521,7 +522,8 @@ async def test_late_terminal_response_does_not_clear_newer_russia_state(monkeypa
     task = asyncio.create_task(runtime._async_with_session_renewal(client.acquire_vehicles, retry_after_renewal=True))
     try:
         await asyncio.wait_for(entered.wait(), 5)
-        updated = replace(first, state=replace(first.state, access_token="new-access"), session=replace(first.session, access_token="new-access"))
+        token = "new-access" if rotate else first.state.access_token
+        updated = replace(first, state=replace(first.state, access_token=token), session=replace(first.session, access_token=token))
         async with runtime._session_renewal_lock:
             runtime._bootstrap = GwmCloudBootstrap.from_authentication(credentials, updated)
             client.replace_session(updated.session)
@@ -529,10 +531,12 @@ async def test_late_terminal_response_does_not_clear_newer_russia_state(monkeypa
         release.set()
         with pytest.raises(GwmApiError) as raised:
             await asyncio.wait_for(task, 5)
-        assert type(raised.value) is GwmApiError
-        assert client.authenticated
-        assert runtime._current_auth_state() == updated.state
-        assert await store.async_load_auth_state(cloud_entry_data(credentials)) == updated.state
+        assert type(raised.value) is (GwmApiError if rotate else GwmAuthenticationError)
+        assert client.authenticated is rotate
+        expected = updated.state if rotate else None
+        assert runtime._current_auth_state() == expected
+        restarted_store = cloud_state_store(HomeAssistant(str(tmp_path / "ha")), cloud_unique_id(credentials))
+        assert await restarted_store.async_load_auth_state(cloud_entry_data(credentials)) == expected
     finally:
         release.set()
         await asyncio.gather(task, return_exceptions=True)
@@ -648,7 +652,8 @@ async def test_terminal_retry_retires_current_session_but_preserves_later_replac
 @pytest.mark.parametrize("code", ["570062", "607501"])
 @pytest.mark.parametrize("rotate", [False, True])
 @pytest.mark.parametrize("command", [False, True])
-async def test_late_old_session_rejection_preserves_only_rotated_partial_renewal(monkeypatch, tmp_path, chain, code, rotate, command):
+@pytest.mark.parametrize("enrollment_failure", [False, True])
+async def test_late_old_session_rejection_preserves_only_rotated_renewal(monkeypatch, tmp_path, chain, code, rotate, command, enrollment_failure):
     _patch_contexts(monkeypatch, tmp_path, chain)
     credentials = _credentials()
     first = await _authenticator(_EnrollmentProvider(chain), chain).async_authenticate(credentials, state=_state(credentials))
@@ -669,13 +674,15 @@ async def test_late_old_session_rejection_preserves_only_rotated_partial_renewal
             if request.operation == "refresh_token":
                 self.requests.append(request)
                 return _response({"accessToken": "rotated-access", "refreshToken": "rotated-refresh"})
-            if request.operation == "enroll_certificate" and self.enrollment_fails:
-                self.requests.append(request)
+            if request.operation == "enroll_certificate":
                 enrollment_entered.set()
                 await release_enrollment.wait()
-                return _response(status=503)
+                if self.enrollment_fails:
+                    self.requests.append(request)
+                    return _response(status=503)
             return await super().execute(request, **kwargs)
     provider = Provider(chain, days=60)
+    provider.enrollment_fails = enrollment_failure
     authenticator = _authenticator(provider, chain)
     monkeypatch.setattr(cloud_runtime, "GwmCloudAuthenticator", lambda: authenticator)
     now = [datetime.now(UTC)]
@@ -712,16 +719,26 @@ async def test_late_old_session_rejection_preserves_only_rotated_partial_renewal
         await asyncio.wait_for(rejection_entered.wait(), 5)
         assert not client.authenticated
         release_enrollment.set()
-        with pytest.raises(GwmHttpError):
+        if enrollment_failure:
+            with pytest.raises(GwmHttpError):
+                await asyncio.wait_for(renewal, 5)
+            action.assert_not_awaited()
+        else:
             await asyncio.wait_for(renewal, 5)
+            action.assert_awaited_once()
         with pytest.raises(GwmApiError) as raised:
             await asyncio.wait_for(read, 5)
         assert type(raised.value) is (GwmApiError if rotate else GwmAuthenticationError)
-        action.assert_not_awaited()
         assert sum(request.operation == operation for request in provider.requests) == 1
         restarted_hass = HomeAssistant(str(tmp_path / "ha"))
         restarted_store = cloud_state_store(restarted_hass, cloud_unique_id(credentials))
-        assert await restarted_store.async_load_auth_state(cloud_entry_data(credentials)) == (partial if rotate else None)
+        saved = await restarted_store.async_load_auth_state(cloud_entry_data(credentials))
+        if rotate:
+            assert saved.access_token == partial.access_token
+            assert saved.refresh_token == partial.refresh_token
+        else:
+            assert saved is None
+        assert client.authenticated is (rotate and not enrollment_failure)
         if not rotate:
             assert runtime._current_auth_state() is None
             assert not any(request.operation in {"login", "refresh_token", "request_verification"} for request in provider.requests)

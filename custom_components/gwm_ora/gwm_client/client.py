@@ -231,6 +231,16 @@ class GwmClient:
         self._session = self._validated_session(session)
         self._session_revision += 1
 
+    def retire_rejected_russia_session(self, error: GwmAuthenticationError) -> None:
+        """Retire an installed session only when its token was conclusively rejected."""
+        current = self._session
+        if (
+            self.region is Region.RUSSIA and current is not None
+            and is_russia_session_rejected(error)
+            and error.matches_session_token(current.access_token) is True
+        ):
+            self._replace_session_if_revision(expected_revision=self._session_revision, session=None)
+
     async def authenticate_eu(
         self,
         credentials: EuCredentials,
