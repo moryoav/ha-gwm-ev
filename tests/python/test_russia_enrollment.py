@@ -645,6 +645,91 @@ async def test_terminal_retry_retires_current_session_but_preserves_later_replac
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("code", ["570062", "607501"])
+async def test_late_old_session_rejection_preserves_partial_renewal_and_restart(monkeypatch, tmp_path, chain, code):
+    _patch_contexts(monkeypatch, tmp_path, chain)
+    credentials = _credentials()
+    first = await _authenticator(_EnrollmentProvider(chain), chain).async_authenticate(credentials, state=_state(credentials))
+    read_entered, release_read = asyncio.Event(), asyncio.Event()
+    enrollment_entered, release_enrollment = asyncio.Event(), asyncio.Event()
+    rejection_entered = asyncio.Event()
+    class Provider(_EnrollmentProvider):
+        enrollment_fails = True
+        async def execute(self, request, **kwargs):
+            if request.operation == "acquire_vehicles":
+                self.requests.append(request)
+                read_entered.set()
+                await release_read.wait()
+                return _response(code=code)
+            if request.operation == "get_user_info" and request.headers["accessToken"] == "synthetic-access":
+                self.requests.append(request)
+                return _response(code="550004")
+            if request.operation == "refresh_token":
+                self.requests.append(request)
+                return _response({"accessToken": "rotated-access", "refreshToken": "rotated-refresh"})
+            if request.operation == "enroll_certificate" and self.enrollment_fails:
+                self.requests.append(request)
+                enrollment_entered.set()
+                await release_enrollment.wait()
+                return _response(status=503)
+            return await super().execute(request, **kwargs)
+    provider = Provider(chain, days=60)
+    authenticator = _authenticator(provider, chain)
+    monkeypatch.setattr(cloud_runtime, "GwmCloudAuthenticator", lambda: authenticator)
+    now = [datetime.now(UTC)]
+    client = GwmClient(GwmClientConfig("rus", russia_certificate_enrollment=True), first.session, transport=provider)
+    hass = HomeAssistant(str(tmp_path / "ha"))
+    store = cloud_state_store(hass, cloud_unique_id(credentials))
+    await store.async_save_auth_state(credentials, first.state)
+    runtime = GwmCloudClient(
+        "rus", client, bootstrap=GwmCloudBootstrap.from_authentication(credentials, first), credentials=credentials,
+        state_store=store, entry_data=cloud_entry_data(credentials), clock=lambda: now[0],
+    )
+    original_rejection = runtime._async_raise_russia_session_rejection
+    async def observe_rejection(error):
+        rejection_entered.set()
+        await original_rejection(error)
+    monkeypatch.setattr(runtime, "_async_raise_russia_session_rejection", observe_rejection)
+    read = asyncio.create_task(runtime._async_with_session_renewal(client.acquire_vehicles, retry_after_renewal=True))
+    renewal = None
+    action = AsyncMock()
+    try:
+        await asyncio.wait_for(read_entered.wait(), 5)
+        now[0] += timedelta(days=29, hours=12)
+        monkeypatch.setattr(russia_auth, "_utc_now", lambda: now[0])
+        renewal = asyncio.create_task(runtime._async_with_session_renewal(action))
+        await asyncio.wait_for(enrollment_entered.wait(), 5)
+        partial = runtime._current_auth_state()
+        assert partial.access_token == "rotated-access"
+        release_read.set()
+        await asyncio.wait_for(rejection_entered.wait(), 5)
+        assert not client.authenticated
+        release_enrollment.set()
+        with pytest.raises(GwmHttpError):
+            await asyncio.wait_for(renewal, 5)
+        with pytest.raises(GwmApiError) as raised:
+            await asyncio.wait_for(read, 5)
+        assert type(raised.value) is GwmApiError
+        action.assert_not_awaited()
+        restarted_hass = HomeAssistant(str(tmp_path / "ha"))
+        restarted_store = cloud_state_store(restarted_hass, cloud_unique_id(credentials))
+        assert await restarted_store.async_load_auth_state(cloud_entry_data(credentials)) == partial
+        provider.enrollment_fails = False
+        monkeypatch.setattr(integration, "GwmCloudAuthenticator", lambda: authenticator)
+        entry = SimpleNamespace(data=cloud_entry_data(credentials), unique_id=cloud_unique_id(credentials))
+        restored = await integration._async_load_cloud_bootstrap(restarted_hass, entry, restarted_store)
+        assert restored.state.access_token == "rotated-access"
+        assert restored.state.issued_identity != first.state.issued_identity
+        assert sum(request.operation == "refresh_token" for request in provider.requests) == 1
+        assert not any(request.operation in {"login", "request_verification"} for request in provider.requests)
+    finally:
+        release_read.set()
+        release_enrollment.set()
+        await asyncio.gather(*([read, renewal] if renewal is not None else [read]), return_exceptions=True)
+        await runtime.aclose()
+
+
+@pytest.mark.asyncio
 async def test_real_https_presents_general_certificate_for_enrollment_and_issued_for_discovery(monkeypatch, tmp_path, chain):
     _patch_contexts(monkeypatch, tmp_path, chain)
     server_request = generate_client_certificate_request("RU", DEVICE, common_name="localhost")

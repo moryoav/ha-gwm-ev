@@ -1259,9 +1259,13 @@ class GwmCloudClient:
     async def _async_raise_russia_session_rejection(self, error: GwmApiError) -> NoReturn:
         """Retire the session rejected by the actual request, not a preflight snapshot."""
         async with self._session_renewal_lock:
-            if type(self._client) is GwmClient and self._client.authenticated:
+            if self._russia_partial_state is not None or (
+                type(self._client) is GwmClient and self._client.authenticated
+            ):
                 # The client retires the request's revision before raising. An
                 # installed session here is a newer, untested replacement.
+                # A separate renewal's private candidate also remains recoverable;
+                # preflight handles rejection of that candidate's own credentials.
                 raise GwmApiError(operation=error.operation, api_code=error.api_code) from None
             with suppress(Exception):
                 await self.async_authentication_rejected()
