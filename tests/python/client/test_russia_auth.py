@@ -295,6 +295,18 @@ async def test_explicit_sign_in_skips_rejected_tokens_without_refresh(monkeypatc
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("code", ["570062", "607501"])
+async def test_terminal_sms_rejection_escapes_verification_retry(monkeypatch, code):
+    _patch_identity(monkeypatch)
+    transport = _FakeTransport({"code": code, "description": SENSITIVE})
+    with pytest.raises(GwmAuthenticationError) as raised:
+        await _authenticate(transport, state=_state(), verification_code=CODE)
+    assert raised.value.api_code == code
+    assert [request.operation for request in transport.requests] == ["verify_code"]
+    assert SENSITIVE not in str(raised.value) + repr(raised.value)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code", ["570062", "607501"])
 async def test_russia_vehicle_rejection_retires_session_before_next_read(code):
     transport = _FakeTransport({"code": code}, _read_response("acquire_vehicles"))
     client = _client(transport, session=_session(_state(access_token="old-access")))

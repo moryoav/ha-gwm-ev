@@ -44,7 +44,7 @@ from custom_components.gwm_ora.cloud_storage import (
     cloud_state_store,
     credentials_for_auth_state,
 )
-from custom_components.gwm_ora.const import CONF_RUSSIA_CERTIFICATE_ENROLLMENT
+from custom_components.gwm_ora.const import CONF_RUSSIA_CERTIFICATE_ENROLLMENT, CONF_VERIFICATION_CODE
 from custom_components.gwm_ora.coordinator import GwmDataUpdateCoordinator
 from custom_components.gwm_ora.gwm_client import russia_auth
 from custom_components.gwm_ora.gwm_client._protocol import _TransportRequest
@@ -727,6 +727,37 @@ async def test_late_old_session_rejection_preserves_partial_renewal_and_restart(
         release_enrollment.set()
         await asyncio.gather(*([read, renewal] if renewal is not None else [read]), return_exceptions=True)
         await runtime.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code", ["570062", "607501"])
+async def test_terminal_sms_submission_clears_real_private_state_and_returns_to_sign_in(monkeypatch, tmp_path, chain, code):
+    _patch_contexts(monkeypatch, tmp_path, chain)
+    credentials = _credentials()
+    state = replace(_state(credentials), access_token=None, refresh_token=None, verification_requested_at=datetime.now(UTC))
+    class SmsProvider(_EnrollmentProvider):
+        async def execute(self, request, **kwargs):
+            self.requests.append(request)
+            assert request.operation == "verify_code"
+            return _response(code=code)
+    provider = SmsProvider(chain)
+    hass = HomeAssistant(str(tmp_path / "ha"))
+    store = cloud_state_store(hass, cloud_unique_id(credentials))
+    await store.async_save_auth_state(credentials, state)
+    flow = config_flow.GwmConfigFlow()
+    flow.hass = hass
+    flow._cloud_region = "rus"
+    flow._cloud_credentials = credentials
+    flow._auth_state = state
+    flow._cloud_authenticator = _authenticator(provider, chain)
+    result = await flow.async_step_verification({CONF_VERIFICATION_CODE: "123456"})
+    assert result["type"] == "form"
+    assert result["step_id"] == "account"
+    assert result["errors"] == {"base": "russia_session_rejected"}
+    assert flow._auth_state is None
+    restarted_store = cloud_state_store(HomeAssistant(str(tmp_path / "ha")), cloud_unique_id(credentials))
+    assert await restarted_store.async_load_auth_state(cloud_entry_data(credentials)) is None
+    assert len(provider.requests) == 1
 
 
 @pytest.mark.asyncio

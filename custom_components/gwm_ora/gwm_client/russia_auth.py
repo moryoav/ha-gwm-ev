@@ -1180,7 +1180,7 @@ def _is_verification_challenge(error: GwmApiError) -> bool:
 
 
 def _is_verification_rejection(error: GwmApiError) -> bool:
-    return type(error) is GwmAuthenticationError
+    return type(error) is GwmAuthenticationError and not is_russia_session_rejected(error)
 
 
 def _validate_optional_token(value: str | None) -> None:
