@@ -14,7 +14,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Protocol, cast
+from typing import NoReturn, Protocol, cast
 
 from homeassistant.core import HomeAssistant
 
@@ -95,6 +95,7 @@ from .gwm_client.apac_read import ApacReadClient, ApacReadSession
 from .gwm_client.apac_restore import ApacRestored, restore_apac_session
 from .gwm_client.apac_state import ApacAuthState
 from .gwm_client.commands import ChinaRemoteCommandAction
+from .gwm_client.errors import is_russia_session_rejected
 from .gwm_client.regions import TlsMode
 from .gwm_client.russia_identity import is_russia_issued_identity_usable
 from .gwm_client.transport import AiohttpTransport
@@ -1198,6 +1199,8 @@ class GwmCloudClient:
         try:
             async with self._session_renewal_lock:
                 await self._async_flush_pending_auth_state()
+                if self.region == REGION_RUSSIA and self._credentials is not None and self._current_auth_state() is None:
+                    raise GwmAuthenticationError(operation="request")
                 await self._async_renew_russia_identity_if_needed()
                 observed_state = self._current_auth_state()
         except GwmAuthenticationError:
@@ -1208,6 +1211,8 @@ class GwmCloudClient:
         try:
             return await action()
         except (GwmAuthenticationError, GwmApiError) as error:
+            if self.region == REGION_RUSSIA and is_russia_session_rejected(error):
+                await self._async_raise_russia_session_rejection(error)
             if observed_state is None or not self._is_session_expired(error):
                 raise
             trigger = error
@@ -1238,6 +1243,8 @@ class GwmCloudClient:
             try:
                 return await action()
             except (GwmAuthenticationError, GwmApiError) as retry_error:
+                if self.region == REGION_RUSSIA and is_russia_session_rejected(retry_error):
+                    await self._async_raise_russia_session_rejection(retry_error)
                 if not self._is_session_expired(retry_error):
                     raise
                 raise GwmAuthenticationError(
@@ -1248,6 +1255,20 @@ class GwmCloudClient:
             with suppress(Exception):
                 await self.async_authentication_rejected()
             raise
+
+    async def _async_raise_russia_session_rejection(self, error: GwmAuthenticationError) -> NoReturn:
+        """Retire the session rejected by the actual request, not a preflight snapshot."""
+        async with self._session_renewal_lock:
+            current = self._current_auth_state()
+            if type(current) is RussiaAuthState and error.matches_session_token(current.access_token) is False:
+                # Preserve genuinely different credentials, whether enrollment
+                # has completed or only recoverable private state was published.
+                raise GwmApiError(operation=error.operation, api_code=error.api_code) from None
+            if type(self._client) is GwmClient:
+                self._client.retire_rejected_russia_session(error)
+            with suppress(Exception):
+                await self.async_authentication_rejected()
+        raise GwmAuthenticationError(operation=error.operation, api_code=error.api_code) from None
 
     async def _async_renew_russia_identity_if_needed(self) -> None:
         """Renew an opted-in identity before expiry without replaying any action."""

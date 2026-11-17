@@ -24,6 +24,7 @@ from custom_components.gwm_ora.gwm_client import (
     DoorLockCommand,
     FrontDefrosterCommand,
     GwmApiError,
+    GwmAuthenticationError,
     GwmClient,
     GwmClientConfig,
     GwmSession,
@@ -451,6 +452,36 @@ def test_result_selection_preserves_russian_and_default_semantics() -> None:
         select_remote_command_result((stale, success), command_id=sequence, region=Region.RUSSIA).state == "completed"
     )
     assert select_remote_command_result((stale, current), command_id=sequence, region=Region.EU).state == "failed"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("region", list(Region))
+@pytest.mark.parametrize("code", ["570062", "607501"])
+async def test_terminal_russia_codes_retire_only_russian_command_sessions(region, code):
+    fixture = _fixture()
+    case = fixture["regions"][region.value]
+    transport = _RecordingTransport([_response(code=code), _response()])
+    client = GwmClient(
+        GwmClientConfig(region),
+        GwmSession(case["country"], case["device_id"], "synthetic-token", _context(region)),
+        transport=transport,
+    )
+    async def action():
+        await client.update_climate_defaults(VehicleIdentifier(fixture["vin"]), temperature=21, operation_time_minutes=10)
+    try:
+        with pytest.raises(GwmApiError) as raised:
+            await action()
+        assert raised.value.api_code == code
+        assert type(raised.value) is (GwmAuthenticationError if region is Region.RUSSIA else GwmApiError)
+        if region is Region.RUSSIA:
+            with pytest.raises(GwmAuthenticationError):
+                await action()
+            assert len(transport.requests) == 1
+        else:
+            await action()
+            assert len(transport.requests) == 2
+    finally:
+        await client.aclose()
 
 
 def test_china_vehicle_control_contract_is_closed_and_platform_filtered() -> None:

@@ -82,6 +82,7 @@
       "invalid_auth": "GWM 拒绝了账号凭据。",
       "invalid_account": "请检查账号、密码、国家或地区以及所选区域。",
       "invalid_verification_code": "验证码被拒绝或已过期。",
+      "russia_session_rejected": "GWM 已使此俄罗斯会话失效（570062 或 607501）。请在 GWM Android 手机应用中登录同一账号，完成所有待处理的提示，然后退出登录并在此重试。请为 Home Assistant 使用单独的账号。",
       "rate_limited": "GWM 限制了请求频率，请稍后重试。",
       "service_error": "GWM 返回了不支持或意外的响应。",
       "local_configuration_error": "区域安全材料缺失或无效。",

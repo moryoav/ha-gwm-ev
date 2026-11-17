@@ -12,6 +12,10 @@ This project follows semantic versioning. The Marketplace installs GWM from publ
 
 - Added an opt-in Russian client-certificate enrollment test, with private certificate storage, restart reuse, renewal, and sanitized enrollment diagnostics. The existing Russian connection remains the default until real-account testing confirms the new path.
 
+### Fixed
+
+- Stopped reusing Russian sessions rejected with codes 570062 or 607501 and requested reauthentication instead of repeatedly polling or automatically refreshing the rejected session. Explicit sign-in can replace the rejected tokens while retaining a usable enrolled certificate.
+
 ## [0.18.0] - 2026-11-10
 
 ### Added
