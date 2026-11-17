@@ -26,6 +26,7 @@ from support.overseas import _response
 pytest.importorskip("homeassistant")
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.helpers.update_coordinator import UpdateFailed
 
 import custom_components.gwm_ora as integration
 from custom_components.gwm_ora import cloud_runtime, config_flow
@@ -587,6 +588,58 @@ async def test_queued_request_retires_the_replacement_it_actually_used(monkeypat
     finally:
         if client._request_lock.locked():
             client._request_lock.release()
+        await asyncio.gather(task, return_exceptions=True)
+        await runtime.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code", ["570062", "607501"])
+@pytest.mark.parametrize("replacement", [False, True])
+async def test_terminal_retry_retires_current_session_but_preserves_later_replacement(monkeypatch, tmp_path, chain, code, replacement):
+    _patch_contexts(monkeypatch, tmp_path, chain)
+    credentials = _credentials()
+    first = await _authenticator(_EnrollmentProvider(chain), chain).async_authenticate(credentials, state=_state(credentials))
+    entered, release = asyncio.Event(), asyncio.Event()
+    class RetryProvider(_EnrollmentProvider):
+        async def execute(self, request, **kwargs):
+            if request.operation == "acquire_vehicles":
+                self.requests.append(request)
+                if len(self.requests) == 1:
+                    return _response(code="550004")
+                entered.set()
+                await release.wait()
+                return _response(code=code)
+            return await super().execute(request, **kwargs)
+    provider = RetryProvider(chain)
+    client = GwmClient(GwmClientConfig("rus", russia_certificate_enrollment=True), first.session, transport=provider)
+    hass = HomeAssistant(str(tmp_path / "ha"))
+    store = cloud_state_store(hass, cloud_unique_id(credentials))
+    await store.async_save_auth_state(credentials, first.state)
+    runtime = GwmCloudClient(
+        "rus", client, bootstrap=GwmCloudBootstrap.from_authentication(credentials, first), credentials=credentials,
+        state_store=store, entry_data=cloud_entry_data(credentials),
+    )
+    coordinator = GwmDataUpdateCoordinator(hass, AsyncMock(), cloud_client=runtime)
+    task = asyncio.create_task(coordinator._async_update_data())
+    updated = replace(first, state=replace(first.state, access_token="new-access"), session=replace(first.session, access_token="new-access"))
+    try:
+        await asyncio.wait_for(entered.wait(), 5)
+        if replacement:
+            async with runtime._session_renewal_lock:
+                runtime._bootstrap = GwmCloudBootstrap.from_authentication(credentials, updated)
+                client.replace_session(updated.session)
+                await store.async_save_auth_state(credentials, updated.state)
+        release.set()
+        with pytest.raises(UpdateFailed if replacement else ConfigEntryAuthFailed, match=code):
+            await asyncio.wait_for(task, 5)
+        assert client.authenticated is replacement
+        expected = updated.state if replacement else None
+        assert runtime._current_auth_state() == expected
+        restarted_store = cloud_state_store(HomeAssistant(str(tmp_path / "ha")), cloud_unique_id(credentials))
+        assert await restarted_store.async_load_auth_state(cloud_entry_data(credentials)) == expected
+        assert [request.operation for request in provider.requests] == ["acquire_vehicles", "refresh_token", "get_user_info", "acquire_vehicles"]
+    finally:
+        release.set()
         await asyncio.gather(task, return_exceptions=True)
         await runtime.aclose()
 

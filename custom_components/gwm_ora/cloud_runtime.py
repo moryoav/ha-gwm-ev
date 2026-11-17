@@ -1243,6 +1243,8 @@ class GwmCloudClient:
             try:
                 return await action()
             except (GwmAuthenticationError, GwmApiError) as retry_error:
+                if self.region == REGION_RUSSIA and is_russia_session_rejected(retry_error):
+                    await self._async_raise_russia_session_rejection(retry_error)
                 if not self._is_session_expired(retry_error):
                     raise
                 raise GwmAuthenticationError(
