@@ -29,6 +29,7 @@ from .errors import (
     GwmRateLimitError,
     GwmSchemaError,
     GwmTlsError,
+    is_overseas_session_expired,
 )
 from .models import VehicleIdentifier
 
@@ -164,5 +165,9 @@ def decode_br_envelope(response: _TransportResponse, *, operation: str) -> objec
     if code != BR_SUCCESS_CODE:
         if operation in ("login", "refresh_token"):
             raise GwmAuthenticationError(operation=operation, api_code=code)
-        raise GwmApiError(operation=operation, api_code=code)
+        error = GwmApiError(operation=operation, api_code=code)
+        if is_overseas_session_expired(error):
+            # Same expired-session codes as the other overseas gateways: renew once and repeat.
+            raise GwmAuthenticationError(operation=operation, api_code=code)
+        raise error
     return mapping.get("data")

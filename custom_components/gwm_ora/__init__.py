@@ -374,6 +374,8 @@ async def _async_load_cloud_bootstrap(
     except OSError as error:
         if entry.data.get(CONF_REGION) == REGION_APAC:
             raise ConfigEntryNotReady("GWM APAC private state is temporarily unavailable") from error
+        if entry.data.get(CONF_REGION) == REGION_BR:
+            raise ConfigEntryNotReady("GWM Brazil private state is temporarily unavailable") from error
         raise
 
 

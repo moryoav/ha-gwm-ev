@@ -125,5 +125,5 @@ def decode_br_state(data: object) -> BrAuthState:
             )
         )
         return BrAuthState(account_binding=data["account_binding"], device_id=data["device_id"], tokens=tokens)
-    except (TypeError, ValueError, KeyError):
+    except (TypeError, ValueError, KeyError, OverflowError):
         raise ValueError("br_state_invalid") from None
