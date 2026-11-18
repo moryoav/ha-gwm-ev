@@ -759,8 +759,9 @@ async def test_br_shutdown_retries_a_failed_rotated_token_save(
 
     monkeypatch.setattr(store, "async_save_auth_state", fail_once)
 
-    with pytest.raises(GwmNetworkError):
-        await cloud.async_get_vehicle_data()
+    # The read itself succeeded, so its result is returned; the token save stays pending.
+    data = await cloud.async_get_vehicle_data()
+    assert data["vehicles"][0]["values"]["soc"] == 80.0
     assert store.saved == []
 
     await cloud.aclose()
@@ -781,8 +782,11 @@ async def test_br_shutdown_closes_the_transport_even_when_the_save_fails_again(
         raise OSError("storage unavailable")
 
     monkeypatch.setattr(store, "async_save_auth_state", always_fail)
+    await cloud.async_get_vehicle_data()
+    # The next request first retries the pending save and does not run while storage is down.
     with pytest.raises(GwmNetworkError):
         await cloud.async_get_vehicle_data()
+    assert [r.operation for r in transport.requests] == ["refresh_token", "acquire_vehicles", "get_last_status"]
 
     await cloud.aclose()
 
