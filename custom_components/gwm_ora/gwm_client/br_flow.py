@@ -41,7 +41,7 @@ class BrCloudReader:
 
     @property
     def authenticated(self) -> bool:
-        """True while the session holds tokens (re-login on expiry is automatic)."""
+        """True while the session holds tokens (an expired access token is refreshed silently)."""
         return self._client.session.tokens is not None
 
     @property
