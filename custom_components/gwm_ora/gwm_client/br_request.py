@@ -158,6 +158,9 @@ def decode_br_envelope(response: _TransportResponse, *, operation: str) -> objec
         raise GwmHttpError(operation=operation, status=response.status)
     if mapping is None:
         raise GwmSchemaError(operation=operation)
+    if operation == "refresh_token" and (not isinstance(code, str) or not code):
+        # No code is not a refusal: keep the saved tokens and let the next poll retry.
+        raise GwmSchemaError(operation=operation)
     if code != BR_SUCCESS_CODE:
         if operation in ("login", "refresh_token"):
             raise GwmAuthenticationError(operation=operation, api_code=code)
