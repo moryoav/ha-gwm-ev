@@ -350,6 +350,71 @@ async def test_br_reauth_asks_only_for_the_password_and_drops_stale_command_opti
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("previous_region", "previous_account", "charging_kept"),
+    [
+        (REGION_BR, ACCOUNT, True),  # same Brazil account: keep the charging opt-in
+        (REGION_BR, "other@example.invalid", False),  # another account: start without consent
+        ("eu", ACCOUNT, False),  # switching region: never carry consent over
+    ],
+)
+async def test_br_reconfigure_keeps_charging_consent_only_for_the_same_account(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    store: _Store,
+    previous_region: str,
+    previous_account: str,
+    charging_kept: bool,
+) -> None:
+    """Check that reconfiguration keeps the BR charging opt-in only for the same BR account, like APAC."""
+    previous = GwmCloudCredentials(previous_region, "BR" if previous_region == REGION_BR else "DE", previous_account, PASSWORD, DEVICE)
+    entry = ConfigEntry(
+        data=cloud_entry_data(previous),
+        discovery_keys=MappingProxyType({}),
+        domain=DOMAIN,
+        entry_id="br-entry",
+        minor_version=1,
+        options={
+            CONF_POLL_INTERVAL_SECONDS: 90,
+            CONF_ENABLE_REMOTE_COMMANDS: True,
+            CONF_ENABLE_CHARGING_CONTROL: True,
+            CONF_SECURITY_PIN: "1234",
+        },
+        source="user",
+        subentries_data=None,
+        title="GWM",
+        unique_id=cloud_unique_id(previous),
+        version=1,
+    )
+    authenticator, _ = _authenticator(monkeypatch, tmp_path, _login(), envelope(VEHICLES))
+    flow = config_flow.GwmConfigFlow()
+    flow.hass = _Hass(entry)  # type: ignore[assignment]
+    flow.context = {"source": "reconfigure", "entry_id": entry.entry_id}
+    flow._cloud_authenticator = authenticator
+    updates: list[dict[str, Any]] = []
+
+    def update_and_abort(updated: ConfigEntry, **kwargs: Any) -> ConfigFlowResult:
+        updates.append(kwargs)
+        return flow.async_abort(reason="reconfigure_successful")
+
+    async def remove_state(hass: object, unique_id: object) -> None:
+        return None
+
+    monkeypatch.setattr(flow, "async_update_reload_and_abort", update_and_abort)
+    monkeypatch.setattr(config_flow, "async_remove_cloud_state", remove_state)
+    await flow.async_step_reconfigure({CONF_REGION: REGION_BR})
+    result = await flow.async_step_reconfigure_account(
+        {CONF_COUNTRY: "BR", CONF_ACCOUNT: ACCOUNT, CONF_PASSWORD: PASSWORD}
+    )
+
+    assert result["reason"] == "reconfigure_successful"
+    expected = {CONF_POLL_INTERVAL_SECONDS: 90}
+    if charging_kept:
+        expected[CONF_ENABLE_CHARGING_CONTROL] = True
+    assert updates[0]["options"] == expected
+
+
+@pytest.mark.asyncio
 async def test_br_options_expose_only_polling_charging_opt_in_and_log_level() -> None:
     """Check that BR options expose only polling, the charging opt-in and the log level."""
     entry = ConfigEntry(
@@ -1340,10 +1405,10 @@ async def test_br_switch_restores_the_last_state_without_reading_the_plan(
 
 
 @pytest.mark.asyncio
-async def test_readable_region_keeps_the_live_read_and_falls_back_to_the_restored_state(
+async def test_readable_region_keeps_the_live_read_and_never_uses_the_restored_state(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Check that a readable region keeps the live read and falls back to the restored state."""
+    """Check that regions with a plan readback behave exactly as before Brazil was added."""
     from custom_components.gwm_ora.gwm_client import ChargingPlanInfo, ChargingPlanItem
 
     live = ChargingPlanInfo((ChargingPlanItem(1, "1", 1_800_000_000_000, 1_800_000_028_800),))
@@ -1353,7 +1418,7 @@ async def test_readable_region_keeps_the_live_read_and_falls_back_to_the_restore
 
     failing = _PlanApi(GwmRoutePolicyError(operation="get_charging_plan"))
     entity, _ = await _added_switch(monkeypatch, "eu", failing, "on")
-    assert failing.reads == 1 and entity.is_on is True  # read failed: restored state is used
+    assert failing.reads == 1 and entity.is_on is None  # read failed: state stays unknown, as before
 
 
 @pytest.mark.parametrize("code", [{"x": 1}, ["9999"], 9999, None])

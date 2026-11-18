@@ -890,7 +890,10 @@ class GwmConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     entry.options,
                     preserve_consent=entry.data.get(CONF_REGION) == REGION_APAC and previous_unique_id == unique_id,
                 )} if credentials.region == REGION_APAC
-                else {"options": _br_options_after_authentication(entry.options)}
+                else {"options": _br_options_after_authentication(
+                    entry.options,
+                    preserve_charging=entry.data.get(CONF_REGION) == REGION_BR and previous_unique_id == unique_id,
+                )}
                 if credentials.region == REGION_BR else {}),
             )
             if previous_unique_id != unique_id:
