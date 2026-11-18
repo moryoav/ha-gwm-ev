@@ -10,7 +10,7 @@ from homeassistant.components.switch import SwitchEntity
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.restore_state import RestoreEntity
+from homeassistant.helpers.restore_state import RestoredExtraData, RestoreEntity
 from homeassistant.util import dt as dt_util
 
 from . import GwmConfigEntry
@@ -23,6 +23,7 @@ from .gwm_client import GwmClientError
 PARALLEL_UPDATES = 0
 
 _LOGGER = logging.getLogger(__name__)
+_RESTORED_PLAN_ACTIVE = "charging_plan_active"
 
 
 class GwmSmartChargeSwitch(BeanTechChargingEntity, SwitchEntity):
@@ -285,14 +286,29 @@ class GwmChargingScheduleSwitch(GwmEntity, SwitchEntity, RestoreEntity):
             return
 
         # Only regions without a plan readback (Brazil) fall back to the last known state.
-        last_state = await self.async_get_last_state()
-        restored = (
-            None
-            if last_state is None
-            else {"on": True, "off": False}.get(last_state.state)
-        )
+        # A result accepted since this runtime started (a service call while the entity
+        # was disabled) is newer than anything restored.
+        if self.coordinator.charging_plan_active(self.vin) is not None:
+            return
+        restored: bool | None = None
+        extra = await self.async_get_last_extra_data()
+        if extra is not None:
+            value = extra.as_dict().get(_RESTORED_PLAN_ACTIVE)
+            restored = value if isinstance(value, bool) else None
+        if restored is None:
+            # Earlier versions stored only the displayed state.
+            last_state = await self.async_get_last_state()
+            restored = None if last_state is None else {"on": True, "off": False}.get(last_state.state)
         if restored is not None:
             self.coordinator.set_charging_plan_active(self.vin, restored)
+
+    @property
+    def extra_restore_state_data(self) -> RestoredExtraData | None:
+        """Persist the last accepted plan state even while the switch shows unavailable."""
+        if self.charging_plan_readable:
+            return None
+        active = self.coordinator.charging_plan_active(self.vin)
+        return RestoredExtraData({_RESTORED_PLAN_ACTIVE: active}) if isinstance(active, bool) else None
 
     @property
     def is_on(self) -> bool | None:
