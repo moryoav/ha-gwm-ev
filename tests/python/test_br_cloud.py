@@ -60,9 +60,11 @@ from custom_components.gwm_ora.diagnostics import TO_REDACT
 from custom_components.gwm_ora.errors import GwmCommandForbidden
 from custom_components.gwm_ora.gwm_client import (
     GwmAuthenticationError,
+    GwmClientError,
     GwmConfigurationError,
     GwmNetworkError,
     GwmRoutePolicyError,
+    GwmTlsError,
     VehicleIdentifier,
     br_flow,
     br_installed,
@@ -286,11 +288,32 @@ async def test_br_unusable_bundled_files_and_gateway_rejection_have_their_own_er
     result = await flow.async_step_account({CONF_COUNTRY: "BR", CONF_ACCOUNT: ACCOUNT, CONF_PASSWORD: PASSWORD})
     assert result["errors"] == {"base": "br_material_invalid"}
 
-    authenticator, _ = _authenticator(monkeypatch, tmp_path, html(400, "No required SSL certificate was sent"))
+    # The vehicle gateway rejects the client certificate after a successful login.
+    authenticator, transport = _authenticator(
+        monkeypatch, tmp_path, _login(), html(400, "No required SSL certificate was sent")
+    )
     tls_flow = _flow(monkeypatch, authenticator)
     await tls_flow.async_step_user({CONF_REGION: "br"})
     tls = await tls_flow.async_step_account({CONF_COUNTRY: "BR", CONF_ACCOUNT: ACCOUNT, CONF_PASSWORD: PASSWORD})
+    assert [request.operation for request in transport.requests] == ["login", "acquire_vehicles"]
     assert tls["errors"] == {"base": "br_tls_rejected"}
+
+
+@pytest.mark.asyncio
+async def test_br_login_tls_failure_is_a_connection_error_not_a_certificate_rejection(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, store: _Store
+) -> None:
+    """Check that a TLS failure on the login portal is not reported as a client-certificate rejection."""
+    authenticator, transport = _authenticator(monkeypatch, tmp_path)
+
+    async def tls_failure(request: object, **kwargs: object) -> object:
+        raise GwmTlsError(operation="login")
+
+    monkeypatch.setattr(transport, "execute", tls_failure)
+    flow = _flow(monkeypatch, authenticator)
+    await flow.async_step_user({CONF_REGION: "br"})
+    result = await flow.async_step_account({CONF_COUNTRY: "BR", CONF_ACCOUNT: ACCOUNT, CONF_PASSWORD: PASSWORD})
+    assert result["errors"] == {"base": "cannot_connect"}
 
 
 @pytest.mark.asyncio
@@ -728,6 +751,40 @@ async def test_br_shutdown_closes_the_transport_even_when_the_save_fails_again(
     assert transport.closed is True
 
 
+class _UnloadEntries:
+    async def async_unload_platforms(self, entry: object, platforms: list[object]) -> bool:
+        return True
+
+
+class _UnloadCoordinator:
+    async def async_cancel_command_tasks(self) -> None:
+        return None
+
+
+async def _unload(
+    tmp_path: Path, cloud: Any, entry_credentials: GwmCloudCredentials, staged: Any = None
+) -> tuple[HomeAssistant, ConfigEntry]:
+    """Unload an entry whose data already names ``entry_credentials`` (as after a reconfigure)."""
+    hass = HomeAssistant(str(tmp_path))
+    hass.config_entries = _UnloadEntries()  # type: ignore[assignment]
+    entry = ConfigEntry(
+        data=cloud_entry_data(entry_credentials), discovery_keys=MappingProxyType({}), domain=DOMAIN,
+        entry_id="br-entry", minor_version=1, options={}, source="user", subentries_data=None,
+        title="GWM", unique_id=cloud_unique_id(entry_credentials), version=1,
+    )
+    entry.runtime_data = integration.GwmRuntimeData(
+        api=None,  # type: ignore[arg-type]
+        coordinator=_UnloadCoordinator(),  # type: ignore[arg-type]
+        cloud=cloud,
+        state_store=_Store(),  # type: ignore[arg-type]
+        platforms=list(BR_PLATFORMS),
+    )
+    if staged is not None:
+        stage_cloud_bootstrap(hass, entry.unique_id, staged)
+    assert await integration.async_unload_entry(hass, entry)
+    return hass, entry
+
+
 @pytest.mark.asyncio
 async def test_br_unload_keeps_fresh_tokens_staged_by_reauth_or_reconfigure(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -741,42 +798,139 @@ async def test_br_unload_keeps_fresh_tokens_staged_by_reauth_or_reconfigure(
         br_ssl_context=running.br_ssl_context,
     )
 
-    class Entries:
-        async def async_unload_platforms(self, entry: object, platforms: list[object]) -> bool:
-            return True
-
-    class Coordinator:
-        async def async_cancel_command_tasks(self) -> None:
-            return None
-
     async def unload_with(staged: runtime.GwmCloudBootstrap | None) -> runtime.GwmCloudBootstrap | None:
-        hass = HomeAssistant(str(tmp_path))
-        hass.config_entries = Entries()  # type: ignore[assignment]
         monkeypatch.setattr(runtime.AiohttpTransport, "create_owned", lambda **kwargs: FakeTransport())
         cloud = runtime.GwmCloudClient.from_entry_data(
             cloud_entry_data(credentials), cloud_unique_id(credentials), running, state_store=_Store()
         )
-        entry = ConfigEntry(
-            data=cloud_entry_data(credentials), discovery_keys=MappingProxyType({}), domain=DOMAIN,
-            entry_id="br-entry", minor_version=1, options={}, source="user", subentries_data=None,
-            title="GWM Brazil", unique_id=cloud_unique_id(credentials), version=1,
-        )
-        entry.runtime_data = integration.GwmRuntimeData(
-            api=None,  # type: ignore[arg-type]
-            coordinator=Coordinator(),  # type: ignore[arg-type]
-            cloud=cloud,
-            state_store=_Store(),  # type: ignore[arg-type]
-            platforms=list(BR_PLATFORMS),
-        )
-        if staged is not None:
-            stage_cloud_bootstrap(hass, entry.unique_id, staged)
-        assert await integration.async_unload_entry(hass, entry)
+        hass, entry = await _unload(tmp_path, cloud, credentials, staged)
         return consume_cloud_bootstrap(hass, entry.unique_id)
 
     # A plain reload hands the running session to the next setup.
     assert await unload_with(None) is running
     # A reauth or reconfigure already staged newer tokens: the old session must not replace them.
     assert await unload_with(fresh) is fresh
+
+
+class _OtherRegionCloud:
+    """The outgoing runtime of an entry that is being reconfigured to or from Brazil."""
+
+    def __init__(self, region: str) -> None:
+        self.region = region
+        self.reusable_bootstrap = object()
+        self.closed = False
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
+@pytest.mark.asyncio
+async def test_br_unload_never_hands_a_session_across_a_region_change(tmp_path: Path) -> None:
+    credentials, fresh = _bootstrap(tmp_path)
+
+    # EU entry reconfigured to Brazil: the staged Brazil sign-in survives the EU unload.
+    outgoing = _OtherRegionCloud("eu")
+    hass, entry = await _unload(tmp_path, outgoing, credentials, staged=fresh)
+    assert consume_cloud_bootstrap(hass, entry.unique_id) is fresh and outgoing.closed is True
+
+    # Without a staged Brazil sign-in, the EU session is still never staged for the Brazil entry.
+    outgoing = _OtherRegionCloud("eu")
+    hass, entry = await _unload(tmp_path, outgoing, credentials)
+    assert consume_cloud_bootstrap(hass, entry.unique_id) is None and outgoing.closed is True
+
+    # Brazil entry reconfigured to EU: the Brazil session is not staged for the EU entry.
+    outgoing = _OtherRegionCloud(REGION_BR)
+    eu = GwmCloudCredentials("eu", "DE", ACCOUNT, PASSWORD, DEVICE)
+    hass, entry = await _unload(tmp_path, outgoing, eu)
+    assert consume_cloud_bootstrap(hass, entry.unique_id) is None and outgoing.closed is True
+
+
+@pytest.mark.asyncio
+async def test_other_region_reload_still_reuses_its_session(tmp_path: Path) -> None:
+    """Regions without Brazil involvement keep staging their session on every unload."""
+    outgoing = _OtherRegionCloud("eu")
+    eu = GwmCloudCredentials("eu", "DE", ACCOUNT, PASSWORD, DEVICE)
+    hass, entry = await _unload(tmp_path, outgoing, eu)
+    assert consume_cloud_bootstrap(hass, entry.unique_id) is outgoing.reusable_bootstrap
+
+
+@pytest.mark.asyncio
+async def test_br_unload_waits_for_an_in_flight_refresh_before_handing_off_the_session(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    class GatedTransport(FakeTransport):
+        def __init__(self, *responses: object) -> None:
+            super().__init__(*responses)  # type: ignore[arg-type]
+            self.refreshing = asyncio.Event()
+            self.release = asyncio.Event()
+
+        async def execute(self, request: Any, **kwargs: Any) -> Any:
+            if request.operation == "refresh_token":
+                self.refreshing.set()
+                await self.release.wait()
+            return await super().execute(request, **kwargs)
+
+    transport = GatedTransport(_refresh(), envelope(VEHICLES), envelope(STATUS))
+    cloud, store = await _br_cloud(monkeypatch, tmp_path, transport, expired=True)
+    credentials = _credentials()
+
+    poll = asyncio.create_task(cloud.async_get_vehicle_data())
+    await transport.refreshing.wait()
+    unload = asyncio.create_task(_unload(tmp_path, cloud, credentials))
+    for _ in range(5):
+        await asyncio.sleep(0)
+    assert not unload.done()  # the unload waits for the poll that is renewing the session
+    transport.release.set()
+    await poll
+    hass, entry = await unload
+
+    staged = consume_cloud_bootstrap(hass, entry.unique_id)
+    assert staged is not None and staged.state.tokens.refresh_token == "rotated-refresh"
+    assert store.saved[-1].tokens.refresh_token == "rotated-refresh"
+    assert transport.closed is True
+
+
+@pytest.mark.asyncio
+async def test_br_refresh_reply_without_a_code_keeps_the_session(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from custom_components.gwm_ora.gwm_client._protocol import _TransportResponse
+
+    no_code = _TransportResponse(200, {"content-type": "application/json"}, b'{"data":null}')
+    transport = FakeTransport(no_code)
+    cloud, store = await _br_cloud(monkeypatch, tmp_path, transport, expired=True)
+
+    with pytest.raises(GwmClientError) as raised:
+        await cloud.async_get_vehicle_data()
+
+    assert not isinstance(raised.value, GwmAuthenticationError)
+    assert [r.operation for r in transport.requests] == ["refresh_token"]
+    assert store.cleared == 0 and cloud.reusable_bootstrap is not None
+    await cloud.aclose()
+
+
+@pytest.mark.asyncio
+async def test_br_setup_keeps_the_handoff_when_its_save_fails(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from homeassistant.exceptions import ConfigEntryNotReady
+
+    credentials, bootstrap = _bootstrap(tmp_path)
+    entry = ConfigEntry(
+        data=cloud_entry_data(credentials), discovery_keys=MappingProxyType({}), domain=DOMAIN,
+        entry_id="br-entry", minor_version=1, options={}, source="user", subentries_data=None,
+        title="GWM Brazil", unique_id=cloud_unique_id(credentials), version=1,
+    )
+    hass = HomeAssistant(str(tmp_path))
+    stage_cloud_bootstrap(hass, entry.unique_id, bootstrap)
+
+    class Store:
+        async def async_save_auth_state(self, *args: object) -> None:
+            raise OSError("storage unavailable")
+
+    with pytest.raises(ConfigEntryNotReady):
+        await integration._async_load_cloud_bootstrap_once(hass, entry, Store())  # type: ignore[arg-type]
+    assert consume_cloud_bootstrap(hass, entry.unique_id) is bootstrap
 
 
 @pytest.mark.asyncio

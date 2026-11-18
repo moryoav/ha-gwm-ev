@@ -224,14 +224,26 @@ async def async_unload_entry(hass: HomeAssistant, entry: GwmConfigEntry) -> bool
         if cloud.region == REGION_APAC:
             await entry.runtime_data.api.async_shutdown_apac_commands()
         await entry.runtime_data.coordinator.async_cancel_command_tasks()
+        brazil = REGION_BR in (cloud.region, entry.data.get(CONF_REGION))
+        if cloud.region == REGION_BR:
+            # Drain an in-flight read first: its silent refresh may rotate and save tokens.
+            await cloud.aclose()
         if (
             (bootstrap := cloud.reusable_bootstrap) is not None
             and entry.unique_id is not None
-            # A Brazil reauth or reconfigure stages fresh tokens before the reload; keep them.
-            and not (cloud.region == REGION_BR and cloud_bootstrap_staged(hass, entry.unique_id))
+            # A Brazil sign-in, reauth or reconfigure stages its own handoff before the
+            # reload; never replace it, and never hand a session across a region change.
+            and not (
+                brazil
+                and (
+                    cloud_bootstrap_staged(hass, entry.unique_id)
+                    or cloud.region != entry.data.get(CONF_REGION)
+                )
+            )
         ):
             stage_cloud_bootstrap(hass, entry.unique_id, bootstrap)
-        await cloud.aclose()
+        if cloud.region != REGION_BR:
+            await cloud.aclose()
 
     if cloud.region == REGION_APAC:
         await async_finish_apac_state_save(finish_unload())
@@ -386,6 +398,13 @@ async def _async_load_cloud_bootstrap_once(
         try:
             credentials = credentials_for_auth_state(dict(entry.data), bootstrap.state)
             await state_store.async_save_auth_state(credentials, bootstrap.state)
+        except OSError as err:
+            if bootstrap.region != REGION_BR:
+                raise
+            # The handoff may hold the only copy of rotated Brazil tokens: keep it for the retry.
+            if entry.unique_id is not None and not cloud_bootstrap_staged(hass, entry.unique_id):
+                stage_cloud_bootstrap(hass, entry.unique_id, bootstrap)
+            raise ConfigEntryNotReady("GWM Brazil private state is temporarily unavailable") from err
         except (TypeError, ValueError) as err:
             raise ConfigEntryAuthFailed(
                 "GWM cloud authentication handoff is invalid"
