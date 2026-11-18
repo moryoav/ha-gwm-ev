@@ -1334,7 +1334,10 @@ class GwmCloudClient:
                 with suppress(Exception):
                     await self._async_publish_br_tokens()
                 raise
-            await self._async_publish_br_tokens()
+            # The request already succeeded (a charging write may have been accepted). A failed
+            # token save stays pending and is retried before the next request and at shutdown.
+            with suppress(Exception):
+                await self._async_publish_br_tokens()
             return result
 
     async def _async_publish_br_tokens(self) -> None:
