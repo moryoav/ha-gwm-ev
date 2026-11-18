@@ -56,12 +56,14 @@
         "title": "验证替换账号",
         "description": "只有在 GWM 接受新设置后才会应用。更改账号上下文会安全清除旧账号绑定的认证状态和命令日志。",
         "data": {
+          "request_new_sms": "重新发送短信验证码",
           "country": "注册国家或地区",
           "authentication_method": "ANZ 身份验证方式",
           "account": "电子邮件、用户名或注册手机号",
           "password": "密码"
         },
         "data_description": {
+          "request_new_sms": "中国大陆账号的已保存会话无法恢复时，请勾选此项并使用新的短信验证码继续登录。登录进度会被保存，以便重启后恢复。",
           "authentication_method": "更改此方式会清除之前与账号绑定的会话，并要求重新登录。"
         }
       },

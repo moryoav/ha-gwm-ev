@@ -307,6 +307,8 @@ Notes:
 
 Mainland China is available in the setup flow. The integration uses the registered phone number, SMS authentication, and separate G-App, BeanTech, and AutoAI sessions.
 
+If a saved session cannot be restored, I recommend opening **Settings > Devices & services > GWM > Reconfigure**, choosing **Mainland China**, keeping the registered phone number, and selecting **Request a new SMS verification code**. Enter the new code to finish sign-in. This option is off by default and keeps the restored device identity. Sign-in progress replaces the saved authentication state as verification and service initialization proceed, so an interrupted attempt may need to be completed after restarting. Reconnecting the same account keeps the existing entry, options, entities, and command journal.
+
 If GWM returns session-expiry code `550004`, the integration renews the G-App and platform sessions, privately saves the replacement session, and retries the interrupted read once, as it does for EU, ANZ, and Russia. Commands are never resent automatically after renewal; a rejected command stays failed and can be submitted again manually. If renewal or the read retry rejects the session, Home Assistant asks you to sign in again. Background recovery does not request SMS codes.
 
 If platform initialization is interrupted after G-App tokens rotate, the integration saves the G-App-only state and resumes initialization on the next poll without another refresh or SMS login. Risk-control code `1013` during renewal stops automatic recovery and requests reauthentication; complete any account verification required in the official app before reconnecting.
