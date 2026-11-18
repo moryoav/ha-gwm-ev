@@ -896,7 +896,12 @@ class GwmConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     entry.options,
                     preserve_charging=entry.data.get(CONF_REGION) == REGION_BR and previous_unique_id == unique_id,
                 )}
-                if credentials.region == REGION_BR else {}),
+                if credentials.region == REGION_BR
+                # Leaving Brazil: its charging consent does not carry over to another region.
+                else {"options": {
+                    key: value for key, value in entry.options.items() if key != CONF_ENABLE_CHARGING_CONTROL
+                }}
+                if entry.data.get(CONF_REGION) == REGION_BR else {}),
             )
             if previous_unique_id != unique_id:
                 await async_remove_cloud_state(self.hass, previous_unique_id)
