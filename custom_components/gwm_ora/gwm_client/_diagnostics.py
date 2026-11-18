@@ -34,6 +34,8 @@ _DISCOVERY_GATEWAYS = {
     for region in Region
     for gateway in (get_region_protocol(region).gateway(GatewayRole.APP_V1),)
 }
+# BR lives outside ``Region`` (static client chain, system-CA server verification).
+_DISCOVERY_GATEWAYS["br-app-gateway.gwmcloud.com"] = ("br", "br_static_mtls")
 _OPERATIONS = frozenset({
     "acquire_vehicles", "get_vehicle_basics", "get_last_status", "get_charging_plan",
     "update_climate_defaults", "send_climate_command", "send_lock_command",

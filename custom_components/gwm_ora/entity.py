@@ -11,10 +11,11 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN
+from .const import CHARGING_PLAN_UNREADABLE_REGIONS, DOMAIN
 from .coordinator import GwmDataUpdateCoordinator
 from .errors import GwmCommandError, GwmCommandForbidden
 from .gwm_client import GwmAuthenticationError, GwmClientError
+from .gwm_client.br_request import GwmBrBusyError
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -101,6 +102,12 @@ class GwmEntity(CoordinatorEntity[GwmDataUpdateCoordinator]):
         return capabilities.get("china_vehicle_commands") is True
 
     @property
+    def charging_plan_readable(self) -> bool:
+        """Return whether this region's client can read the charging plan back."""
+
+        return self.coordinator.region not in CHARGING_PLAN_UNREADABLE_REGIONS
+
+    @property
     def vehicle_platform(self) -> str:
         """Return the normalized vehicle backend platform."""
         return str((self.vehicle or {}).get("platform") or "").lower()
@@ -170,6 +177,12 @@ async def async_call_gwm_api(
         raise HomeAssistantError(
             translation_domain=DOMAIN,
             translation_key="cloud_auth_failed",
+        ) from err
+    except GwmBrBusyError as err:
+        _log_gwm_client_failure(err)
+        raise HomeAssistantError(
+            translation_domain=DOMAIN,
+            translation_key="br_charging_busy",
         ) from err
     except GwmCommandForbidden as err:
         raise HomeAssistantError(
