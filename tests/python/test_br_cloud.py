@@ -1569,12 +1569,19 @@ class _PlanApi:
 
 
 async def _added_switch(
-    monkeypatch: pytest.MonkeyPatch, region: str, api: _PlanApi, restored: str | None
+    monkeypatch: pytest.MonkeyPatch,
+    region: str,
+    api: _PlanApi,
+    restored: str | None,
+    *,
+    extra: dict[str, Any] | None = None,
+    current: bool | None = None,
 ) -> tuple[Any, _PlanCoordinator]:
     """Add a schedule switch to a fake coordinator with an optional restored state."""
     from unittest.mock import AsyncMock
 
     from homeassistant.core import State
+    from homeassistant.helpers.restore_state import RestoredExtraData
     from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
     from custom_components.gwm_ora import switch as switch_platform
@@ -1585,10 +1592,51 @@ async def _added_switch(
         "async_get_last_state",
         AsyncMock(return_value=None if restored is None else State("switch.x", restored)),
     )
+    monkeypatch.setattr(
+        switch_platform.GwmChargingScheduleSwitch,
+        "async_get_last_extra_data",
+        AsyncMock(return_value=None if extra is None else RestoredExtraData(extra)),
+    )
     coordinator = _PlanCoordinator(region)
+    if current is not None:
+        coordinator.set_charging_plan_active(VIN, current)
     entity = switch_platform.GwmChargingScheduleSwitch(api, coordinator, VIN)
     await entity.async_added_to_hass()
     return entity, coordinator
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("accepted", [True, False])
+async def test_br_switch_restores_an_accepted_plan_saved_while_unavailable(
+    monkeypatch: pytest.MonkeyPatch, accepted: bool
+) -> None:
+    """Check that the accepted plan survives a restart even when the switch was shown unavailable."""
+    entity, _ = await _added_switch(
+        monkeypatch, REGION_BR, _PlanApi(), "unavailable", extra={"charging_plan_active": accepted}
+    )
+    assert entity.is_on is accepted
+    assert entity.extra_restore_state_data.as_dict() == {"charging_plan_active": accepted}
+
+
+@pytest.mark.asyncio
+async def test_br_switch_keeps_a_newer_service_result_over_the_restored_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Check that a plan accepted by a service before the switch was added is not replaced."""
+    entity, _ = await _added_switch(
+        monkeypatch, REGION_BR, _PlanApi(), "on", extra={"charging_plan_active": True}, current=False
+    )
+    assert entity.is_on is False
+
+
+@pytest.mark.asyncio
+async def test_readable_region_switch_stores_no_extra_restore_data(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Check that regions with a plan readback do not persist the assumed state."""
+    from custom_components.gwm_ora.gwm_client import ChargingPlanInfo, ChargingPlanItem
+
+    live = ChargingPlanInfo((ChargingPlanItem(1, "1", 1_800_000_000_000, 1_800_000_028_800),))
+    entity, _ = await _added_switch(monkeypatch, "eu", _PlanApi(live.as_dict()), None)
+    assert entity.is_on is True and entity.extra_restore_state_data is None
 
 
 @pytest.mark.asyncio
