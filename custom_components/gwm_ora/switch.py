@@ -268,7 +268,7 @@ class GwmChargingScheduleSwitch(GwmEntity, SwitchEntity, RestoreEntity):
         self._attr_unique_id = f"{vin}_charging_schedule"
 
     async def async_added_to_hass(self) -> None:
-        """Load the charging-plan state: live where readable, else the last known state."""
+        """Load the live charging-plan state, or the last known state where it cannot be read."""
         await super().async_added_to_hass()
         if not self.charging_control_available:
             return
@@ -278,12 +278,13 @@ class GwmChargingScheduleSwitch(GwmEntity, SwitchEntity, RestoreEntity):
                 response = await self._api.async_get_charging_plan(self.vin)
             except (GwmCommandError, GwmClientError) as err:
                 _LOGGER.debug("Could not read the current GWM charging plan: %s", err)
-            else:
-                self.coordinator.set_charging_plan_active(
-                    self.vin, _charging_plan_is_active(response)
-                )
                 return
+            self.coordinator.set_charging_plan_active(
+                self.vin, _charging_plan_is_active(response)
+            )
+            return
 
+        # Only regions without a plan readback (Brazil) fall back to the last known state.
         last_state = await self.async_get_last_state()
         restored = (
             None
