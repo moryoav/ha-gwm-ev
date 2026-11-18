@@ -1693,6 +1693,32 @@ async def test_br_switch_keeps_a_newer_service_result_over_the_restored_state(
 
 
 @pytest.mark.asyncio
+async def test_br_switch_keeps_a_service_result_that_lands_while_restoring(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Check that a service completing during the restore await is not overwritten by older data."""
+    from homeassistant.helpers.restore_state import RestoredExtraData
+    from homeassistant.helpers.update_coordinator import CoordinatorEntity
+
+    from custom_components.gwm_ora import switch as switch_platform
+
+    coordinator = _PlanCoordinator(REGION_BR)
+
+    async def no_parent(self: object) -> None:
+        return None
+
+    async def restore_while_a_clear_lands(self: object) -> RestoredExtraData:
+        coordinator.set_charging_plan_active(VIN, False)  # the clear service completes meanwhile
+        return RestoredExtraData({"charging_plan_active": True})
+
+    monkeypatch.setattr(CoordinatorEntity, "async_added_to_hass", no_parent)
+    monkeypatch.setattr(switch_platform.GwmChargingScheduleSwitch, "async_get_last_extra_data", restore_while_a_clear_lands)
+    entity = switch_platform.GwmChargingScheduleSwitch(_PlanApi(), coordinator, VIN)
+    await entity.async_added_to_hass()
+    assert entity.is_on is False
+
+
+@pytest.mark.asyncio
 async def test_readable_region_switch_stores_no_extra_restore_data(monkeypatch: pytest.MonkeyPatch) -> None:
     """Check that regions with a plan readback do not persist the assumed state."""
     from custom_components.gwm_ora.gwm_client import ChargingPlanInfo, ChargingPlanItem

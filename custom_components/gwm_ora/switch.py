@@ -299,7 +299,8 @@ class GwmChargingScheduleSwitch(GwmEntity, SwitchEntity, RestoreEntity):
             # Earlier versions stored only the displayed state.
             last_state = await self.async_get_last_state()
             restored = None if last_state is None else {"on": True, "off": False}.get(last_state.state)
-        if restored is not None:
+        # Check again: a service may have completed while the restored data was loading.
+        if restored is not None and self.coordinator.charging_plan_active(self.vin) is None:
             self.coordinator.set_charging_plan_active(self.vin, restored)
 
     @property
