@@ -1,4 +1,4 @@
-"""BR login and the session that owns re-login.
+"""BR login and the session that owns token renewal.
 
 The login host (a public web portal) is reached with a CLEAN default TLS context:
 no client certificate and no lowered security level. The vehicle client identity

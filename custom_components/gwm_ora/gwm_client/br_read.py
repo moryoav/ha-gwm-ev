@@ -73,7 +73,7 @@ class BrReadClient:
         vehicle_id: str | None = None,
         plan: ChargingPlanCommand | None = None,
     ) -> object:
-        """One bounded read; on a rejected token, re-login once and repeat (reads are idempotent)."""
+        """One bounded read; on a rejected token, renew the session once and repeat (reads are idempotent)."""
         if self._closed:
             raise GwmClosedError(operation=operation)
         deadline = _Deadline(asyncio.get_running_loop().time() + 60.0)

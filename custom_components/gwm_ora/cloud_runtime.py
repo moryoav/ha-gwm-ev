@@ -490,6 +490,16 @@ def stage_cloud_bootstrap(
     store[unique_id] = pending
 
 
+def cloud_bootstrap_staged(
+    hass: HomeAssistant,
+    unique_id: str | None,
+) -> bool:
+    """Return whether a handoff is waiting for this entry's next setup."""
+
+    store = hass.data.get(_HANDOFF_DATA_KEY)
+    return isinstance(store, dict) and isinstance(store.get(unique_id), _PendingBootstrap)
+
+
 def consume_cloud_bootstrap(
     hass: HomeAssistant,
     unique_id: str | None,
@@ -1310,7 +1320,7 @@ class GwmCloudClient:
             raise
 
     async def _async_with_br_session[T](self, action: Callable[[], Awaitable[T]]) -> T:
-        """Run one read; ``BrSession`` re-logs in by password, so only persist rotated tokens."""
+        """Run one serialized read and persist any tokens ``BrSession`` rotated through a silent refresh."""
         async with self._session_renewal_lock:
             await self._async_flush_pending_auth_state()
             try:
@@ -1320,7 +1330,7 @@ class GwmCloudClient:
                     await self.async_authentication_rejected()
                 raise
             except BaseException:
-                # A re-login or silent refresh may have rotated tokens before this failure or a cancellation; keep them.
+                # A silent refresh may have rotated tokens before this failure or a cancellation; keep them.
                 with suppress(Exception):
                     await self._async_publish_br_tokens()
                 raise
@@ -1328,7 +1338,7 @@ class GwmCloudClient:
             return result
 
     async def _async_publish_br_tokens(self) -> None:
-        """Persist tokens issued by an automatic BR re-login, keeping the handoff current."""
+        """Persist tokens rotated by a silent BR refresh, keeping the handoff current."""
         bootstrap = self._bootstrap
         reader = self._client
         if bootstrap is None or type(bootstrap.state) is not BrAuthState or not isinstance(reader, BrCloudReader):
@@ -1568,6 +1578,16 @@ class GwmCloudClient:
     async def aclose(self) -> None:
         """Drain APAC recovery before closing the owned regional transport."""
 
+        if self.region == REGION_BR:
+            # Retry a rotated-token save that failed during a read, so a restart does not
+            # resume with a refresh token the server already replaced.
+            async with self._session_renewal_lock:
+                try:
+                    with suppress(Exception):
+                        await self._async_flush_pending_auth_state()
+                finally:
+                    await self._client.aclose()
+            return
         if self.region != REGION_APAC:
             await self._client.aclose()
             return

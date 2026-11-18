@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import ssl
 from dataclasses import replace
+from datetime import UTC, datetime
+from pathlib import Path
 from types import MappingProxyType
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -14,9 +17,10 @@ pytest.importorskip("pytest_asyncio")
 pytest.importorskip("homeassistant")
 
 from homeassistant.config_entries import ConfigEntry, ConfigFlowResult
+from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 
-from custom_components.gwm_ora import config_flow
+from custom_components.gwm_ora import cloud_storage, config_flow
 from custom_components.gwm_ora.cloud_auth import cloud_unique_id
 from custom_components.gwm_ora.cloud_runtime import consume_cloud_bootstrap
 from custom_components.gwm_ora.const import (
@@ -49,7 +53,9 @@ from custom_components.gwm_ora.gwm_client import (
     ChinaAuthenticated,
     ChinaAuthState,
     ChinaCredentials,
+    ChinaInitializationRequired,
     ChinaRiskControlRequired,
+    ChinaVerificationRequired,
     EuAuthenticated,
     EuAuthState,
     EuCredentials,
@@ -980,6 +986,197 @@ async def test_cloud_reconfigure_can_replace_overseas_account_with_china(
     bootstrap = consume_cloud_bootstrap(flow.hass, updates[0]["unique_id"])
     assert bootstrap is not None
     assert bootstrap.session is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("region", ["cn", "eu", "aus", "rus", "ap"])
+@pytest.mark.parametrize("request_new_sms", [None, False, True])
+async def test_reconfigure_sms_request_is_explicit_and_china_only(
+    monkeypatch: pytest.MonkeyPatch, region: str, request_new_sms: bool | None,
+) -> None:
+    """Bypass saved state only for an explicit China request, retaining device identity."""
+    country = {"cn": "CN", "eu": "DE", "aus": "AU", "rus": "RU", "ap": "PK"}[region]
+    credentials = config_flow.GwmCloudCredentials(
+        region, country, "13800138000" if region == "cn" else "account@example.invalid",
+        None if region == "cn" else "password", "f" * 32,
+    )
+    saved_state = _authenticated(credentials).state
+    entry = _entry(data=config_flow.cloud_entry_data(credentials))
+    calls: list[dict[str, Any]] = []
+
+    class Authenticator:
+        async def async_authenticate(self, selected: config_flow.GwmCloudCredentials, **kwargs: Any) -> object:
+            assert selected == credentials
+            calls.append(kwargs)
+            raise GwmRateLimitError(operation="request_verification")
+
+    flow = config_flow.GwmConfigFlow()
+    flow.hass = _Hass(entry)  # type: ignore[assignment]
+    flow.context = {"source": "reconfigure", "entry_id": entry.entry_id}
+    flow._cloud_authenticator = Authenticator()  # type: ignore[assignment]
+    store = config_flow.cloud_state_store(flow.hass, entry.unique_id)
+    store.loaded = saved_state
+    update = Mock()
+    monkeypatch.setattr(flow, "async_update_reload_and_abort", update)
+    form = await flow.async_step_reconfigure({CONF_REGION: region})
+    assert ("request_new_sms" in form["data_schema"].schema) == (region == "cn")
+    user_input = config_flow.cloud_entry_data(credentials)
+    if region == "cn":
+        assert form["data_schema"]({CONF_ACCOUNT: credentials.account})["request_new_sms"] is False
+    if request_new_sms is not None:
+        user_input["request_new_sms"] = request_new_sms
+
+    failed = await flow.async_step_reconfigure_account(user_input)
+
+    assert failed["errors"] == {"base": "rate_limited"}
+    assert len(calls) == 1
+    assert calls[0]["state"] is (None if region == "cn" and request_new_sms else saved_state)
+    assert calls[0]["verification_code"] is None
+    assert store.saved == []
+    update.assert_not_called()
+    if region == "cn":
+        assert failed["data_schema"]({CONF_ACCOUNT: credentials.account})["request_new_sms"] is False
+
+
+@pytest.mark.asyncio
+async def test_china_fresh_sms_reconfigure_preserves_continuations_and_entry(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """Persist fresh SMS recovery across restarts while preserving the same-account journal."""
+    credentials = config_flow.GwmCloudCredentials("cn", "CN", "13800138000", None, "f" * 32)
+    data = config_flow.cloud_entry_data(credentials)
+    authenticated = _authenticated(credentials)
+    old_state = replace(authenticated.state, g_token="old-g-token")
+    continuation = replace(
+        ChinaAuthState.for_credentials(credentials.client_credentials()),
+        verification_requested_at=datetime.now(UTC),
+    )
+    rejected = replace(continuation, verification_requested_at=None)
+    partial = replace(
+        authenticated.state, bean_tech_access_token=None, auto_ai_token_id=None, auto_ai_user_id=None,
+    )
+    responses = iter([
+        ChinaVerificationRequired(continuation, code_requested=True),
+        ChinaVerificationRequired(rejected, code_requested=False, code_rejected=True),
+        GwmRateLimitError(operation="login"),
+        ChinaInitializationRequired(partial, failures=("bean_tech",)),
+        authenticated,
+    ])
+    calls: list[dict[str, Any]] = []
+
+    class Authenticator:
+        async def async_authenticate(self, selected: config_flow.GwmCloudCredentials, **kwargs: Any) -> object:
+            assert selected == credentials
+            calls.append(kwargs)
+            result = next(responses)
+            if isinstance(result, Exception):
+                raise result
+            return result
+
+    entry = _entry(data=data, options={CONF_ENABLE_REMOTE_COMMANDS: True, CONF_POLL_INTERVAL_SECONDS: 120})
+    storage_hass = HomeAssistant(str(tmp_path))
+    store = cloud_storage.cloud_state_store(storage_hass, entry.unique_id)
+    await store.async_save_auth_state(credentials, old_state)
+    await store.async_record_accepted_command(
+        credentials, vehicle_id="SYNTHETIC-VEHICLE", command_name="climate",
+        cloud_command_id="SYNTHETIC-COMMAND", accepted_at=datetime.now(UTC),
+    )
+    journal = await store.async_get_command_journal(data)
+    monkeypatch.setattr(
+        config_flow, "cloud_state_store",
+        lambda _hass, unique_id: cloud_storage.cloud_state_store(storage_hass, unique_id),
+    )
+    flow = config_flow.GwmConfigFlow()
+    flow.hass = _Hass(entry)  # type: ignore[assignment]
+    flow.context = {"source": "reconfigure", "entry_id": entry.entry_id}
+    flow._cloud_authenticator = Authenticator()  # type: ignore[assignment]
+    update = Mock(return_value={"type": FlowResultType.ABORT, "reason": "reconfigure_successful"})
+    monkeypatch.setattr(flow, "async_update_reload_and_abort", update)
+
+    await flow.async_step_reconfigure({CONF_REGION: "cn"})
+    verification = await flow.async_step_reconfigure_account({CONF_ACCOUNT: credentials.account, "request_new_sms": True})
+    assert verification["step_id"] == "verification"
+    restarted = cloud_storage.cloud_state_store(HomeAssistant(str(tmp_path)), entry.unique_id)
+    assert await restarted.async_load_auth_state(data) == continuation
+    assert await restarted.async_get_command_journal(data) == journal
+    assert (await flow.async_step_verification())["step_id"] == "verification"
+    assert len(calls) == 1
+    update.assert_not_called()
+    rejected_form = await flow.async_step_verification({CONF_VERIFICATION_CODE: "111111"})
+    assert rejected_form["errors"] == {CONF_VERIFICATION_CODE: "invalid_verification_code"}
+    assert await store.async_load_auth_state(data) == rejected
+    limited = await flow.async_step_verification({CONF_VERIFICATION_CODE: "222222"})
+    assert limited["errors"] == {"base": "rate_limited"}
+    assert await store.async_load_auth_state(data) == rejected
+    initialization = await flow.async_step_verification({CONF_VERIFICATION_CODE: "333333"})
+    assert initialization["step_id"] == "initialization"
+    restarted = cloud_storage.cloud_state_store(HomeAssistant(str(tmp_path)), entry.unique_id)
+    assert await restarted.async_load_auth_state(data) == partial
+    assert (await flow.async_step_initialization())["step_id"] == "initialization"
+    assert len(calls) == 4
+    update.assert_not_called()
+    result = await flow.async_step_initialization({})
+
+    assert result["reason"] == "reconfigure_successful"
+    assert [call["state"] for call in calls] == [None, continuation, rejected, rejected, partial]
+    assert [call["verification_code"] for call in calls] == [None, "111111", "222222", "333333", None]
+    update.assert_called_once_with(entry, unique_id=entry.unique_id, title="GWM China", data=data)
+    assert entry.options == {CONF_ENABLE_REMOTE_COMMANDS: True, CONF_POLL_INTERVAL_SECONDS: 120}
+    assert "_test_removed_cloud_states" not in flow.hass.data
+    bootstrap = consume_cloud_bootstrap(flow.hass, entry.unique_id)
+    assert bootstrap is not None and bootstrap.state == authenticated.state
+    restarted = cloud_storage.cloud_state_store(HomeAssistant(str(tmp_path)), entry.unique_id)
+    assert await restarted.async_load_auth_state(data) == authenticated.state
+    assert await restarted.async_get_command_journal(data) == journal
+
+
+@pytest.mark.asyncio
+async def test_china_fresh_sms_reconfigure_checks_duplicates_before_authentication(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Do not request an SMS for an account owned by another entry."""
+    data = {CONF_CONNECTION_TYPE: CONNECTION_TYPE_CLOUD, CONF_REGION: "cn", CONF_COUNTRY: "CN", CONF_ACCOUNT: "13800138000"}
+    entry = _entry(data=data)
+    duplicate = _entry(data=data, entry_id="other-entry")
+    flow = config_flow.GwmConfigFlow()
+    flow.hass = _Hass(entry)  # type: ignore[assignment]
+    flow.context = {"source": "reconfigure", "entry_id": entry.entry_id}
+    authenticator = AsyncMock()
+    flow._cloud_authenticator = authenticator
+    monkeypatch.setattr(flow.hass.config_entries, "async_entry_for_domain_unique_id", lambda *_: duplicate)
+    await flow.async_step_reconfigure({CONF_REGION: "cn"})
+
+    result = await flow.async_step_reconfigure_account({CONF_ACCOUNT: "13800138000", "request_new_sms": True})
+
+    assert result["reason"] == "already_configured"
+    authenticator.async_authenticate.assert_not_called()
+    assert "_test_cloud_state_stores" not in flow.hass.data
+
+
+@pytest.mark.asyncio
+async def test_china_fresh_sms_cancellation_keeps_saved_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cancellation before a new continuation returns does not overwrite saved authentication."""
+    credentials = config_flow.GwmCloudCredentials("cn", "CN", "13800138000", None, "f" * 32)
+    entry = _entry(data=config_flow.cloud_entry_data(credentials))
+    flow = config_flow.GwmConfigFlow()
+    flow.hass = _Hass(entry)  # type: ignore[assignment]
+    flow.context = {"source": "reconfigure", "entry_id": entry.entry_id}
+    authenticator = AsyncMock()
+    authenticator.async_authenticate.side_effect = asyncio.CancelledError
+    flow._cloud_authenticator = authenticator
+    store = config_flow.cloud_state_store(flow.hass, entry.unique_id)
+    store.loaded = _authenticated(credentials).state
+    update = Mock()
+    monkeypatch.setattr(flow, "async_update_reload_and_abort", update)
+    await flow.async_step_reconfigure({CONF_REGION: "cn"})
+
+    with pytest.raises(asyncio.CancelledError):
+        await flow.async_step_reconfigure_account({CONF_ACCOUNT: credentials.account, "request_new_sms": True})
+
+    assert store.saved == []
+    update.assert_not_called()
 
 
 @pytest.mark.asyncio
