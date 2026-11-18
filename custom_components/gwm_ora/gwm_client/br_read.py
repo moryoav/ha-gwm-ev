@@ -66,7 +66,7 @@ class BrReadClient:
                 self._closed = True
 
     async def _read(self, operation: str, vehicle_id: str | None = None) -> object:
-        """One bounded read; on a rejected token, re-login once and repeat (reads are idempotent)."""
+        """One bounded read; on a rejected token, renew the session once and repeat (reads are idempotent)."""
         if self._closed:
             raise GwmClosedError(operation=operation)
         deadline = _Deadline(asyncio.get_running_loop().time() + 60.0)
