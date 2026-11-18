@@ -10,6 +10,7 @@ from homeassistant.components.switch import SwitchEntity
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.restore_state import RestoredExtraData, RestoreEntity
 from homeassistant.util import dt as dt_util
 
 from . import GwmConfigEntry
@@ -22,6 +23,7 @@ from .gwm_client import GwmClientError
 PARALLEL_UPDATES = 0
 
 _LOGGER = logging.getLogger(__name__)
+_RESTORED_PLAN_ACTIVE = "charging_plan_active"
 
 
 class GwmSmartChargeSwitch(BeanTechChargingEntity, SwitchEntity):
@@ -118,9 +120,12 @@ async def async_setup_entry(
             coordinator.region == "cn"
             and str(vehicle.get("platform") or "").lower() == "beantech"
         )
-        existing = [
+        existing: list[GwmEntity] = [
             GwmChargingScheduleSwitch(api, coordinator, vin),
         ]
+        if coordinator.region == "br":
+            # Read-only region: the scheduled-charging switch is the only switch.
+            return existing
         if coordinator.region == "ap" and str(vehicle.get("platform") or "").strip().casefold() == "beantech":
             specs = (
                 ("seat_heating_start", "seat_heating_stop", "front_driver_seat_heater_level", "seat_heating"),
@@ -244,14 +249,15 @@ class GwmFrontDefrosterSwitch(GwmEntity, SwitchEntity):
         self.coordinator.async_track_command(command)
 
 
-class GwmChargingScheduleSwitch(GwmEntity, SwitchEntity):
+class GwmChargingScheduleSwitch(GwmEntity, SwitchEntity, RestoreEntity):
     """Manual on/off for scheduled charging.
 
     On sets a charging window from now for DEFAULT_CHARGE_WINDOW_HOURS (the car
     charges only within it); off clears the plan (the car charges whenever it is
     plugged in). For precise windows, use the ``gwm_ora.set_charging_plan``
-    service. Optimistic, because the vehicle does not report its charging plan
-    in the polled status snapshot.
+    service. The vehicle does not report this plan in the polled status snapshot, so
+    the state is assumed: the last known state, persisted across reloads and restarts
+    and read live only in regions whose client can read the plan back.
     """
 
     _attr_translation_key = "charging_schedule"
@@ -263,20 +269,47 @@ class GwmChargingScheduleSwitch(GwmEntity, SwitchEntity):
         self._attr_unique_id = f"{vin}_charging_schedule"
 
     async def async_added_to_hass(self) -> None:
-        """Load the current charging-plan state when the entity is added."""
+        """Load the live charging-plan state, or the last known state where it cannot be read."""
         await super().async_added_to_hass()
         if not self.charging_control_available:
             return
 
-        try:
-            response = await self._api.async_get_charging_plan(self.vin)
-        except (GwmCommandError, GwmClientError) as err:
-            _LOGGER.debug("Could not read the current GWM charging plan: %s", err)
+        if self.charging_plan_readable:
+            try:
+                response = await self._api.async_get_charging_plan(self.vin)
+            except (GwmCommandError, GwmClientError) as err:
+                _LOGGER.debug("Could not read the current GWM charging plan: %s", err)
+                return
+            self.coordinator.set_charging_plan_active(
+                self.vin, _charging_plan_is_active(response)
+            )
             return
 
-        self.coordinator.set_charging_plan_active(
-            self.vin, _charging_plan_is_active(response)
-        )
+        # Only regions without a plan readback (Brazil) fall back to the last known state.
+        # A result accepted since this runtime started (a service call while the entity
+        # was disabled) is newer than anything restored.
+        if self.coordinator.charging_plan_active(self.vin) is not None:
+            return
+        restored: bool | None = None
+        extra = await self.async_get_last_extra_data()
+        if extra is not None:
+            value = extra.as_dict().get(_RESTORED_PLAN_ACTIVE)
+            restored = value if isinstance(value, bool) else None
+        if restored is None:
+            # Earlier versions stored only the displayed state.
+            last_state = await self.async_get_last_state()
+            restored = None if last_state is None else {"on": True, "off": False}.get(last_state.state)
+        # Check again: a service may have completed while the restored data was loading.
+        if restored is not None and self.coordinator.charging_plan_active(self.vin) is None:
+            self.coordinator.set_charging_plan_active(self.vin, restored)
+
+    @property
+    def extra_restore_state_data(self) -> RestoredExtraData | None:
+        """Persist the last accepted plan state even while the switch shows unavailable."""
+        if self.charging_plan_readable:
+            return None
+        active = self.coordinator.charging_plan_active(self.vin)
+        return RestoredExtraData({_RESTORED_PLAN_ACTIVE: active}) if isinstance(active, bool) else None
 
     @property
     def is_on(self) -> bool | None:
