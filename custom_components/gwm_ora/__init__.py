@@ -25,6 +25,7 @@ from .cloud_commands import GwmCommandApi
 from .cloud_runtime import (
     GwmCloudBootstrap,
     GwmCloudClient,
+    cloud_bootstrap_staged,
     consume_cloud_bootstrap,
     stage_cloud_bootstrap,
 )
@@ -218,6 +219,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: GwmConfigEntry) -> bool
         if (
             (bootstrap := cloud.reusable_bootstrap) is not None
             and entry.unique_id is not None
+            # A Brazil reauth or reconfigure stages fresh tokens before the reload; keep them.
+            and not (cloud.region == REGION_BR and cloud_bootstrap_staged(hass, entry.unique_id))
         ):
             stage_cloud_bootstrap(hass, entry.unique_id, bootstrap)
         await cloud.aclose()
