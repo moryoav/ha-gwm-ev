@@ -438,6 +438,44 @@ async def test_br_reconfigure_keeps_charging_consent_only_for_the_same_account(
 
 
 @pytest.mark.asyncio
+async def test_reconfiguring_away_from_brazil_drops_its_charging_consent(
+    monkeypatch: pytest.MonkeyPatch, store: _Store
+) -> None:
+    """Check that a Brazil charging opt-in never enables charging writes in another region."""
+    from types import SimpleNamespace
+
+    previous = _credentials()
+    entry = ConfigEntry(
+        data=cloud_entry_data(previous), discovery_keys=MappingProxyType({}), domain=DOMAIN,
+        entry_id="br-entry", minor_version=1,
+        options={CONF_POLL_INTERVAL_SECONDS: 90, CONF_ENABLE_CHARGING_CONTROL: True},
+        source="user", subentries_data=None, title="GWM Brazil", unique_id=cloud_unique_id(previous), version=1,
+    )
+    flow = config_flow.GwmConfigFlow()
+    flow.hass = _Hass(entry)  # type: ignore[assignment]
+    flow.context = {"source": "reconfigure", "entry_id": entry.entry_id}
+    flow._cloud_mode = "reconfigure"
+    flow._cloud_credentials = GwmCloudCredentials("eu", "DE", ACCOUNT, PASSWORD, DEVICE)
+    updates: list[dict[str, Any]] = []
+
+    def update_and_abort(updated: ConfigEntry, **kwargs: Any) -> ConfigFlowResult:
+        updates.append(kwargs)
+        return flow.async_abort(reason="reconfigure_successful")
+
+    async def remove_state(hass: object, unique_id: object) -> None:
+        return None
+
+    monkeypatch.setattr(flow, "async_update_reload_and_abort", update_and_abort)
+    monkeypatch.setattr(config_flow, "async_remove_cloud_state", remove_state)
+    monkeypatch.setattr(config_flow.GwmCloudBootstrap, "from_authentication", lambda credentials, result: object())
+    monkeypatch.setattr(config_flow, "stage_cloud_bootstrap", lambda hass, unique_id, bootstrap: None)
+
+    await flow._async_finish_cloud(SimpleNamespace(state=object()))  # type: ignore[arg-type]
+
+    assert updates[0]["options"] == {CONF_POLL_INTERVAL_SECONDS: 90}
+
+
+@pytest.mark.asyncio
 async def test_br_options_expose_only_polling_charging_opt_in_and_log_level() -> None:
     """Check that BR options expose only polling, the charging opt-in and the log level."""
     entry = ConfigEntry(
@@ -1175,6 +1213,10 @@ def test_br_diagnostics_know_the_hosts_and_redact_private_values(tmp_path: Path)
     exchange = begin_request(request, connect_timeout=10.0, read_timeout=20.0, remaining=30.0)
     assert exchange is not None
     assert exchange.fields["region"] == "br" and exchange.fields["signing"] == "none"
+    assert exchange.fields["base_headers_complete"] is True  # the portal needs no app version or channel
+    incomplete = replace(request, headers={k: v for k, v in request.headers.items() if k != "brandid"})
+    missing = begin_request(incomplete, connect_timeout=10.0, read_timeout=20.0, remaining=30.0)
+    assert missing is not None and missing.fields["base_headers_complete"] is False
     flattened = json.dumps(exchange.fields, default=str)
     assert ACCOUNT not in flattened and DEVICE not in flattened and PASSWORD not in flattened
     assert br_flow.BrAuthenticated is BrAuthenticated
