@@ -10,6 +10,8 @@ Install **GWM** from **Settings > Marketplace**. In the setup form, select your 
 
 For Australia and New Zealand, use **Current GWM ANZ app login** for a new setup. Choose **Legacy add-on-compatible login** only when the same account previously worked with the retired add-on.
 
+For a Mainland-China session that cannot be restored, I recommend opening **Reconfigure**, keeping **Mainland China** and the registered phone number, and selecting **Request a new SMS verification code**. Enter the new code to reconnect the existing entry. The option is off by default; sign-in progress is saved for restart recovery.
+
 Existing add-on entries are not migrated. Remove the previous entry and add GWM again. No password, token, certificate, or add-on state is imported.
 
 See the repository README for account-region guidance, safety notes, and troubleshooting. [GWM README](https://github.com/moryoav/ha-gwm-ev)

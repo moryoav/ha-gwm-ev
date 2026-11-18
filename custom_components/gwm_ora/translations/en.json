@@ -56,12 +56,14 @@
         "title": "Authenticate replacement account",
         "description": "The replacement settings are applied only after GWM accepts them. Changing account context securely discards all old account-bound authentication and command-journal state.",
         "data": {
+          "request_new_sms": "Request a new SMS verification code",
           "country": "Registration country",
           "authentication_method": "ANZ authentication method",
           "account": "Email, username, or registered phone",
           "password": "Password"
         },
         "data_description": {
+          "request_new_sms": "For Mainland China, select this if the saved session cannot be restored. Continue with a new SMS code; sign-in progress is saved for restart recovery.",
           "authentication_method": "Changing this method discards the previous account-bound session and requires a fresh login."
         }
       },
