@@ -976,6 +976,69 @@ async def test_br_setup_keeps_the_handoff_when_its_save_fails(
 
 
 @pytest.mark.asyncio
+async def test_br_startup_retries_when_saving_the_restored_session_fails(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from homeassistant.exceptions import ConfigEntryNotReady
+
+    credentials, bootstrap = _bootstrap(tmp_path)
+    context = _context(tmp_path)
+    monkeypatch.setattr(integration, "load_installed_br_context", lambda: context)
+    entry = ConfigEntry(
+        data=cloud_entry_data(credentials), discovery_keys=MappingProxyType({}), domain=DOMAIN,
+        entry_id="br-entry", minor_version=1, options={}, source="user", subentries_data=None,
+        title="GWM Brazil", unique_id=cloud_unique_id(credentials), version=1,
+    )
+
+    class Store:
+        cleared = 0
+
+        async def async_load_auth_state(self, data: object) -> BrAuthState:
+            return bootstrap.state
+
+        async def async_save_auth_state(self, *args: object) -> None:
+            raise OSError("storage unavailable")
+
+        async def async_clear_auth_state(self, data: object) -> None:
+            Store.cleared += 1
+
+    with pytest.raises(ConfigEntryNotReady):
+        await integration._async_load_cloud_bootstrap(HomeAssistant(str(tmp_path)), entry, Store())  # type: ignore[arg-type]
+    assert Store.cleared == 0
+
+
+@pytest.mark.asyncio
+async def test_br_expired_session_code_on_a_read_renews_and_repeats_the_read(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    transport = FakeTransport(
+        envelope(None, code="550004", description="token expired"), _refresh(), envelope(VEHICLES), envelope(STATUS)
+    )
+    cloud, store = await _br_cloud(monkeypatch, tmp_path, transport, expired=False)
+
+    await cloud.async_get_vehicle_data()
+
+    assert [r.operation for r in transport.requests] == [
+        "acquire_vehicles", "refresh_token", "acquire_vehicles", "get_last_status",
+    ]
+    assert store.cleared == 0
+    await cloud.aclose()
+
+
+def test_br_state_with_an_out_of_range_expiry_is_invalid_not_a_crash() -> None:
+    from custom_components.gwm_ora.gwm_client.br_state import decode_br_state
+
+    bootstrap_state = BrAuthState.for_credentials(_credentials().client_credentials())
+    record = {
+        "account_binding": bootstrap_state.account_binding,
+        "device_id": bootstrap_state.device_id,
+        "tokens": {"access_token": "a", "refresh_token": "r", "expires_at": 10**400},
+    }
+    with pytest.raises(ValueError, match="br_state_invalid"):
+        decode_br_state(record)
+
+
+@pytest.mark.asyncio
 async def test_br_refused_refresh_asks_for_reauthentication_without_a_password_login(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
