@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import math
 import ssl
 import time
 from collections.abc import Callable
@@ -58,8 +59,11 @@ def jwt_expiry(token: str) -> float | None:
         payload = token.split(".")[1]
         data = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
         exp = data.get("exp") if isinstance(data, dict) else None
-        return float(exp) if isinstance(exp, int | float) and not isinstance(exp, bool) else None
-    except (IndexError, ValueError, TypeError, UnicodeError):
+        if not isinstance(exp, int | float) or isinstance(exp, bool):
+            return None
+        expiry = float(exp)
+        return expiry if math.isfinite(expiry) else None
+    except (IndexError, ValueError, TypeError, UnicodeError, OverflowError):
         return None
 
 
