@@ -688,7 +688,9 @@ class GwmConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             )
         except GwmTlsError as error:
             _log_cloud_auth_failure(error, credentials)
-            return None, "br_tls_rejected" if credentials.region == REGION_BR else "cannot_connect"
+            # Only the vehicle gateway checks the client certificate; the login portal does not.
+            certificate_rejected = credentials.region == REGION_BR and error.operation != "login"
+            return None, "br_tls_rejected" if certificate_rejected else "cannot_connect"
         except GwmTransportError as error:
             _log_cloud_auth_failure(error, credentials)
             return None, "cannot_connect"

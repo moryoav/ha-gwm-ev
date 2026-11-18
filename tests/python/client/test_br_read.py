@@ -64,6 +64,7 @@ def test_jwt_expiry_reads_exp_without_trusting_signature() -> None:
     """Check that the token expiry is read from the exp claim without verifying the signature."""
     assert jwt_expiry(fake_jwt(123)) == 123.0
     assert jwt_expiry("not-a-jwt") is None
+    assert jwt_expiry(fake_jwt(10**400)) is None  # beyond float range: unknown, not a crash
 
 
 @pytest.mark.asyncio
