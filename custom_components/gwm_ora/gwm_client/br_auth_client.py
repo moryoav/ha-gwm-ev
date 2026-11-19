@@ -141,22 +141,35 @@ class BrAuthClient:
         except ValueError:
             raise GwmSchemaError(operation="refresh_token") from None
 
-    async def login(self) -> BrTokens:
-        """One password login. A rejected credential is never retried."""
+    async def _post_auth(self, operation: str, verification_code: str | None = None) -> object:
+        """Send one finite sign-in or verification request using the same device."""
         deadline = _Deadline(asyncio.get_running_loop().time() + 30.0)
         try:
             async with asyncio.timeout_at(deadline.expires_at), self._lock:
                 if self._login_context is None:
                     self._login_context = await asyncio.to_thread(ssl.create_default_context)
                 request = prepare_br_request(
-                    operation="login", ssl_context=self._login_context, credentials=self._credentials
+                    operation=operation, ssl_context=self._login_context,
+                    credentials=self._credentials, verification_code=verification_code,
                 )
                 response = await self._transport.execute(
                     request, deadline=deadline, connect_timeout=10.0, read_timeout=20.0
                 )
-                data = decode_br_envelope(response, operation="login")
+                return decode_br_envelope(response, operation=operation)
         except TimeoutError:
-            raise GwmDeadlineExceededError(operation="login") from None
+            raise GwmDeadlineExceededError(operation=operation) from None
+
+    async def request_verification(self) -> None:
+        """Send the email code after an explicit sign-in returns a challenge."""
+        await self._post_auth("request_verification")
+
+    async def verify_code(self, code: str) -> None:
+        """Check one submitted code without persisting it."""
+        await self._post_auth("verify_code", code)
+
+    async def login(self, verification_code: str | None = None) -> BrTokens:
+        """Sign in once, optionally continuing a device verification challenge."""
+        data = await self._post_auth("login", verification_code)
         if not isinstance(data, dict):
             raise GwmSchemaError(operation="login")
         access, refresh = data.get("accessToken"), data.get("refreshToken")

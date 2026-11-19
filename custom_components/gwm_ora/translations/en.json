@@ -31,7 +31,8 @@
         "title": "Enter verification code",
         "description": "Enter the one-time code sent by GWM. Codes are used once and are never stored.",
         "data": {
-          "verification_code": "Verification code"
+          "verification_code": "Verification code",
+          "request_new_email_code": "Request a new email verification code"
         }
       },
       "session_reclaim": {

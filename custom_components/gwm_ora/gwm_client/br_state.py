@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import math
 import re
 from dataclasses import dataclass, field
 
@@ -57,6 +58,7 @@ class BrAuthState:
     device_id: str = field(repr=False)
     country: str = BR_COUNTRY
     tokens: BrTokens | None = field(default=None, repr=False)
+    verification_requested_at: float | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         """Reject invalid or incomplete persisted session state."""
@@ -67,6 +69,12 @@ class BrAuthState:
             or _DEVICE.fullmatch(self.device_id) is None
             or self.country != BR_COUNTRY
             or (self.tokens is not None and type(self.tokens) is not BrTokens)
+            or (self.verification_requested_at is not None and (
+                isinstance(self.verification_requested_at, bool)
+                or not isinstance(self.verification_requested_at, int | float)
+                or not math.isfinite(self.verification_requested_at)
+                or self.verification_requested_at < 0
+            ))
         ):
             raise ValueError("br_state_invalid")
 
@@ -92,6 +100,7 @@ def encode_br_state(state: BrAuthState) -> dict[str, object]:
     return {
         "account_binding": state.account_binding,
         "device_id": state.device_id,
+        "verification_requested_at": state.verification_requested_at,
         "tokens": None
         if tokens is None
         else {
@@ -106,7 +115,11 @@ def encode_br_state(state: BrAuthState) -> dict[str, object]:
 def decode_br_state(data: object) -> BrAuthState:
     """Decode a strict record."""
     try:
-        if not isinstance(data, dict) or set(data) != {"account_binding", "device_id", "tokens"}:
+        if (
+            not isinstance(data, dict)
+            or not {"account_binding", "device_id", "tokens"}.issubset(data)
+            or set(data) - {"account_binding", "device_id", "tokens", "verification_requested_at"}
+        ):
             raise ValueError("br_state_invalid")
         token_data = data["tokens"]
         if token_data is not None and (
@@ -128,6 +141,9 @@ def decode_br_state(data: object) -> BrAuthState:
                 token_data.get("gw_id"),
             )
         )
-        return BrAuthState(account_binding=data["account_binding"], device_id=data["device_id"], tokens=tokens)
+        return BrAuthState(
+            account_binding=data["account_binding"], device_id=data["device_id"], tokens=tokens,
+            verification_requested_at=data.get("verification_requested_at"),
+        )
     except (TypeError, ValueError, KeyError, OverflowError):
         raise ValueError("br_state_invalid") from None

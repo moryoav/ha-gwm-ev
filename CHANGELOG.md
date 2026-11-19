@@ -10,6 +10,8 @@ This project follows semantic versioning. The Marketplace installs GWM from publ
 
 ### Fixed
 
+- Added Brazil email verification for new-device sign-in challenges. Reused the verification-code form, kept the installation identity across the continuation, preserved the code-request cooldown across restarts, and added an explicit request for a new code. Kept the full app device identity in refresh requests.
+
 - Switched Brazil sign-in to the official app's H5 password-login flow after the vehicle gateways began rejecting fresh PC-portal sessions. Preserved the account and device identity across requests, token renewal, and Home Assistant restarts. Older sessions request one explicit sign-in.
 
 - Signed Brazil login, token refresh, vehicle reads, and charging-plan requests after the cloud began requiring request signatures. Matched the portal proxy path and the Brazilian app's query and JSON canonicalization.

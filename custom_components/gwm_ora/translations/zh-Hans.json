@@ -31,7 +31,8 @@
         "title": "输入验证码",
         "description": "输入 GWM 发送的一次性验证码。验证码仅使用一次，绝不会存储。",
         "data": {
-          "verification_code": "验证码"
+          "verification_code": "验证码",
+          "request_new_email_code": "重新发送电子邮件验证码"
         }
       },
       "session_reclaim": {

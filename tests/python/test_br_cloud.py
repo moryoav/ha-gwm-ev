@@ -1,6 +1,6 @@
 """Brazil region wiring: config flow, runtime, storage and guards, all offline.
 
-BR is read-only: password login (no OTP), ``acquireVehicles`` + ``getLastStatus``
+BR is read-only: password login with email verification, ``acquireVehicles`` + ``getLastStatus``
 and nothing else. Certificates are throwaway files generated in a temp directory.
 """
 
@@ -49,6 +49,7 @@ from custom_components.gwm_ora.const import (
     CONF_POLL_INTERVAL_SECONDS,
     CONF_REGION,
     CONF_SECURITY_PIN,
+    CONF_VERIFICATION_CODE,
     CONFIGURABLE_CLOUD_REGIONS,
     CONNECTION_TYPE_CLOUD,
     DOMAIN,
@@ -327,8 +328,9 @@ async def test_br_country_other_than_br_is_rejected(monkeypatch: pytest.MonkeyPa
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("needs_verification", [False, True])
 async def test_br_reauth_asks_only_for_the_password_and_drops_stale_command_options(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, store: _Store
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, store: _Store, needs_verification: bool
 ) -> None:
     """Check that BR reauth asks only for the password and drops stale command options."""
     credentials = _credentials()
@@ -350,7 +352,10 @@ async def test_br_reauth_asks_only_for_the_password_and_drops_stale_command_opti
         unique_id=cloud_unique_id(credentials),
         version=1,
     )
-    authenticator, _ = _authenticator(monkeypatch, tmp_path, _login(), envelope(VEHICLES))
+    responses = [_login(), envelope(VEHICLES)]
+    if needs_verification:
+        responses = [envelope(None, code="308103"), envelope(None), envelope(None), *responses]
+    authenticator, _ = _authenticator(monkeypatch, tmp_path, *responses)
     flow = config_flow.GwmConfigFlow()
     flow.hass = _Hass(entry)  # type: ignore[assignment]
     flow.context = {"source": "reauth", "entry_id": entry.entry_id}
@@ -366,6 +371,9 @@ async def test_br_reauth_asks_only_for_the_password_and_drops_stale_command_opti
     assert set(form["data_schema"].schema) == {CONF_PASSWORD}
     result = await flow.async_step_reauth_confirm({CONF_PASSWORD: "New-Password-2"})
 
+    if needs_verification:
+        assert result["step_id"] == "verification"
+        result = await flow.async_step_verification({CONF_VERIFICATION_CODE: "123456"})
     assert result["reason"] == "reauth_successful"
     assert updates[0]["data"][CONF_PASSWORD] == "New-Password-2"
     assert updates[0]["options"] == {CONF_POLL_INTERVAL_SECONDS: 90, CONF_ENABLE_CHARGING_CONTROL: True}
@@ -373,6 +381,7 @@ async def test_br_reauth_asks_only_for_the_password_and_drops_stale_command_opti
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("needs_verification", [False, True])
 @pytest.mark.parametrize(
     ("previous_region", "previous_account", "charging_kept"),
     [
@@ -388,6 +397,7 @@ async def test_br_reconfigure_keeps_charging_consent_only_for_the_same_account(
     previous_region: str,
     previous_account: str,
     charging_kept: bool,
+    needs_verification: bool,
 ) -> None:
     """Check that reconfiguration keeps the BR charging opt-in only for the same BR account, like APAC."""
     previous = GwmCloudCredentials(previous_region, "BR" if previous_region == REGION_BR else "DE", previous_account, PASSWORD, DEVICE)
@@ -409,7 +419,10 @@ async def test_br_reconfigure_keeps_charging_consent_only_for_the_same_account(
         unique_id=cloud_unique_id(previous),
         version=1,
     )
-    authenticator, _ = _authenticator(monkeypatch, tmp_path, _login(), envelope(VEHICLES))
+    responses = [_login(), envelope(VEHICLES)]
+    if needs_verification:
+        responses = [envelope(None, code="308103"), envelope(None), envelope(None), *responses]
+    authenticator, _ = _authenticator(monkeypatch, tmp_path, *responses)
     flow = config_flow.GwmConfigFlow()
     flow.hass = _Hass(entry)  # type: ignore[assignment]
     flow.context = {"source": "reconfigure", "entry_id": entry.entry_id}
@@ -430,6 +443,9 @@ async def test_br_reconfigure_keeps_charging_consent_only_for_the_same_account(
         {CONF_COUNTRY: "BR", CONF_ACCOUNT: ACCOUNT, CONF_PASSWORD: PASSWORD}
     )
 
+    if needs_verification:
+        assert result["step_id"] == "verification"
+        result = await flow.async_step_verification({CONF_VERIFICATION_CODE: "123456"})
     assert result["reason"] == "reconfigure_successful"
     expected = {CONF_POLL_INTERVAL_SECONDS: 90}
     if charging_kept:
@@ -1781,3 +1797,97 @@ def test_br_busy_check_ignores_a_non_string_code(code: object) -> None:
     with pytest.raises(GwmApiError) as error:  # normal API error, never a TypeError
         decode_br_envelope(_TransportResponse(200, {}, body), operation="set_charging_plan")
     assert type(error.value).__name__ != "GwmBrBusyError"
+
+
+@pytest.mark.asyncio
+async def test_brazil_email_verification_completes_in_the_existing_form(monkeypatch, tmp_path, store, caplog) -> None:
+    authenticator, transport = _authenticator(
+        monkeypatch, tmp_path, envelope(None, code="308103"), envelope(None),
+        envelope(None, code="308103"), envelope(None), _login(), envelope(VEHICLES),
+    )
+    flow = _flow(monkeypatch, authenticator)
+    await flow.async_step_user({CONF_REGION: "br"})
+    form = await flow.async_step_account({CONF_COUNTRY: "BR", CONF_ACCOUNT: ACCOUNT, CONF_PASSWORD: PASSWORD})
+    assert form["step_id"] == "verification"
+    challenge = store.saved[-1]
+    assert challenge.tokens is None and challenge.verification_requested_at is not None
+    assert _decode_auth_state(REGION_BR, _encode_auth_state(challenge)) == challenge
+    # Resume in a fresh flow, as after closing setup or restarting Home Assistant.
+    store.loaded = _decode_auth_state(REGION_BR, _encode_auth_state(challenge))
+    flow = _flow(monkeypatch, authenticator)
+    await flow.async_step_user({CONF_REGION: "br"})
+    resumed = await flow.async_step_account({CONF_COUNTRY: "BR", CONF_ACCOUNT: ACCOUNT, CONF_PASSWORD: PASSWORD})
+    assert resumed["step_id"] == "verification"
+    caplog.set_level("DEBUG", logger="custom_components.gwm_ora.gwm_client._auth_diagnostics")
+    result = await flow.async_step_verification({CONF_VERIFICATION_CODE: "123456"})
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert [r.operation for r in transport.requests] == [
+        "login", "request_verification", "login", "verify_code", "login", "acquire_vehicles",
+    ]
+    for request in transport.requests:
+        assert request.headers["deviceId"] == request.headers["iccid"] == challenge.device_id
+    checked, login = [json.loads(r.body) for r in transport.requests[3:5]]
+    assert checked["verifyCode"] == login["verifyCode"] == "123456"
+    assert checked["type"] == "17" and checked["validCodeMode"] == 1
+    assert login["validCodeMode"] == "1"
+    assert store.saved[-1].verification_requested_at is None
+    assert store.saved[-1].tokens.gw_id == "synthetic-gw-id"
+    assert all("123456" not in json.dumps(_encode_auth_state(s)) for s in store.saved)
+    assert "123456" not in caplog.text and PASSWORD not in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code", ["308011", "308012", "550002"])
+async def test_brazil_wrong_email_code_keeps_the_form_without_resending(monkeypatch, tmp_path, store, code) -> None:
+    authenticator, transport = _authenticator(
+        monkeypatch, tmp_path, envelope(None, code="308103"), envelope(None), envelope(None, code=code),
+    )
+    flow = _flow(monkeypatch, authenticator)
+    await flow.async_step_user({CONF_REGION: "br"})
+    await flow.async_step_account({CONF_COUNTRY: "BR", CONF_ACCOUNT: ACCOUNT, CONF_PASSWORD: PASSWORD})
+    first = store.saved[-1]
+    result = await flow.async_step_verification({CONF_VERIFICATION_CODE: "999999"})
+    assert result["step_id"] == "verification"
+    assert result["errors"] == {CONF_VERIFICATION_CODE: "invalid_verification_code"}
+    assert store.saved[-1].device_id == first.device_id
+    assert store.saved[-1].verification_requested_at == first.verification_requested_at
+    assert [r.operation for r in transport.requests] == ["login", "request_verification", "verify_code"]
+
+
+@pytest.mark.asyncio
+async def test_brazil_verification_cooldown_survives_storage_and_background_calls_cannot_send_codes(monkeypatch, tmp_path) -> None:
+    authenticator, transport = _authenticator(
+        monkeypatch, tmp_path, envelope(None, code="308103"), envelope(None), envelope(None, code="308103"),
+    )
+    credentials = _credentials()
+    result = await authenticator.async_authenticate(credentials)
+    restored = _decode_auth_state(REGION_BR, _encode_auth_state(result.state))
+    again = await authenticator.async_authenticate(credentials, state=restored)
+    assert again.code_requested is False
+    with pytest.raises(GwmAuthenticationError):
+        await authenticator.async_authenticate(credentials, state=restored, allow_password_login=False)
+    assert [r.operation for r in transport.requests] == ["login", "request_verification", "login"]
+
+
+@pytest.mark.asyncio
+async def test_brazil_verification_form_resends_on_request_and_keeps_the_device(monkeypatch, tmp_path, store) -> None:
+    authenticator, transport = _authenticator(
+        monkeypatch, tmp_path, envelope(None, code="308103"), envelope(None),
+        envelope(None, code="308103"), envelope(None, code="308103"), envelope(None),
+    )
+    flow = _flow(monkeypatch, authenticator)
+    await flow.async_step_user({CONF_REGION: "br"})
+    form = await flow.async_step_account({CONF_COUNTRY: "BR", CONF_ACCOUNT: ACCOUNT, CONF_PASSWORD: PASSWORD})
+    assert "request_new_email_code" in form["data_schema"].schema
+    initial = store.saved[-1]
+    empty = await flow.async_step_verification({})
+    assert empty["errors"] == {CONF_VERIFICATION_CODE: "invalid_verification_code"}
+    limited = await flow.async_step_verification({"request_new_email_code": True})
+    assert limited["errors"] == {"base": "rate_limited"}
+    flow._auth_state = replace(initial, verification_requested_at=initial.verification_requested_at - 601)
+    resent = await flow.async_step_verification({"request_new_email_code": True})
+    assert resent["step_id"] == "verification" and resent["errors"] == {}
+    assert store.saved[-1].device_id == initial.device_id
+    assert [r.operation for r in transport.requests] == [
+        "login", "request_verification", "login", "login", "request_verification",
+    ]
