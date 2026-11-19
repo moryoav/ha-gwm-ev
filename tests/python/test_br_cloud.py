@@ -104,7 +104,7 @@ STATUS = {
 
 
 def _login(exp: int = NOW_FAR) -> object:
-    return envelope({"accessToken": fake_jwt(exp), "refreshToken": "synthetic-refresh"})
+    return envelope({"accessToken": fake_jwt(exp), "refreshToken": "synthetic-refresh", "gwId": "synthetic-gw-id"})
 
 
 def _refresh(exp: int = NOW_FAR, refresh: str = "rotated-refresh") -> object:
@@ -132,7 +132,7 @@ def _credentials(device_id: str = DEVICE) -> GwmCloudCredentials:
 
 def _expired_state(credentials: GwmCloudCredentials) -> BrAuthState:
     state = BrAuthState.for_credentials(credentials.client_credentials())
-    return replace(state, tokens=BrTokens(fake_jwt(1), "synthetic-refresh", 1.0))
+    return replace(state, tokens=BrTokens(fake_jwt(1), "synthetic-refresh", 1.0, gw_id="synthetic-gw-id"))
 
 
 class _ConfigEntries:
@@ -571,7 +571,7 @@ def test_br_credentials_binding_state_and_storage_round_trip() -> None:
     assert cloud_unique_id(credentials).startswith("cloud:br:")
     assert cloud_unique_id(credentials) != cloud_unique_id(GwmCloudCredentials(REGION_BR, "BR", "other@example.invalid", PASSWORD, DEVICE))
 
-    state = replace(BrAuthState.for_credentials(regional), tokens=BrTokens(fake_jwt(NOW_FAR), "synthetic-refresh", float(NOW_FAR)))
+    state = replace(BrAuthState.for_credentials(regional), tokens=BrTokens(fake_jwt(NOW_FAR), "synthetic-refresh", float(NOW_FAR), gw_id="synthetic-gw-id"))
     assert state.matches(regional)
     assert not state.matches(BrAccountCredentials(ACCOUNT, PASSWORD, "f" * 32))
     encoded = _encode_auth_state(state)
@@ -593,7 +593,7 @@ async def test_br_startup_restore_makes_no_request_and_never_logs_in_by_password
 
     fresh = replace(
         BrAuthState.for_credentials(regional),
-        tokens=BrTokens(fake_jwt(NOW_FAR), "synthetic-refresh", float(NOW_FAR)),
+        tokens=BrTokens(fake_jwt(NOW_FAR), "synthetic-refresh", float(NOW_FAR), gw_id="synthetic-gw-id"),
     )
     restored = await authenticator.async_authenticate(credentials, state=fresh, allow_password_login=False)
     assert isinstance(restored, BrAuthenticated)
@@ -617,13 +617,25 @@ async def test_br_startup_restore_makes_no_request_and_never_logs_in_by_password
 # ---------------------------------------------------------------- runtime
 
 
+@pytest.mark.asyncio
+async def test_old_brazil_session_requests_explicit_login_to_recover_gw_id(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    authenticator, transport = _authenticator(monkeypatch, tmp_path)
+    credentials = _credentials()
+    state = replace(_expired_state(credentials), tokens=BrTokens("old-access", "old-refresh"))
+    with pytest.raises(GwmAuthenticationError):
+        await authenticator.async_authenticate(credentials, state=state, allow_password_login=False)
+    assert transport.requests == []
+
+
 def _bootstrap(tmp_path: Path, state_tokens: bool = True, expired: bool = False) -> tuple[GwmCloudCredentials, runtime.GwmCloudBootstrap]:
     """Build BR credentials and a bootstrap, optionally without tokens or with an expired session."""
     credentials = _credentials()
     state = BrAuthState.for_credentials(credentials.client_credentials())
     if state_tokens:
         state = _expired_state(credentials) if expired else replace(
-            state, tokens=BrTokens(fake_jwt(NOW_FAR), "synthetic-refresh", float(NOW_FAR))
+            state, tokens=BrTokens(fake_jwt(NOW_FAR), "synthetic-refresh", float(NOW_FAR), gw_id="synthetic-gw-id")
         )
     bootstrap = runtime.GwmCloudBootstrap.from_authentication(credentials, BrAuthenticated(state, _context(tmp_path)))
     return credentials, bootstrap
@@ -730,7 +742,7 @@ async def test_br_rotated_tokens_are_saved_even_when_the_read_is_cancelled(
 
     async def rotate_then_get_cancelled() -> None:
         # The silent refresh swaps the tokens, then Home Assistant cancels the coroutine.
-        session._tokens = BrTokens(fake_jwt(NOW_FAR), "rotated-refresh", float(NOW_FAR))
+        session._tokens = BrTokens(fake_jwt(NOW_FAR), "rotated-refresh", float(NOW_FAR), gw_id="synthetic-gw-id")
         raise asyncio.CancelledError
 
     with pytest.raises(asyncio.CancelledError):
@@ -835,7 +847,7 @@ async def test_br_unload_keeps_fresh_tokens_staged_by_reauth_or_reconfigure(
     fresh = runtime.GwmCloudBootstrap(
         region=REGION_BR,
         account_binding=running.account_binding,
-        state=replace(running.state, tokens=BrTokens(fake_jwt(NOW_FAR), "fresh-refresh", float(NOW_FAR))),
+        state=replace(running.state, tokens=BrTokens(fake_jwt(NOW_FAR), "fresh-refresh", float(NOW_FAR), gw_id="synthetic-gw-id")),
         session=None,
         br_ssl_context=running.br_ssl_context,
     )
@@ -1280,8 +1292,8 @@ def test_br_diagnostics_know_the_hosts_and_redact_private_values(tmp_path: Path)
     exchange = begin_request(request, connect_timeout=10.0, read_timeout=20.0, remaining=30.0)
     assert exchange is not None
     assert exchange.fields["region"] == "br" and exchange.fields["signing"] == "gwm_auth"
-    assert exchange.fields["base_headers_complete"] is True  # the portal needs no app version or channel
-    incomplete = replace(request, headers={k: v for k, v in request.headers.items() if k != "brandid"})
+    assert exchange.fields["base_headers_complete"] is True  # the app login includes version and channel
+    incomplete = replace(request, headers={k: v for k, v in request.headers.items() if k != "channel"})
     missing = begin_request(incomplete, connect_timeout=10.0, read_timeout=20.0, remaining=30.0)
     assert missing is not None and missing.fields["base_headers_complete"] is False
     flattened = json.dumps(exchange.fields, default=str)

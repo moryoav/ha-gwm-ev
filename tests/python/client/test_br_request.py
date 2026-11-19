@@ -36,11 +36,14 @@ DEVICE = "0123456789abcdef0123456789abcdef"
 
 @pytest.mark.parametrize("operation", ["login", "refresh_token", "acquire_vehicles", "get_last_status", "set_charging_plan"])
 def test_every_brazil_operation_signs_the_wire_body_and_canonical_query(context, monkeypatch, operation) -> None:
-    """Cover proxy path stripping, GET sorting, and POST query-plus-body signing."""
+    """Cover the app login path, GET sorting, and POST query-plus-body signing."""
     monkeypatch.setattr(signing.time, "time_ns", lambda: 1795086000000000000)
     monkeypatch.setattr(signing, "_new_nonce", lambda uppercase: "0123456789abcdef")
     vin = "SYNTHETICVIN000001"
-    kwargs = {"access_token": "synthetic-access", "refresh_token": "synthetic-refresh"}
+    kwargs = {
+        "access_token": "synthetic-access", "refresh_token": "synthetic-refresh",
+        "gw_id": "synthetic-gw-id", "device_id": DEVICE,
+    }
     if operation == "login":
         kwargs = {"credentials": BrCredentials.from_password("a+b@example.invalid", "Synthetic1", DEVICE)}
     elif operation == "refresh_token":
@@ -55,8 +58,7 @@ def test_every_brazil_operation_signs_the_wire_body_and_canonical_query(context,
     headers = dict(request.headers)
     path = urlsplit(request.url).path
     if operation == "login":
-        assert path.startswith("/br-official-commerce/br-official-gateway/")
-        path = "/pc-api/api/v1.0/userAuth/loginAccount"
+        assert path == "/app-api/api/v2.0/userAuth/loginWithPassword"
     # Independent reference assembled from each operation's wire contract.
     parameters = ""
     if operation == "get_last_status":
@@ -77,6 +79,9 @@ def test_every_brazil_operation_signs_the_wire_body_and_canonical_query(context,
     assert headers["gwm-auth-nonce"] == "0123456789abcdef"
     assert not any(name.startswith("bt-auth-") for name in headers)
     assert headers["user-agent"] == "okhttp/4.9.3"
+    assert headers["deviceId"] == headers["iccid"] == DEVICE
+    if operation != "login":
+        assert headers["gwId"] == "synthetic-gw-id"
 
 
 @pytest.fixture
@@ -121,23 +126,22 @@ def test_login_request_headers_and_body() -> None:
     request = prepare_br_request(operation="login", ssl_context=ssl.create_default_context(), credentials=credentials)
     assert request.method == "POST"
     assert request.url == (
-        "https://br-front-service.gwmcloud.com/br-official-commerce/br-official-gateway/"
-        "pc-api/api/v1.0/userAuth/loginAccount"
+        "https://br-h5-gateway.gwmcloud.com/app-api/api/v2.0/userAuth/loginWithPassword"
     )
     headers = dict(request.headers)
     for name, value in {
-        "appid": "6", "brand": "6", "brandid": "CCZ001", "country": "BR", "devicetype": "0",
-        "enterpriseid": "CC01", "gwid": "", "language": "pt_BR", "rs": "5", "terminal": "GW_PC_GWM",
+        "appid": "6", "brand": "6", "country": "BR", "channel": "APP", "cver": "1.4.2",
+        "enterpriseid": "CC01", "language": "pt_BR", "rs": "2", "terminal": "GW_APP_GWM",
         "content-type": "application/json",
     }.items():
         assert headers[name] == value
     assert not {"accessToken", "refreshToken"} & set(headers)
     assert json.loads(request.body) == {
-        "deviceid": DEVICE,
-        "password": hashlib.md5(b"Synthetic1").hexdigest(),
-        "account": "someone@example.invalid",
+        "account": "someone@example.invalid", "accountType": "2", "countryCode": "55",
+        "agreement": [1, 2], "password": "Synthetic1", "deviceId": DEVICE,
+        "appType": "0", "pushToken": None, "country": "BR",
     }
-    assert "Synthetic1" not in request.body.decode()
+    assert "Synthetic1" not in repr(credentials)
     assert "someone" not in repr(credentials)
 
 
@@ -258,10 +262,13 @@ def test_refresh_request_rejects_incomplete_input(context, kwargs) -> None:
         prepare_br_request(operation="refresh_token", ssl_context=context, **{**base, **kwargs})
 
 
-def test_device_id_is_only_accepted_by_the_refresh_operation(context) -> None:
-    """Check that only the refresh operation accepts a device id."""
-    with pytest.raises(ValueError, match="^br_request_invalid$"):
-        prepare_br_request(operation="acquire_vehicles", ssl_context=context, access_token="t", device_id=DEVICE)
+def test_vehicle_requests_accept_session_identity_and_login_uses_its_own_device(context) -> None:
+    """Send the session identity on vehicle requests and prevent login overrides."""
+    request = prepare_br_request(
+        operation="acquire_vehicles", ssl_context=context, access_token="t", device_id=DEVICE, gw_id="synthetic-gw-id"
+    )
+    assert request.headers["deviceId"] == request.headers["iccid"] == DEVICE
+    assert request.headers["gwId"] == "synthetic-gw-id"
     credentials = BrCredentials.from_password("someone@example.invalid", "Synthetic1", DEVICE)
     with pytest.raises(ValueError, match="^br_request_invalid$"):
         prepare_br_request(
@@ -277,3 +284,9 @@ def test_refresh_envelope_failure_is_an_authentication_error() -> None:
         with pytest.raises(GwmAuthenticationError):
             decode_br_envelope(html(status, "x"), operation="refresh_token")
     assert decode_br_envelope(envelope({"accessToken": "a"}), operation="refresh_token") == {"accessToken": "a"}
+
+
+def test_brazil_expired_refresh_code_on_reads_is_an_authentication_error() -> None:
+    with pytest.raises(GwmAuthenticationError) as error:
+        decode_br_envelope(envelope(None, code="570062"), operation="acquire_vehicles")
+    assert error.value.api_code == "570062"

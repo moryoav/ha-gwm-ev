@@ -94,6 +94,7 @@ def prepare_br_request(
     vehicle_id: str | None = None,
     plan: ChargingPlanCommand | None = None,
     device_id: str | None = None,
+    gw_id: str | None = None,
 ) -> _TransportRequest:
     """Build one allowlisted request (login, token refresh, two reads, or the opt-in charging write)."""
     try:
@@ -114,9 +115,11 @@ def prepare_br_request(
                 or access_token is not None
                 or vehicle_id is not None
                 or device_id is not None
+                or gw_id is not None
             ):
                 raise ValueError("invalid")
             headers = {**br_auth_headers(), "content-type": "application/json", "accept": "application/json"}
+            headers.update({"deviceId": credentials.device_id, "iccid": credentials.device_id})
             body = json.dumps(credentials.login_body(), separators=(",", ":")).encode("utf-8")
         else:
             if (
@@ -125,9 +128,15 @@ def prepare_br_request(
                 or _TOKEN_CHARS.fullmatch(access_token) is None
                 or not isinstance(refresh_token, str)
                 or (refresh_token and _TOKEN_CHARS.fullmatch(refresh_token) is None)
+                or (gw_id is not None and (not isinstance(gw_id, str) or _TOKEN_CHARS.fullmatch(gw_id) is None))
+                or (device_id is not None and (not isinstance(device_id, str) or re.fullmatch(r"[0-9a-f]{32}", device_id) is None))
             ):
                 raise ValueError("invalid")
             headers = {**br_app_headers(access_token, refresh_token), "accept": "application/json"}
+            if gw_id is not None:
+                headers["gwId"] = gw_id
+            if device_id is not None:
+                headers.update({"deviceId": device_id, "iccid": device_id})
             if plan is not None and operation != "set_charging_plan":
                 raise ValueError("invalid")
             if operation == "refresh_token":
@@ -140,8 +149,6 @@ def prepare_br_request(
                     raise ValueError("invalid")
                 headers["content-type"] = "application/json"
                 body = _refresh_body(access_token, refresh_token, device_id)
-            elif device_id is not None:
-                raise ValueError("invalid")
             elif operation == "set_charging_plan":
                 if vehicle_id is not None or type(plan) is not ChargingPlanCommand:
                     raise ValueError("invalid")
@@ -157,13 +164,10 @@ def prepare_br_request(
                 raise ValueError("invalid")
         headers["user-agent"] = _USER_AGENT
         url = endpoint.base_url + endpoint.path + query
-        # The portal strips its reverse-proxy mount before checking the signature.
-        # A synthetic login on 2026-11-19 reached 308001 only with this target.
-        signing_url = url.replace("/br-official-commerce/br-official-gateway", "", 1) if operation == "login" else url
         signed = sign_request(
             BRAZIL_GWM_AUTH,
             endpoint.method,
-            signing_url,
+            url,
             body.decode("utf-8") if body is not None else None,
             uri_component_safe="-._~!*'()",
             whitespace_policy="preserve",
@@ -226,7 +230,8 @@ def decode_br_envelope(response: _TransportResponse, *, operation: str) -> objec
         if operation in ("login", "refresh_token"):
             raise GwmAuthenticationError(operation=operation, api_code=code)
         error = GwmApiError(operation=operation, api_code=code)
-        if is_overseas_session_expired(error):
+        # BR 570062 is the vehicle gateway's "refresh token expired" reply.
+        if code == "570062" or is_overseas_session_expired(error):
             # Same expired-session codes as the other overseas gateways: renew once and repeat.
             raise GwmAuthenticationError(operation=operation, api_code=code)
         raise error

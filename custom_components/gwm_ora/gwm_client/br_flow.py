@@ -119,7 +119,8 @@ async def authenticate_br(
         raise GwmAuthenticationError(operation="login")
     candidate = state or BrAuthState.for_credentials(credentials)
     if not allow_password_login:
-        if candidate.tokens is None:
+        # Older builds discarded gwId. Ask for one explicit login to recover it.
+        if candidate.tokens is None or candidate.tokens.gw_id is None:
             raise GwmAuthenticationError(operation="login")
         # Resume only: an expired access token is recoverable (the first read refreshes it with
         # the refresh token); a dead refresh token surfaces there as reauthentication.
