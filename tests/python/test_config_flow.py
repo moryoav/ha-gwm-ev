@@ -38,6 +38,7 @@ from custom_components.gwm_ora.const import (
     CONF_PASSWORD,
     CONF_POLL_INTERVAL_SECONDS,
     CONF_REGION,
+    CONF_RUSSIA_CERTIFICATE_ENROLLMENT,
     CONF_SECURITY_PIN,
     CONF_VERIFICATION_CODE,
     CONNECTION_TYPE_CLOUD,
@@ -519,8 +520,10 @@ async def test_anz_verification_preserves_explicit_session_reclaim_consent(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("enrollment", [False, True])
 async def test_russia_authentication_can_complete_without_verification(
     monkeypatch: pytest.MonkeyPatch,
+    enrollment: bool,
 ) -> None:
     class Authenticator:
         async def async_authenticate(
@@ -528,17 +531,19 @@ async def test_russia_authentication_can_complete_without_verification(
             credentials: config_flow.GwmCloudCredentials,
             **kwargs: Any,
         ) -> object:
+            assert credentials.russia_certificate_enrollment is enrollment
             return _authenticated(credentials)
 
     flow = _prepare_user_flow(monkeypatch, Authenticator())
     await flow.async_step_user({CONF_REGION: "rus"})
     result = await flow.async_step_account(
-        {CONF_ACCOUNT: "synthetic-account", CONF_PASSWORD: "password"}
+        {CONF_ACCOUNT: "synthetic-account", CONF_PASSWORD: "password", CONF_RUSSIA_CERTIFICATE_ENROLLMENT: enrollment}
     )
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["data"][CONF_COUNTRY] == "RU"
     assert result["title"] == "GWM Russia"
+    assert result["data"].get(CONF_RUSSIA_CERTIFICATE_ENROLLMENT, False) is enrollment
     assert consume_cloud_bootstrap(flow.hass, flow.context["unique_id"]) is not None
 
 
@@ -728,6 +733,57 @@ def test_cloud_error_log_identifies_safe_anz_authentication_route(
     assert "authentication_method=current_v2" in message
     for secret in ("account@example.invalid", "password", _DEVICE_ID):
         assert secret not in message
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code", ["570062", "607501"])
+@pytest.mark.parametrize("verification_code", [None, "123456"])
+async def test_russia_terminal_session_has_actionable_error_and_clears_flow_state(code, verification_code):
+    flow = config_flow.GwmConfigFlow()
+    flow.hass = _Hass()
+    flow._cloud_credentials = config_flow.GwmCloudCredentials("rus", "RU", "a@example.invalid", "password", _DEVICE_ID)
+    flow._auth_state = _authenticated(flow._cloud_credentials).state
+    flow._async_clear_persisted_auth_state = AsyncMock()
+    flow._cloud_authenticator = type("Authenticator", (), {
+        "async_authenticate": AsyncMock(side_effect=GwmAuthenticationError(operation="login", api_code=code)),
+    })()
+    result, error = await flow._async_authenticate(verification_code=verification_code)
+    assert result is None
+    assert error == "russia_session_rejected"
+    assert flow._auth_state is None
+    flow._async_clear_persisted_auth_state.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code", ["570062", "607501"])
+@pytest.mark.parametrize("mode,step", [("user", "account"), ("reauth", "reauth_confirm"), ("reconfigure", "reconfigure_account")])
+async def test_russia_verification_rejection_returns_to_usable_sign_in(monkeypatch, code, mode, step):
+    calls = []
+    class Authenticator:
+        async def async_authenticate(self, credentials, **kwargs):
+            calls.append(kwargs)
+            if len(calls) == 1:
+                raise GwmAuthenticationError(operation="verify_code", api_code=code)
+            return _authenticated(credentials)
+    flow = _prepare_user_flow(monkeypatch, Authenticator())
+    account = {CONF_ACCOUNT: "a@example.invalid", CONF_PASSWORD: "password"}
+    entry = _entry(data={CONF_CONNECTION_TYPE: CONNECTION_TYPE_CLOUD, CONF_REGION: "rus", CONF_COUNTRY: "RU", **account})
+    flow.hass = _Hass(entry)
+    flow._cloud_mode = mode
+    flow._cloud_region = "rus"
+    flow._cloud_credentials = config_flow.GwmCloudCredentials("rus", "RU", account[CONF_ACCOUNT], account[CONF_PASSWORD], _DEVICE_ID)
+    flow._auth_state = _authenticated(flow._cloud_credentials).state
+    monkeypatch.setattr(flow, "_get_reauth_entry", lambda: entry)
+    monkeypatch.setattr(flow, "_get_reconfigure_entry", lambda: entry)
+    monkeypatch.setattr(flow, "async_update_reload_and_abort", lambda *args, **kwargs: flow.async_abort(reason="test_success"))
+    result = await flow.async_step_verification({CONF_VERIFICATION_CODE: "123456"})
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == step
+    assert result["errors"] == {"base": "russia_session_rejected"}
+    assert flow._auth_state is None
+    result = await getattr(flow, "async_step_" + step)(account)
+    assert result["type"] is (FlowResultType.CREATE_ENTRY if mode == "user" else FlowResultType.ABORT)
+    assert calls[1]["verification_code"] is None
 
 
 @pytest.mark.asyncio
@@ -927,6 +983,44 @@ async def test_cloud_reconfigure_authenticates_before_replacing_entry(
     assert updates[0]["unique_id"].startswith("cloud:rus:")
     assert consume_cloud_bootstrap(flow.hass, updates[0]["unique_id"]) is not None
     assert flow.hass.data["_test_removed_cloud_states"] == [entry.unique_id]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("enabled", [False, True])
+async def test_russia_reconfigure_can_enable_and_disable_enrollment(monkeypatch, enabled):
+    entry = _entry(data={
+        CONF_CONNECTION_TYPE: CONNECTION_TYPE_CLOUD, CONF_REGION: "rus", CONF_COUNTRY: "RU",
+        CONF_ACCOUNT: "same@example.invalid", CONF_PASSWORD: "password",
+        CONF_RUSSIA_CERTIFICATE_ENROLLMENT: not enabled,
+    })
+    updates = []
+
+    class Authenticator:
+        async def async_authenticate(self, credentials, **kwargs):
+            assert credentials.russia_certificate_enrollment is enabled
+            return _authenticated(credentials)
+
+    flow = config_flow.GwmConfigFlow()
+    flow.hass = _Hass(entry)
+    flow.context = {"source": "reconfigure", "entry_id": entry.entry_id}
+    flow._cloud_authenticator = Authenticator()
+
+    def update_and_abort(updated_entry, **kwargs):
+        assert updated_entry is entry
+        updates.append(kwargs)
+        return flow.async_abort(reason="reconfigure_successful")
+
+    monkeypatch.setattr(flow, "async_update_reload_and_abort", update_and_abort)
+    await flow.async_step_reconfigure({CONF_REGION: "rus"})
+    result = await flow.async_step_reconfigure_account({
+        CONF_ACCOUNT: "same@example.invalid", CONF_PASSWORD: "password",
+        CONF_RUSSIA_CERTIFICATE_ENROLLMENT: enabled,
+    })
+    assert result["reason"] == "reconfigure_successful"
+    assert updates[0]["data"].get(CONF_RUSSIA_CERTIFICATE_ENROLLMENT, False) is enabled
+    if not enabled:
+        assert CONF_RUSSIA_CERTIFICATE_ENROLLMENT not in updates[0]["data"]
+    assert updates[0]["unique_id"] == entry.unique_id
 
 
 @pytest.mark.asyncio

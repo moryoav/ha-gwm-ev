@@ -29,6 +29,7 @@ from .cloud_runtime import (
 )
 from .cloud_storage import (
     async_finish_apac_state_save,
+    async_finish_cloud_state_save,
     async_remove_cloud_state,
     cloud_state_store,
     credentials_for_auth_state,
@@ -51,6 +52,7 @@ from .const import (
     CONF_PASSWORD,
     CONF_POLL_INTERVAL_SECONDS,
     CONF_REGION,
+    CONF_RUSSIA_CERTIFICATE_ENROLLMENT,
     CONF_SECURITY_PIN,
     CONF_VERIFICATION_CODE,
     CONFIGURABLE_CLOUD_REGIONS,
@@ -86,6 +88,7 @@ from .gwm_client import (
     GwmRateLimitError,
     GwmTransportError,
     RussiaAuthenticated,
+    RussiaAuthState,
     RussiaIdentityError,
     RussiaVerificationRequired,
 )
@@ -93,6 +96,7 @@ from .gwm_client.apac_flow import ApacAuthenticated, ApacVerificationRequired
 from .gwm_client.apac_material import load_installed_apac_material
 from .gwm_client.apac_restore import ApacRestored
 from .gwm_client.china_crypto import valid_bean_tech_lock_credential
+from .gwm_client.errors import is_russia_session_rejected
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -209,6 +213,11 @@ def _account_schema(
     fields[vol.Required(CONF_ACCOUNT, default=defaults.get(CONF_ACCOUNT, ""))] = str
     if region != REGION_CHINA:
         fields[vol.Required(CONF_PASSWORD)] = _password_selector()
+    if region == REGION_RUSSIA:
+        fields[vol.Optional(
+            CONF_RUSSIA_CERTIFICATE_ENROLLMENT,
+            default=defaults.get(CONF_RUSSIA_CERTIFICATE_ENROLLMENT, False),
+        )] = bool
     return vol.Schema(fields)
 
 
@@ -383,6 +392,18 @@ class GwmConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 verification_code=code,
                 allow_session_reclaim=self._anz_session_reclaim_confirmed,
             )
+            if error == "russia_session_rejected":
+                # The continuation was retired. Return to an explicit sign-in
+                # instead of leaving an unusable verification form on screen.
+                if self._cloud_mode == "reauth":
+                    form = await self.async_step_reauth_confirm()
+                elif self._cloud_mode == "reconfigure":
+                    form = await self.async_step_reconfigure_account()
+                else:
+                    form = await self.async_step_account()
+                if form["type"] == "form":
+                    form["errors"] = {"base": error}
+                return form
             if error:
                 errors[CONF_VERIFICATION_CODE if error == "invalid_verification_code" else "base"] = error
             elif result is not None:
@@ -468,6 +489,7 @@ class GwmConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     account=str(entry.data.get(CONF_ACCOUNT, "")),
                     password=password,
                     device_id=generate_device_id(),
+                    russia_certificate_enrollment=entry.data.get(CONF_RUSSIA_CERTIFICATE_ENROLLMENT, False),
                     authentication_method=(
                         str(
                             entry.data.get(
@@ -595,6 +617,7 @@ class GwmConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             account=user_input[CONF_ACCOUNT],
             password=None if region == REGION_CHINA else user_input.get(CONF_PASSWORD),
             device_id=generate_device_id(),
+            russia_certificate_enrollment=user_input.get(CONF_RUSSIA_CERTIFICATE_ENROLLMENT, False),
             authentication_method=(
                 user_input.get(
                     CONF_AUTHENTICATION_METHOD,
@@ -637,12 +660,18 @@ class GwmConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     {"apac_session_updated": self._async_apac_session_updated}
                     if credentials.region == REGION_APAC else {}
                 ),
+                **({"russia_state_updated": self._async_russia_state_updated}
+                   if credentials.russia_certificate_enrollment else {}),
             )
         except GwmRateLimitError as error:
             _log_cloud_auth_failure(error, credentials)
             return None, "rate_limited"
         except GwmAuthenticationError as error:
             _log_cloud_auth_failure(error, credentials)
+            if credentials.region == REGION_RUSSIA and is_russia_session_rejected(error):
+                self._auth_state = None
+                await self._async_clear_persisted_auth_state()
+                return None, "russia_session_rejected"
             return None, (
                 "invalid_verification_code" if verification_code is not None else "invalid_auth"
             )
@@ -663,6 +692,11 @@ class GwmConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         except (TypeError, ValueError):
             return None, "invalid_account"
         return result, ""
+
+    async def _async_russia_state_updated(self, state: RussiaAuthState) -> None:
+        """Keep rotated tokens even when later certificate enrollment cannot finish."""
+        self._auth_state = state
+        await async_finish_cloud_state_save(self._async_persist_auth_state(state))
 
     async def _async_apac_session_updated(self, restored: ApacRestored) -> None:
         """Retain and persist refreshed APAC state before subsequent requests."""

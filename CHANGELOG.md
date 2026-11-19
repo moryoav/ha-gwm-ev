@@ -11,6 +11,12 @@ This project follows semantic versioning. The Marketplace installs GWM from publ
 ### Added
 
 - Added a default-off **Request a new SMS verification code** option to Mainland-China account reconfiguration for manual recovery when a saved session cannot be restored. Preserved the restored device identity and existing sign-in continuation handling.
+- Added opt-in client-certificate enrollment for Russian accounts, with private certificate storage, reuse after restart, renewal, and sanitized diagnostics.
+
+### Fixed
+
+- Requested a fresh sign-in for Russian session rejections `570062` and `607501`, preventing repeated polls or background refresh of rejected tokens. Preserved valid rotated credentials during concurrent certificate renewal and kept vehicle commands single-attempt.
+- Corrected Russian SMS verification failures to return to sign-in when GWM rejects the session, with clear recovery guidance.
 
 ## [0.18.0] - 2026-11-10
 

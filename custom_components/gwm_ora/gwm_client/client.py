@@ -64,6 +64,8 @@ from .errors import (
     GwmRoutePolicyError,
     GwmSchemaError,
     GwmTlsError,
+    _session_token_binding,
+    is_russia_session_rejected,
 )
 from .eu_auth import (
     EuAuthenticated,
@@ -159,6 +161,7 @@ class GwmClient:
             raise GwmConfigurationError()
         self._config = config
         self._protocol = get_region_protocol(config.region)
+        self._russia_rejected_session_bindings: dict[bytes, str] = {}
         self._session = None if session is None else self._validated_session(session)
         self._session_revision = 0
         if sequence_source is not None and not callable(sequence_source):
@@ -229,6 +232,21 @@ class GwmClient:
             raise GwmClosedError()
         self._session = self._validated_session(session)
         self._session_revision += 1
+
+    def retire_rejected_russia_session(self, error: GwmAuthenticationError) -> None:
+        """Retire an installed session only when its token was conclusively rejected."""
+        if self.region is not Region.RUSSIA or not is_russia_session_rejected(error):
+            return
+        binding = error._session_binding
+        if type(binding) is bytes and len(binding) == 32 and error.api_code is not None:
+            # Keep only opaque bindings and safe codes, never exceptions/tracebacks.
+            self._russia_rejected_session_bindings[binding] = error.api_code
+        current = self._session
+        if (
+            current is not None
+            and error.matches_session_token(current.access_token) is True
+        ):
+            self._replace_session_if_revision(expected_revision=self._session_revision, session=None)
 
     async def authenticate_eu(
         self,
@@ -643,6 +661,7 @@ class GwmClient:
         allow_password_login: bool = True,
         bootstrap_material: RussiaBootstrapMaterial,
         timeout: float | None = None,
+        on_state: Callable[[RussiaAuthState], Awaitable[None]] | None = None,
     ) -> RussiaAuthenticationResult:
         """Authenticate Russia and install its static-bootstrap-mTLS read session."""
 
@@ -653,6 +672,7 @@ class GwmClient:
             or (state is not None and type(state) is not RussiaAuthState)
             or type(allow_password_login) is not bool
             or type(bootstrap_material) is not RussiaBootstrapMaterial
+            or (on_state is not None and not callable(on_state))
         ):
             raise GwmConfigurationError(operation=operation)
         if self._closed or self._closing:
@@ -692,6 +712,7 @@ class GwmClient:
                             bootstrap_material=bootstrap_material,
                             deadline=deadline,
                             progress=progress,
+                            on_state=on_state,
                         )
                         replacement = (
                             self._validated_session(result.session) if type(result) is RussiaAuthenticated else None
@@ -1196,6 +1217,7 @@ class GwmClient:
         loop = asyncio.get_running_loop()
         deadline = _Deadline(loop.time() + total_timeout)
         attempt_revision: int | None = None
+        attempt_token: str | None = None
         failure: GwmClientError | None = None
         try:
             async with asyncio.timeout_at(deadline.expires_at):
@@ -1205,6 +1227,7 @@ class GwmClient:
                     if self._session is None:
                         raise GwmAuthenticationError(operation=operation)
                     attempt_revision = self._session_revision
+                    attempt_token = self._session.access_token
                     session = self._validated_session(self._session)
                     await self._async_prepare_h5_ssl_context(operation=operation)
                     result = await action(session, deadline)
@@ -1236,6 +1259,9 @@ class GwmClient:
                 if deadline.remaining(loop.time()) <= 0
                 else GwmNetworkError(operation=operation)
             )
+        if self.region is Region.RUSSIA and attempt_token is not None and is_russia_session_rejected(failure):
+            failure._bind_session_token(attempt_token)
+            self.retire_rejected_russia_session(failure)
         raise failure or GwmNetworkError(operation=operation)
 
     async def _async_prepare_h5_ssl_context(self, *, operation: str) -> None:
@@ -1367,7 +1393,7 @@ class GwmClient:
         )
         if type(response) is not _TransportResponse:
             raise GwmProtocolError(operation=request.operation)
-        return _decode_envelope(response, operation=request.operation)
+        return _decode_envelope(response, operation=request.operation, region=self.region)
 
     async def _execute[T](
         self,
@@ -1391,6 +1417,7 @@ class GwmClient:
         deadline = _Deadline(loop.time() + total_timeout)
         failure: GwmClientError | None = None
         attempt_revision: int | None = None
+        attempt_token: str | None = None
 
         try:
             async with asyncio.timeout_at(deadline.expires_at):
@@ -1400,6 +1427,7 @@ class GwmClient:
                     if self._session is None:
                         raise GwmAuthenticationError(operation=operation)
                     attempt_revision = self._session_revision
+                    attempt_token = self._session.access_token
                     session = self._validated_session(self._session)
                     request = self._prepare_read_request(endpoint, session, identifier)
                     response = await self._transport.execute(
@@ -1429,7 +1457,7 @@ class GwmClient:
                             operation=operation,
                             api_code="607099",
                         )
-                    data = _decode_envelope(response, operation=operation)
+                    data = _decode_envelope(response, operation=operation, region=self.region)
                     if deadline.remaining(loop.time()) <= 0:
                         raise GwmDeadlineExceededError(operation=operation)
                     try:
@@ -1472,6 +1500,9 @@ class GwmClient:
             )
 
         if failure is not None:
+            if self.region is Region.RUSSIA and attempt_token is not None and is_russia_session_rejected(failure):
+                failure._bind_session_token(attempt_token)
+                self.retire_rejected_russia_session(failure)
             raise failure
         raise GwmSchemaError(operation=operation)
 
@@ -1530,6 +1561,10 @@ class GwmClient:
             invalid = True
         if invalid:
             raise GwmConfigurationError()
+        if self.region is Region.RUSSIA:
+            code = self._russia_rejected_session_bindings.get(_session_token_binding(session.access_token))
+            if code is not None:
+                raise GwmAuthenticationError(operation="request", api_code=code)
         return session
 
     def _validated_timeout(self, value: float | None, *, operation: str) -> float:
@@ -1701,7 +1736,7 @@ def _classify_regional_read_error[T](
     return None
 
 
-def _decode_envelope(response: _TransportResponse, *, operation: str) -> object:
+def _decode_envelope(response: _TransportResponse, *, operation: str, region: Region | None = None) -> object:
     """Validate overseas success; payload requirements belong to each reader."""
 
     if response.status in {401, 403}:
@@ -1733,6 +1768,9 @@ def _decode_envelope(response: _TransportResponse, *, operation: str) -> object:
 
     code = envelope.get("code")
     if code != "000000":
+        error = GwmAuthenticationError(operation=operation, api_code=code)
+        if region == Region.RUSSIA and code == error.api_code and is_russia_session_rejected(error):
+            raise error
         raise GwmApiError(operation=operation, api_code=code)
     return envelope.get("data")
 

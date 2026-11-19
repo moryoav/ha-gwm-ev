@@ -39,8 +39,13 @@ class GwmClientConfig:
     timeouts: RequestTimeouts = field(default_factory=RequestTimeouts)
     max_response_bytes: int = _DEFAULT_MAX_RESPONSE_BYTES
     anz_authentication_method: str | None = None
+    russia_certificate_enrollment: bool = False
 
     def __post_init__(self) -> None:
+        if type(self.russia_certificate_enrollment) is not bool or (
+            self.russia_certificate_enrollment and get_region_protocol(self.region).region is not Region.RUSSIA
+        ):
+            raise ValueError("russia_certificate_enrollment_invalid")
         if type(self.timeouts) is not RequestTimeouts:
             raise ValueError("timeouts_invalid")
         try:

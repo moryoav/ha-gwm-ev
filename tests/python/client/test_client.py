@@ -662,8 +662,10 @@ async def test_deadline_precedes_synchronous_envelope_failure(
         _response_value: _TransportResponse,
         *,
         operation: str,
+        region: Region | None = None,
     ) -> object:
         assert operation == "acquire_vehicles"
+        assert region is Region.ANZ
         time.sleep(0.075)
         raise GwmSchemaError(operation=operation)
 
@@ -1080,10 +1082,10 @@ async def test_exact_anz_read_607501_retires_matching_session() -> None:
     [
         (Region.ANZ, "607502"),
         (Region.EU, "607501"),
-        (Region.RUSSIA, "607501"),
+        (Region.RUSSIA, "607502"),
     ],
 )
-async def test_read_authentication_retirement_is_exactly_anz_607501(
+async def test_other_read_codes_do_not_retire_sessions(
     region: Region,
     code: str,
 ) -> None:
@@ -1094,6 +1096,17 @@ async def test_read_authentication_retirement_is_exactly_anz_607501(
         await client.acquire_vehicles()
     assert type(raised.value) is GwmApiError
     assert raised.value.api_code == code
+    assert client.authenticated
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code", [" 570062 ", " 607501 ", 570062, 607501, "999999"])
+async def test_inexact_or_unknown_russia_codes_preserve_session(code):
+    transport = _RecordingTransport([_api_failure(code)])
+    client = GwmClient(GwmClientConfig(region=Region.RUSSIA), _session(Region.RUSSIA), transport=transport)
+    with pytest.raises(GwmApiError) as raised:
+        await client.acquire_vehicles()
+    assert type(raised.value) is GwmApiError
     assert client.authenticated
 
 

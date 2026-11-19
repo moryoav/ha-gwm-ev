@@ -29,6 +29,7 @@ from .cloud_runtime import (
 from .cloud_storage import (
     GwmCloudStateStore,
     async_finish_apac_state_save,
+    async_finish_cloud_state_save,
     async_remove_cloud_state,
     cloud_state_store,
     credentials_for_auth_state,
@@ -58,6 +59,7 @@ from .const import (
 )
 from .coordinator import GwmDataUpdateCoordinator
 from .entity import async_call_gwm_api
+from .errors import cloud_authentication_message
 from .gwm_client import (
     AnzAuthenticated,
     ChinaAuthenticated,
@@ -68,6 +70,7 @@ from .gwm_client import (
     GwmConfigurationError,
     GwmHttpError,
     RussiaAuthenticated,
+    RussiaAuthState,
 )
 from .gwm_client.apac_flow import ApacAuthenticated
 from .gwm_client.apac_material import load_installed_apac_material
@@ -377,6 +380,10 @@ async def _async_load_cloud_bootstrap_once(
         """Persist a token rotation before any later restoration read can fail."""
         await async_finish_apac_state_save(state_store.async_save_auth_state(credentials, result.state))
 
+    async def save_russia_state(state: RussiaAuthState) -> None:
+        """Keep successful token rotation before fallible certificate enrollment."""
+        await async_finish_cloud_state_save(state_store.async_save_auth_state(credentials, state))
+
     try:
         authenticator = (
             GwmCloudAuthenticator(
@@ -393,6 +400,7 @@ async def _async_load_cloud_bootstrap_once(
             allow_session_reclaim=False,
             allow_password_login=False,
             **({"apac_session_updated": save_apac_session} if credentials.region == REGION_APAC else {}),
+            **({"russia_state_updated": save_russia_state} if credentials.russia_certificate_enrollment else {}),
         )
         if isinstance(result, ChinaInitializationRequired):
             await state_store.async_save_auth_state(credentials, result.state)
@@ -421,7 +429,7 @@ async def _async_load_cloud_bootstrap_once(
     except GwmAuthenticationError as err:
         await state_store.async_clear_auth_state(dict(entry.data))
         raise ConfigEntryAuthFailed(
-            "GWM cloud authentication was rejected"
+            cloud_authentication_message(credentials.region, err)
         ) from err
     except GwmClientError as err:
         status = f" (HTTP {err.status})" if isinstance(err, GwmHttpError) and err.status is not None else ""
