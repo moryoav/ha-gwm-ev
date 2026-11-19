@@ -96,6 +96,24 @@ def test_certificate_enrollment_is_classified_without_identity_material(caplog):
     _assert_private(caplog)
 
 
+def test_brazil_portal_reports_signature_presence_without_values(caplog):
+    from custom_components.gwm_ora.gwm_client.br_identity import BrCredentials
+    from custom_components.gwm_ora.gwm_client.br_request import prepare_br_request
+
+    caplog.set_level(logging.DEBUG, logger=LOGGER)
+    request = prepare_br_request(
+        operation="login", ssl_context=ssl.create_default_context(),
+        credentials=BrCredentials.from_password("private@example.invalid", SECRET, "0123456789abcdef0123456789abcdef"),
+    )
+    exchange = _exchange(request)
+    assert exchange.fields["gateway"] == "br_login"
+    assert exchange.fields["signing"] == "gwm_auth"
+    assert "signature_present=True timestamp_present=True nonce_present=True" in caplog.text
+    assert request.headers["gwm-auth-sign"] not in caplog.text
+    assert "private@example.invalid" not in caplog.text
+    _assert_private(caplog)
+
+
 @pytest.mark.parametrize("prepared", [
     _request(host="example.invalid"),
     _request(path=f"private/{SECRET}"),

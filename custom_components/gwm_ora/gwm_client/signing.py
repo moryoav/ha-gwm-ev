@@ -72,6 +72,16 @@ RUSSIA_GWM_AUTH = SigningProfile(
     query_policy="drop-empty-encoded",
 )
 
+# My GWM Brasil 1.4.2 (123), BRHost production configuration.
+# Source package hashes and signing entry points are recorded in resources/provenance.json.
+BRAZIL_GWM_AUTH = SigningProfile(
+    name="brazil-gwm-auth",
+    prefix="gwm",
+    app_key="9094558645",
+    app_secret="ceffd90b9a8c8deeb82bc9963140aede",
+    query_policy="dart-current",
+)
+
 
 @dataclass(frozen=True, slots=True)
 class SignedRequest:

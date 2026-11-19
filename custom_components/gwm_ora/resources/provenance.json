@@ -17,6 +17,34 @@
       "apk_signer_sha256": "08c70ab68fce152ffed72d730af1597540496fe589b252c30420aaec4ba31583",
       "reviewed_at": "2026-11-08",
       "review_decision": "Bundle the shared app files by maintainer direction. GWM redistribution permission remains unresolved."
+    },
+    "official-my-gwm-brazil-android-1.4.2": {
+      "package": "com.gwm.brazil",
+      "version": "1.4.2",
+      "version_code": 123,
+      "acquisition": "APKPure latest XAPK downloaded on 2026-11-19. Official GWM Brazil app page links to this package on Google Play.",
+      "source_url": "https://apkpure.net/my-gwm/com.gwm.brazil",
+      "official_app_url": "https://www.gwmmotors.com.br/pt/app",
+      "xapk_sha256": "8f78e206f16ef8f2a1a5cc067342944ac297c196dbc18cf8ea723f68da7af6e9",
+      "base_apk_sha256": "2642fe997c224763d1a9e99e2013d106b2223246320693c5a6fd80094e2718d5",
+      "arm64_split_apk_sha256": "d6a688101f72cdfffc014376ae00dc7e13a9bcdcf65f2c11853864eb91259732",
+      "mdpi_split_apk_sha256": "cf0aed9bbf5904a3de8c226b39746d53f57894e1e6858f6d24c9c54a10f3ee99",
+      "apk_signer_sha256": "08c70ab68fce152ffed72d730af1597540496fe589b252c30420aaec4ba31583",
+      "legacy_apk_signer_sha256": "af8c0f394a35323c5fe3e05cadf9b7cdbde4910d2775952ecb82625ea6aab453",
+      "signature_verification": "Android apksigner 35.0.1 verifies the base and both splits. Base verifies v2, v3, v3.1 and source stamp. All splits have matching signer fingerprints. Legacy signer SHA-1 matches the APKPure listing.",
+      "libapp_sha256": "c7ee73a37c167f0039039123fd912c2ab0bdf39549a3509aa659e7acebfdbac0",
+      "reviewed_at": "2026-11-19",
+      "review_decision": "Bundle the shared signing values by maintainer direction under the existing protocol-material exception. GWM redistribution permission remains unresolved.",
+      "signing_evidence": {
+        "location": "custom_components/gwm_ora/gwm_client/signing.py BRAZIL_GWM_AUTH",
+        "apk_entry": "lib/arm64-v8a/libapp.so in config.arm64_v8a.apk",
+        "production_config": "BRHost.baseHost at 0xb860e0; production host at 0xb861c0, app key at 0xb861d0, app secret at 0xb861dc",
+        "signer": "HeadersType.getHeaders at 0xb84718, RequestSign.getFormatParameter at 0xb8560c, formatGETParameter at 0xb85704, formatPostBody at 0xb859dc",
+        "policy": "gwm-auth; milliseconds; decoded case-sensitive sorted query keys including empty values; merge POST JSON under json; remove ASCII spaces from parameter values; Uri.encodeComponent; SHA-256 lowercase hex. The final replaceAll pattern is a literal string, as in the current ANZ app.",
+        "gateway_probe": "2026-11-19 synthetic getLastStatus returned 607012 unsigned and 550004 signed (expired login token). Synthetic refreshToken returned 607012 unsigned and 551011 signed (expired refresh token). Signed acquireVehicles returned 550004. These checks reached session validation without any real account or vehicle.",
+        "portal_probe": "2026-11-19 signed loginAccount with a reserved .invalid email returned 308001 (incorrect email or password) when signing /pc-api/api/v1.0/userAuth/loginAccount. Including /br-official-commerce/br-official-gateway returned 607099. The same production key and gwm-auth headers are accepted.",
+        "limitations": "No Brazil account or vehicle was used. Successful login, session renewal, polling and charging require tester confirmation."
+      }
     }
   },
   "resources": [

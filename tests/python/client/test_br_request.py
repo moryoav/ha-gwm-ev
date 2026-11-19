@@ -6,10 +6,12 @@ import hashlib
 import json
 import ssl
 from pathlib import Path
+from urllib.parse import quote, urlsplit
 
 import pytest
 from support.br import envelope, html, write_dummy_material
 
+from custom_components.gwm_ora.gwm_client import signing
 from custom_components.gwm_ora.gwm_client.br_endpoints import br_endpoint
 from custom_components.gwm_ora.gwm_client.br_identity import (
     BrCredentials,
@@ -19,6 +21,7 @@ from custom_components.gwm_ora.gwm_client.br_identity import (
 )
 from custom_components.gwm_ora.gwm_client.br_material import create_br_ssl_context, load_br_material
 from custom_components.gwm_ora.gwm_client.br_request import GwmBrCredentialError, decode_br_envelope, prepare_br_request
+from custom_components.gwm_ora.gwm_client.charging import ChargingPlanCommand
 from custom_components.gwm_ora.gwm_client.errors import (
     GwmApiError,
     GwmAuthenticationError,
@@ -26,8 +29,54 @@ from custom_components.gwm_ora.gwm_client.errors import (
     GwmSchemaError,
     GwmTlsError,
 )
+from custom_components.gwm_ora.gwm_client.models import VehicleIdentifier
 
 DEVICE = "0123456789abcdef0123456789abcdef"
+
+
+@pytest.mark.parametrize("operation", ["login", "refresh_token", "acquire_vehicles", "get_last_status", "set_charging_plan"])
+def test_every_brazil_operation_signs_the_wire_body_and_canonical_query(context, monkeypatch, operation) -> None:
+    """Cover proxy path stripping, GET sorting, and POST query-plus-body signing."""
+    monkeypatch.setattr(signing.time, "time_ns", lambda: 1795086000000000000)
+    monkeypatch.setattr(signing, "_new_nonce", lambda uppercase: "0123456789abcdef")
+    vin = "SYNTHETICVIN000001"
+    kwargs = {"access_token": "synthetic-access", "refresh_token": "synthetic-refresh"}
+    if operation == "login":
+        kwargs = {"credentials": BrCredentials.from_password("a+b@example.invalid", "Synthetic1", DEVICE)}
+    elif operation == "refresh_token":
+        kwargs["device_id"] = DEVICE
+    elif operation == "get_last_status":
+        kwargs["vehicle_id"] = vin
+    elif operation == "set_charging_plan":
+        kwargs["plan"] = ChargingPlanCommand(VehicleIdentifier(vin), enable=False)
+    request = prepare_br_request(
+        operation=operation, ssl_context=ssl.create_default_context() if operation == "login" else context, **kwargs
+    )
+    headers = dict(request.headers)
+    path = urlsplit(request.url).path
+    if operation == "login":
+        assert path.startswith("/br-official-commerce/br-official-gateway/")
+        path = "/pc-api/api/v1.0/userAuth/loginAccount"
+    # Independent reference assembled from each operation's wire contract.
+    parameters = ""
+    if operation == "get_last_status":
+        parameters = "flag=truevin=" + vin
+    elif request.body is not None:
+        parameters = "json=" + request.body.decode().replace(" ", "")
+        if operation == "set_charging_plan":
+            parameters += "vin=" + vin
+    raw = (
+        request.method + path + "gwm-auth-appkey:9094558645"
+        "gwm-auth-nonce:0123456789abcdefgwm-auth-timestamp:1795086000000"
+        + parameters + "ceffd90b9a8c8deeb82bc9963140aede"
+    )
+    expected = hashlib.sha256(quote(raw, safe="-._~!*'()").encode()).hexdigest()
+    assert headers["gwm-auth-sign"] == expected
+    assert headers["gwm-auth-appkey"] == "9094558645"
+    assert headers["gwm-auth-timestamp"] == "1795086000000"
+    assert headers["gwm-auth-nonce"] == "0123456789abcdef"
+    assert not any(name.startswith("bt-auth-") for name in headers)
+    assert headers["user-agent"] == "okhttp/4.9.3"
 
 
 @pytest.fixture

@@ -8,6 +8,10 @@ This project follows semantic versioning. The Marketplace installs GWM from publ
 
 ## [Unreleased]
 
+### Fixed
+
+- Signed Brazil login, token refresh, vehicle reads, and charging-plan requests after the cloud began requiring request signatures. Matched the portal proxy path and the Brazilian app's query and JSON canonicalization.
+
 ### Added
 
 - Added a default-off **Request a new SMS verification code** option to Mainland-China account reconfiguration for manual recovery when a saved session cannot be restored. Preserved the restored device identity and existing sign-in continuation handling.
