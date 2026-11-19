@@ -106,6 +106,8 @@ class BrReadClient:
             ssl_context=self._ssl_context,
             access_token=tokens.access_token,
             refresh_token=tokens.refresh_token,
+            gw_id=tokens.gw_id,
+            device_id=self._session.device_id,
             vehicle_id=vehicle_id,
             plan=plan,
         )

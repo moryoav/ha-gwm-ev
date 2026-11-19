@@ -1,4 +1,4 @@
-"""BR account credentials, password digest and the persisted installation ID."""
+"""BR private account credentials and the persisted installation ID."""
 
 from __future__ import annotations
 
@@ -59,11 +59,12 @@ def load_or_create_br_device_id(path: Path) -> str:
 
 @dataclass(frozen=True, slots=True)
 class BrCredentials:
-    """Account, password digest and installation ID. Never log or repr this object."""
+    """Private login credentials and installation ID. Never log or repr this object."""
 
     account: str = field(repr=False)
     password_md5: str = field(repr=False)
     device_id: str = field(repr=False)
+    password: str | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         """Reject malformed private state."""
@@ -76,12 +77,26 @@ class BrCredentials:
         ):
             raise ValueError("br_credentials_invalid")
         validate_br_device_id(self.device_id)
+        if self.password is not None and br_password_md5(self.password) != self.password_md5:
+            raise ValueError("br_credentials_invalid")
 
     @classmethod
     def from_password(cls, account: str, password: str, device_id: str) -> BrCredentials:
-        """Build credentials, keeping only the MD5 digest of the password."""
-        return cls(account, br_password_md5(password), device_id)
+        """Build credentials for the official app's password login."""
+        return cls(account, br_password_md5(password), device_id, password)
 
     def login_body(self) -> dict[str, object]:
-        """Login payload: no verification code exists in this backend."""
-        return {"deviceid": self.device_id, "password": self.password_md5, "account": self.account}
+        """Payload used by My GWM Brasil 1.4.2 on the H5 app gateway."""
+        if self.password is None:
+            raise ValueError("br_credentials_invalid")
+        return {
+            "account": self.account,
+            "accountType": "2" if "@" in self.account else "1",
+            "countryCode": "55",
+            "agreement": [1, 2],
+            "password": self.password,
+            "deviceId": self.device_id,
+            "appType": "0",
+            "pushToken": None,
+            "country": "BR",
+        }

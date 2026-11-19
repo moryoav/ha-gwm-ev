@@ -11,10 +11,10 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Final
 
-BR_AUTH_HOST: Final = "br-front-service.gwmcloud.com"
+BR_AUTH_HOST: Final = "br-h5-gateway.gwmcloud.com"
 BR_APP_HOST: Final = "br-app-gateway.gwmcloud.com"
 BR_H5_HOST: Final = "br-h5-gateway.gwmcloud.com"
-BR_AUTH_BASE_URL: Final = f"https://{BR_AUTH_HOST}/br-official-commerce/br-official-gateway/pc-api/api/v1.0/"
+BR_AUTH_BASE_URL: Final = f"https://{BR_AUTH_HOST}/app-api/api/v2.0/"
 BR_APP_BASE_URL: Final = f"https://{BR_APP_HOST}/app-api/api/v1.0/"
 BR_H5_BASE_URL: Final = f"https://{BR_H5_HOST}/app-api/api/v1.0/"
 BR_SUCCESS_CODE: Final = "000000"
@@ -22,22 +22,7 @@ BR_CREDENTIAL_REJECTED_CODE: Final = "308001"
 # The vehicle is busy with another remote operation: report it, never retry in a loop.
 BR_BUSY_CODES: Final = frozenset({"9999", "REMOTE250502"})
 
-# Login web-portal headers confirmed against the live backend.
-_AUTH_HEADERS: Final = MappingProxyType(
-    {
-        "appid": "6",
-        "brand": "6",
-        "brandid": "CCZ001",
-        "country": "BR",
-        "devicetype": "0",
-        "enterpriseid": "CC01",
-        "gwid": "",
-        "language": "pt_BR",
-        "rs": "5",
-        "terminal": "GW_PC_GWM",
-    }
-)
-# Vehicle gateway (app) headers confirmed against the live backend.
+# Shared app headers from My GWM Brasil 1.4.2.
 _APP_HEADERS: Final = MappingProxyType(
     {
         "rs": "2",
@@ -47,6 +32,10 @@ _APP_HEADERS: Final = MappingProxyType(
         "systemtype": "2",
         "regioncode": "BR",
         "country": "BR",
+        "appid": "6",
+        "enterpriseid": "CC01",
+        "channel": "APP",
+        "cver": "1.4.2",
     }
 )
 
@@ -63,7 +52,7 @@ class BrEndpoint:
 
 _ENDPOINTS: Final = MappingProxyType(
     {
-        "login": BrEndpoint("POST", BR_AUTH_BASE_URL, "userAuth/loginAccount", False),
+        "login": BrEndpoint("POST", BR_AUTH_BASE_URL, "userAuth/loginWithPassword", False),
         "acquire_vehicles": BrEndpoint("GET", BR_APP_BASE_URL, "globalapp/vehicle/acquireVehicles", True),
         "get_last_status": BrEndpoint("GET", BR_APP_BASE_URL, "vehicle/getLastStatus", True),
         "set_charging_plan": BrEndpoint("POST", BR_APP_BASE_URL, "vehicleCharge/setChargingPlan", True),
@@ -82,7 +71,7 @@ def br_endpoint(operation: str) -> BrEndpoint:
 
 def br_auth_headers() -> dict[str, str]:
     """Headers for the login host (no token)."""
-    return dict(_AUTH_HEADERS)
+    return dict(_APP_HEADERS)
 
 
 def br_app_headers(access_token: str, refresh_token: str) -> dict[str, str]:
