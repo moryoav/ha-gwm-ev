@@ -1192,6 +1192,9 @@ class GwmClient:
                 body=None,
                 session=session,
                 vin_header=(identifier if self.region in {Region.ANZ, Region.RUSSIA} else None),
+                # Current ANZ rejects the Flutter-layer signature on this poll
+                # with 607099 ("sign is inconformity"), as it did for getLastStatus.
+                native_vehicle_read=self._uses_current_anz,
             )
             data = await self._send_command_request(request, deadline=deadline)
             try:
@@ -1344,16 +1347,28 @@ class GwmClient:
         body: str | None,
         session: GwmSession,
         vin_header: VehicleIdentifier | None,
+        native_vehicle_read: bool = False,
     ) -> _TransportRequest:
         try:
             gateway = self._protocol.gateway(gateway_role)
             unsigned_url = gateway.base_url + path
-            signed = self._sign_overseas_request(
-                gateway.signing_profile,
-                method,
-                unsigned_url,
-                body,
-            )
+            if native_vehicle_read:
+                # App-gateway GET reads go through the native interceptor even
+                # for current-v2 sessions (see _sign_vehicle_read_request).
+                if method != "GET" or body is not None or gateway_role is not GatewayRole.APP_V1:
+                    raise ValueError("route_invalid")
+                signed = self._sign_vehicle_read_request(
+                    gateway.signing_profile,
+                    method,
+                    unsigned_url,
+                )
+            else:
+                signed = self._sign_overseas_request(
+                    gateway.signing_profile,
+                    method,
+                    unsigned_url,
+                    body,
+                )
             headers = {
                 **self._authenticated_headers(session),
                 "Accept": "application/json",
