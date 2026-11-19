@@ -1,6 +1,6 @@
 """BR login and the session that owns token renewal.
 
-The login host (a public web portal) is reached with a CLEAN default TLS context:
+The H5 app login is reached with a default TLS context:
 no client certificate and no lowered security level. The vehicle client identity
 (mTLS, SECLEVEL=0) is used only for the vehicle gateway reads.
 
@@ -37,10 +37,14 @@ class BrTokens:
     access_token: str = field(repr=False)
     refresh_token: str = field(repr=False)
     expires_at: float | None = field(default=None, repr=False)
+    gw_id: str | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         """Reject malformed tokens."""
-        for value in (self.access_token, self.refresh_token):
+        values = [self.access_token, self.refresh_token]
+        if self.gw_id is not None:
+            values.append(self.gw_id)
+        for value in values:
             if (
                 not isinstance(value, str)
                 or not 0 < len(value) <= _MAX_TOKEN
@@ -68,7 +72,7 @@ def jwt_expiry(token: str) -> float | None:
 
 
 class BrAuthClient:
-    """Explicit password login over an injected transport and a clean TLS context."""
+    """Explicit app password login over an injected transport and a clean TLS context."""
 
     def __init__(
         self,
@@ -94,6 +98,11 @@ class BrAuthClient:
         self._lock = asyncio.Lock()
 
     @property
+    def device_id(self) -> str:
+        """The persisted installation identity used by login and later requests."""
+        return self._credentials.device_id
+
+    @property
     def can_refresh(self) -> bool:
         """True when a refresh TLS context was supplied."""
         return self._refresh_context is not None
@@ -111,6 +120,7 @@ class BrAuthClient:
                     access_token=tokens.access_token,
                     refresh_token=tokens.refresh_token,
                     device_id=self._credentials.device_id,
+                    gw_id=tokens.gw_id,
                 )
                 response = await self._transport.execute(
                     request, deadline=deadline, connect_timeout=10.0, read_timeout=20.0
@@ -123,8 +133,11 @@ class BrAuthClient:
         access, refresh = data.get("accessToken"), data.get("refreshToken")
         if not isinstance(access, str) or not access or not isinstance(refresh, str) or not refresh:
             raise GwmSchemaError(operation="refresh_token")
+        gw_id = data.get("gwId")
+        if gw_id is None:
+            gw_id = tokens.gw_id
         try:
-            return BrTokens(access, refresh, jwt_expiry(access))
+            return BrTokens(access, refresh, jwt_expiry(access), gw_id)
         except ValueError:
             raise GwmSchemaError(operation="refresh_token") from None
 
@@ -147,10 +160,11 @@ class BrAuthClient:
         if not isinstance(data, dict):
             raise GwmSchemaError(operation="login")
         access, refresh = data.get("accessToken"), data.get("refreshToken")
-        if not isinstance(access, str) or not isinstance(refresh, str):
+        gw_id = data.get("gwId")
+        if not isinstance(access, str) or not isinstance(refresh, str) or not isinstance(gw_id, str):
             raise GwmSchemaError(operation="login")
         try:
-            return BrTokens(access, refresh, jwt_expiry(access))
+            return BrTokens(access, refresh, jwt_expiry(access), gw_id)
         except ValueError:
             raise GwmSchemaError(operation="login") from None
 
@@ -181,6 +195,11 @@ class BrSession:
         if type(tokens) is not BrTokens:
             raise ValueError("br_session_invalid")
         self._tokens = tokens
+
+    @property
+    def device_id(self) -> str:
+        """The installation identity to accompany the current session."""
+        return self._auth.device_id
 
     @property
     def tokens(self) -> BrTokens | None:

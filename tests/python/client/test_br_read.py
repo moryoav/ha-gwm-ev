@@ -13,6 +13,12 @@ from custom_components.gwm_ora.gwm_client.br_identity import BrCredentials
 from custom_components.gwm_ora.gwm_client.br_material import create_br_ssl_context, load_br_material
 from custom_components.gwm_ora.gwm_client.br_read import BrReadClient
 from custom_components.gwm_ora.gwm_client.br_request import GwmBrCredentialError
+from custom_components.gwm_ora.gwm_client.br_state import (
+    BrAccountCredentials,
+    BrAuthState,
+    decode_br_state,
+    encode_br_state,
+)
 from custom_components.gwm_ora.gwm_client.errors import GwmAuthenticationError, GwmClosedError, GwmSchemaError
 from custom_components.gwm_ora.gwm_client.models import CloudVehicleBasics
 from custom_components.gwm_ora.gwm_client.snapshots import map_vehicle_snapshot
@@ -48,7 +54,7 @@ STATUS = {
 
 
 def _login(exp_offset: int = 86_400) -> object:
-    return envelope({"accessToken": fake_jwt(int(NOW) + exp_offset), "refreshToken": "synthetic-refresh"})
+    return envelope({"accessToken": fake_jwt(int(NOW) + exp_offset), "refreshToken": "synthetic-refresh", "gwId": "synthetic-gw-id"})
 
 
 def _client(tmp_path: Path, *responses, clock=lambda: NOW) -> tuple[BrReadClient, FakeTransport]:
@@ -203,6 +209,71 @@ async def test_auth_client_refresh_returns_new_tokens(tmp_path: Path) -> None:
     (request,) = transport.requests
     assert request.operation == "refresh_token" and request.ssl_context.security_level == 0
     assert request.headers["refreshToken"] == "old-refresh"
+
+
+@pytest.mark.asyncio
+async def test_login_identity_survives_storage_and_is_sent_after_restart(tmp_path: Path) -> None:
+    """Keep the portal's gwId with its tokens and use it in the restored reader."""
+    auth, transport = _auth(
+        tmp_path,
+        envelope({"accessToken": fake_jwt(int(NOW) + 86400), "refreshToken": "r", "gwId": "private-gw-id"}),
+        envelope(VEHICLES), envelope(STATUS),
+    )
+    tokens = await auth.login()
+    credentials = BrAccountCredentials("someone@example.invalid", "Synthetic1", DEVICE)
+    state = BrAuthState(credentials.account_binding, DEVICE, tokens=tokens)
+    restored = decode_br_state(encode_br_state(state))
+    assert restored == state
+    assert "private-gw-id" not in repr(restored.tokens)
+    session = BrSession(auth, clock=lambda: NOW, allow_login=False)
+    session.restore(restored.tokens)
+    context = create_br_ssl_context(load_br_material(tmp_path))
+    reader = BrReadClient(session=session, ssl_context=context, transport=transport)
+    await reader.acquire_vehicles()
+    await reader.get_last_status(VIN)
+    for request in transport.requests[1:]:
+        assert request.headers["gwId"] == "private-gw-id"
+        assert request.headers["deviceId"] == request.headers["iccid"] == DEVICE
+        assert request.headers["accessToken"] == tokens.access_token
+    assert transport.requests[0].headers["deviceId"] == DEVICE
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("metadata, expected", [
+    ({}, "original-gw-id"), ({"gwId": None}, "original-gw-id"), ({"gwId": "rotated-gw-id"}, "rotated-gw-id"),
+])
+async def test_refresh_preserves_or_rotates_the_session_identity(tmp_path: Path, metadata: dict, expected: str) -> None:
+    auth, transport = _auth(tmp_path, envelope({"accessToken": fake_jwt(int(NOW) + 86400), "refreshToken": "new-r", **metadata}))
+    tokens = await auth.refresh(BrTokens("old-a", "old-r", gw_id="original-gw-id"))
+    assert tokens.gw_id == expected
+    request = transport.requests[0]
+    assert request.headers["gwId"] == "original-gw-id"
+    assert request.headers["deviceId"] == request.headers["iccid"] == DEVICE
+
+
+def test_legacy_session_storage_loads_without_an_account_identity() -> None:
+    credentials = BrAccountCredentials("someone@example.invalid", "Synthetic1", DEVICE)
+    record = {
+        "account_binding": credentials.account_binding, "device_id": DEVICE,
+        "tokens": {"access_token": "a", "refresh_token": "r", "expires_at": None},
+    }
+    state = decode_br_state(record)
+    assert state.tokens.gw_id is None
+    assert decode_br_state(encode_br_state(state)) == state
+
+
+@pytest.mark.parametrize("gw_id", ["", "bad\r\nheader", 12, "x" * 16385])
+def test_malformed_session_identity_is_rejected_without_exposing_it(gw_id) -> None:
+    with pytest.raises(ValueError, match="^br_session_invalid$"):
+        BrTokens("a", "r", gw_id=gw_id)
+
+
+@pytest.mark.asyncio
+async def test_app_login_requires_the_account_identity(tmp_path: Path) -> None:
+    auth, transport = _auth(tmp_path, envelope({"accessToken": "a", "refreshToken": "r"}))
+    with pytest.raises(GwmSchemaError):
+        await auth.login()
+    assert len(transport.requests) == 1
 
 
 @pytest.mark.asyncio
