@@ -94,7 +94,7 @@ from .gwm_client import (
 from .gwm_client.apac_flow import ApacAuthenticated, ApacVerificationRequired
 from .gwm_client.apac_material import load_installed_apac_material
 from .gwm_client.apac_restore import ApacRestored
-from .gwm_client.br_flow import BrAuthenticated
+from .gwm_client.br_flow import BrAuthenticated, BrVerificationRequired
 from .gwm_client.br_installed import (
     GwmBrMaterialInvalidError,
     GwmBrMaterialMissingError,
@@ -144,6 +144,7 @@ _VERIFICATION_TYPES = (
     RussiaVerificationRequired,
     ChinaVerificationRequired,
     ApacVerificationRequired,
+    BrVerificationRequired,
 )
 
 
@@ -244,14 +245,14 @@ def _account_schema(
     return vol.Schema(fields)
 
 
-def _verification_schema() -> vol.Schema:
-    return vol.Schema(
-        {
-            vol.Required(CONF_VERIFICATION_CODE): _password_selector(
-                autocomplete="one-time-code"
-            )
-        }
-    )
+def _verification_schema(allow_resend: bool = False) -> vol.Schema:
+    code_field = vol.Optional(CONF_VERIFICATION_CODE) if allow_resend else vol.Required(CONF_VERIFICATION_CODE)
+    fields: dict[vol.Marker, Any] = {
+        code_field: _password_selector(autocomplete="one-time-code")
+    }
+    if allow_resend:
+        fields[vol.Optional("request_new_email_code", default=False)] = bool
+    return vol.Schema(fields)
 
 
 def _cloud_options_schema(entry: ConfigEntry, defaults: dict[str, Any] | None = None) -> vol.Schema:
@@ -417,7 +418,10 @@ class GwmConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             return self.async_abort(reason="invalid_flow_state")
         errors: dict[str, str] = {}
         if user_input is not None:
-            code = user_input.get(CONF_VERIFICATION_CODE)
+            resend = self._cloud_credentials.region == REGION_BR and user_input.get("request_new_email_code") is True
+            code = None if resend else user_input.get(CONF_VERIFICATION_CODE)
+            if self._cloud_credentials.region == REGION_BR and not resend and (not isinstance(code, str) or not code):
+                return self._show_verification({CONF_VERIFICATION_CODE: "invalid_verification_code"})
             result, error = await self._async_authenticate(
                 verification_code=code,
                 allow_session_reclaim=self._anz_session_reclaim_confirmed,
@@ -425,6 +429,8 @@ class GwmConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if error:
                 errors[CONF_VERIFICATION_CODE if error == "invalid_verification_code" else "base"] = error
             elif result is not None:
+                if resend and isinstance(result, BrVerificationRequired) and not result.code_requested:
+                    return await self._async_route_authentication(result, errors={"base": "rate_limited"})
                 return await self._async_route_authentication(result)
         return self._show_verification(errors)
 
@@ -688,8 +694,10 @@ class GwmConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             )
         except GwmTlsError as error:
             _log_cloud_auth_failure(error, credentials)
-            # Only the vehicle gateway checks the client certificate; the login portal does not.
-            certificate_rejected = credentials.region == REGION_BR and error.operation != "login"
+            # App sign-in and verification use standard server TLS.
+            certificate_rejected = credentials.region == REGION_BR and error.operation not in {
+                "login", "request_verification", "verify_code",
+            }
             return None, "br_tls_rejected" if certificate_rejected else "cannot_connect"
         except GwmTransportError as error:
             _log_cloud_auth_failure(error, credentials)
@@ -912,7 +920,9 @@ class GwmConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     def _show_verification(self, errors: dict[str, str] | None = None) -> ConfigFlowResult:
         return self.async_show_form(
             step_id="verification",
-            data_schema=_verification_schema(),
+            data_schema=_verification_schema(
+                allow_resend=self._cloud_credentials is not None and self._cloud_credentials.region == REGION_BR
+            ),
             errors=errors,
         )
 

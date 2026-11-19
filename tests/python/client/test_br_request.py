@@ -230,8 +230,8 @@ def test_refresh_request_url_body_headers_and_mtls(context) -> None:
     assert request.method == "POST"
     assert request.url == "https://br-h5-gateway.gwmcloud.com/app-api/api/v1.0/userAuth/refreshToken"
     assert request.ssl_context is context and context.security_level == 0
-    assert json.loads(request.body) == {"accessToken": "tok-a", "refreshToken": "tok-r", "deviceId": DEVICE[:16]}
-    assert len(json.loads(request.body)["deviceId"]) == 16
+    assert json.loads(request.body) == {"accessToken": "tok-a", "refreshToken": "tok-r", "deviceId": DEVICE}
+    assert len(json.loads(request.body)["deviceId"]) == 32
     assert b" " not in request.body
     headers = dict(request.headers)
     assert headers["accessToken"] == "tok-a" and headers["refreshToken"] == "tok-r"
@@ -290,3 +290,21 @@ def test_brazil_expired_refresh_code_on_reads_is_an_authentication_error() -> No
     with pytest.raises(GwmAuthenticationError) as error:
         decode_br_envelope(envelope(None, code="570062"), operation="acquire_vehicles")
     assert error.value.api_code == "570062"
+
+
+@pytest.mark.parametrize("operation, code, suffix", [
+    ("request_verification", None, "getVerifyCode"), ("verify_code", "123456", "checkVerifyCode"),
+])
+def test_brazil_verification_requests_use_the_signed_app_gateway(operation, code, suffix) -> None:
+    credentials = BrCredentials.from_password("test@example.invalid", "Synthetic1", DEVICE)
+    request = prepare_br_request(
+        operation=operation, ssl_context=ssl.create_default_context(), credentials=credentials, verification_code=code,
+    )
+    assert request.url == "https://br-h5-gateway.gwmcloud.com/app-api/api/v2.0/userAuth/" + suffix
+    assert request.headers["deviceId"] == DEVICE
+    assert request.headers["gwm-auth-sign"]
+    payload = json.loads(request.body)
+    assert payload["account"] == credentials.account
+    assert payload["accountType"] == "2" and payload["type"] == "17" and payload["validCodeMode"] == 1
+    assert payload.get("verifyCode") == code
+    assert "password" not in payload

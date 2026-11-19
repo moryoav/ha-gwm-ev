@@ -77,9 +77,9 @@ def charging_plan_body(command: ChargingPlanCommand) -> bytes:
 
 
 def _refresh_body(access_token: str, refresh_token: str, device_id: str) -> bytes:
-    """JSON body of the h5 refresh call; the device id is truncated to 16 characters."""
+    """Keep the full installation identity used by the app's v2 login."""
     return json.dumps(
-        {"accessToken": access_token, "refreshToken": refresh_token, "deviceId": device_id[:16]},
+        {"accessToken": access_token, "refreshToken": refresh_token, "deviceId": device_id},
         separators=(",", ":"),
     ).encode("utf-8")
 
@@ -95,21 +95,25 @@ def prepare_br_request(
     plan: ChargingPlanCommand | None = None,
     device_id: str | None = None,
     gw_id: str | None = None,
+    verification_code: str | None = None,
 ) -> _TransportRequest:
     """Build one allowlisted request (login, token refresh, two reads, or the opt-in charging write)."""
     try:
         endpoint = br_endpoint(operation)
+        auth_operation = operation in {"login", "request_verification", "verify_code"}
+        if verification_code is not None and operation not in {"login", "verify_code"}:
+            raise ValueError("invalid")
         if (
             not isinstance(ssl_context, ssl.SSLContext)
             or not ssl_context.check_hostname
             or ssl_context.verify_mode != ssl.CERT_REQUIRED
             # Vehicle gateway: mTLS context at SECLEVEL=0. Login host: a standard, non-downgraded one.
-            or (ssl_context.security_level != 0) == (operation != "login")
+            or (ssl_context.security_level != 0) == (not auth_operation)
         ):
             raise ValueError("invalid")
         body: bytes | None = None
         query = ""
-        if operation == "login":
+        if auth_operation:
             if (
                 type(credentials) is not BrCredentials
                 or access_token is not None
@@ -120,7 +124,13 @@ def prepare_br_request(
                 raise ValueError("invalid")
             headers = {**br_auth_headers(), "content-type": "application/json", "accept": "application/json"}
             headers.update({"deviceId": credentials.device_id, "iccid": credentials.device_id})
-            body = json.dumps(credentials.login_body(), separators=(",", ":")).encode("utf-8")
+            if operation == "verify_code" and verification_code is None:
+                raise ValueError("invalid")
+            payload = (
+                credentials.login_body(verification_code) if operation == "login"
+                else credentials.verification_body(verification_code)
+            )
+            body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
         else:
             if (
                 credentials is not None
@@ -227,6 +237,10 @@ def decode_br_envelope(response: _TransportResponse, *, operation: str) -> objec
         # No code is not a refusal: keep the saved tokens and let the next poll retry.
         raise GwmSchemaError(operation=operation)
     if code != BR_SUCCESS_CODE:
+        if (
+            operation in {"login", "verify_code"} and code in {"308103", "308011", "308012"}
+        ) or (operation == "verify_code" and code == "550002"):
+            raise GwmApiError(operation=operation, api_code=code)
         if operation in ("login", "refresh_token"):
             raise GwmAuthenticationError(operation=operation, api_code=code)
         error = GwmApiError(operation=operation, api_code=code)
