@@ -53,6 +53,8 @@ class BrEndpoint:
 _ENDPOINTS: Final = MappingProxyType(
     {
         "login": BrEndpoint("POST", BR_AUTH_BASE_URL, "userAuth/loginWithPassword", False),
+        "request_verification": BrEndpoint("POST", BR_AUTH_BASE_URL, "userAuth/getVerifyCode", False),
+        "verify_code": BrEndpoint("POST", BR_AUTH_BASE_URL, "userAuth/checkVerifyCode", False),
         "acquire_vehicles": BrEndpoint("GET", BR_APP_BASE_URL, "globalapp/vehicle/acquireVehicles", True),
         "get_last_status": BrEndpoint("GET", BR_APP_BASE_URL, "vehicle/getLastStatus", True),
         "set_charging_plan": BrEndpoint("POST", BR_APP_BASE_URL, "vehicleCharge/setChargingPlan", True),

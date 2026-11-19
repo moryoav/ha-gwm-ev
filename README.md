@@ -292,9 +292,9 @@ Restrictions vary by vehicle and region. These conditions do not apply to every 
 
 ## Brazil (read-only)
 
-Brazil is available in the setup flow as a read-only region. It signs in with the email and password of the official GWM app (no verification code) and reads the vehicle list and last status. It provides sensors, binary sensors, and a location tracker such as battery level, range, odometer, doors, windows, lock state, plug state, A/C state, and position. It never sends a vehicle command: no lock, A/C, window, remote-start, or number entities are created, and the remote-command option and PIN field are not shown. The only write is the optional charging schedule below.
+Brazil is available in the setup flow as a read-only region. It signs in with the email and password of the official GWM app and prompts for an email verification code when GWM requires it for a new device. It reads the vehicle list and last status. It provides sensors, binary sensors, and a location tracker such as battery level, range, odometer, doors, windows, lock state, plug state, A/C state, and position. It never sends a vehicle command: no lock, A/C, window, remote-start, or number entities are created, and the remote-command option and PIN field are not shown. The only write is the optional charging schedule below.
 
-The Brazilian vehicle gateway requires a client certificate from the official app. The installation includes the Brazil authentication files, so there is nothing to copy. Add the **GWM** integration, choose **Brazil**, keep country `BR`, and enter your email and password.
+The Brazilian vehicle gateway requires a client certificate from the official app. The installation includes the Brazil authentication files, so there is nothing to copy. Add the **GWM** integration, choose **Brazil**, keep country `BR`, and enter your email and password. If GWM requests verification, enter the email code in the next form. That form also offers a request for a new code when needed.
 
 If the bundled files are missing or unusable (a damaged installation), setup shows a clear error and the log says to reinstall the integration.
 

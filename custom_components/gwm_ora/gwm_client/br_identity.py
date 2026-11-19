@@ -85,11 +85,12 @@ class BrCredentials:
         """Build credentials for the official app's password login."""
         return cls(account, br_password_md5(password), device_id, password)
 
-    def login_body(self) -> dict[str, object]:
+    def login_body(self, verification_code: str | None = None) -> dict[str, object]:
         """Payload used by My GWM Brasil 1.4.2 on the H5 app gateway."""
         if self.password is None:
             raise ValueError("br_credentials_invalid")
-        return {
+        validate_br_verification_code(verification_code)
+        body: dict[str, object] = {
             "account": self.account,
             "accountType": "2" if "@" in self.account else "1",
             "countryCode": "55",
@@ -100,3 +101,29 @@ class BrCredentials:
             "pushToken": None,
             "country": "BR",
         }
+        if verification_code is not None:
+            body.update(verifyCode=verification_code, validCodeMode="1")
+        return body
+
+    def verification_body(self, code: str | None = None) -> dict[str, object]:
+        """Request or check the app's account-login verification code."""
+        validate_br_verification_code(code)
+        body: dict[str, object] = {
+            "type": "17", "account": self.account,
+            "accountType": "2" if "@" in self.account else "1",
+            "countryCode": "55", "validCodeMode": 1,
+        }
+        if code is None:
+            body.update(operateCode="", captchaType="", captchaId="", token="")
+        else:
+            body["verifyCode"] = code
+        return body
+
+
+def validate_br_verification_code(code: str | None) -> None:
+    """Reject malformed transient codes without retaining or displaying them."""
+    if code is not None and (
+        not isinstance(code, str) or not 0 < len(code) <= 64
+        or any(not 0x21 <= ord(character) <= 0x7e for character in code)
+    ):
+        raise ValueError("br_verification_invalid")

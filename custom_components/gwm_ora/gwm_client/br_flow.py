@@ -1,20 +1,22 @@
 """BR sign-in orchestration and the read-only adapter used by the cloud runtime.
 
-Password login only (no OTP). Reads are ``acquireVehicles`` and ``getLastStatus``;
+Password login with device-verification continuation. Reads are ``acquireVehicles`` and ``getLastStatus``;
 there is no command path in this region.
 """
 
 from __future__ import annotations
 
 import ssl
+import time
 from dataclasses import dataclass, field, replace
 
 from ._protocol import _AsyncTransport
 from .br_auth_client import BrAuthClient, BrSession, BrTokens
+from .br_identity import validate_br_verification_code
 from .br_read import BrReadClient
 from .br_state import BrAccountCredentials, BrAuthState
 from .charging import ChargingPlanCommand
-from .errors import GwmAuthenticationError
+from .errors import GwmApiError, GwmAuthenticationError
 from .models import (
     CloudVehicle,
     CloudVehicleBasics,
@@ -29,6 +31,15 @@ class BrAuthenticated:
 
     state: BrAuthState = field(repr=False)
     ssl_context: ssl.SSLContext = field(repr=False)
+
+
+@dataclass(frozen=True, slots=True)
+class BrVerificationRequired:
+    """An account-bound continuation containing no submitted code."""
+
+    state: BrAuthState = field(repr=False)
+    code_requested: bool
+    code_rejected: bool = False
 
 
 class BrCloudReader:
@@ -103,7 +114,8 @@ async def authenticate_br(
     ssl_context: ssl.SSLContext,
     transport: _AsyncTransport,
     allow_password_login: bool,
-) -> BrAuthenticated:
+    verification_code: str | None = None,
+) -> BrAuthenticated | BrVerificationRequired:
     """Restore persisted tokens lazily, or sign in once and validate with a read.
 
     Restoring performs no network call and no password login: a missing session raises
@@ -115,9 +127,16 @@ async def authenticate_br(
         type(credentials) is not BrAccountCredentials
         or type(allow_password_login) is not bool
         or (state is not None and (type(state) is not BrAuthState or not state.matches(credentials)))
+        or (verification_code is not None and (
+            not allow_password_login or state is None or state.verification_requested_at is None
+        ))
     ):
         raise GwmAuthenticationError(operation="login")
     candidate = state or BrAuthState.for_credentials(credentials)
+    try:
+        validate_br_verification_code(verification_code)
+    except ValueError:
+        raise GwmAuthenticationError(operation="verify_code") from None
     if not allow_password_login:
         # Older builds discarded gwId. Ask for one explicit login to recover it.
         if candidate.tokens is None or candidate.tokens.gw_id is None:
@@ -129,8 +148,23 @@ async def authenticate_br(
     auth = BrAuthClient(
         credentials=credentials.to_br_credentials(), transport=transport, refresh_context=ssl_context
     )
-    tokens = await auth.login()
+    try:
+        if verification_code is not None:
+            await auth.verify_code(verification_code)
+        tokens = await auth.login(verification_code)
+    except GwmApiError as error:
+        if error.api_code not in {"308103", "308011", "308012", "550002"}:
+            raise
+        if verification_code is not None:
+            return BrVerificationRequired(candidate, False, True)
+        if error.api_code != "308103":
+            raise
+        now = time.time()
+        if candidate.verification_requested_at is not None and 0 <= now - candidate.verification_requested_at < 600:
+            return BrVerificationRequired(candidate, False)
+        await auth.request_verification()
+        return BrVerificationRequired(replace(candidate, tokens=None, verification_requested_at=now), True)
     session = BrSession(auth, allow_login=False)
     session.restore(tokens)
     await BrReadClient(session=session, ssl_context=ssl_context, transport=transport).acquire_vehicles()
-    return BrAuthenticated(replace(candidate, tokens=session.tokens or tokens), ssl_context)
+    return BrAuthenticated(replace(candidate, tokens=session.tokens or tokens, verification_requested_at=None), ssl_context)

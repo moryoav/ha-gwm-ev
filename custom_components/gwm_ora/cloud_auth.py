@@ -56,7 +56,7 @@ from .gwm_client.apac_flow import ApacAuthenticated, ApacVerificationRequired, a
 from .gwm_client.apac_material import ApacMaterial
 from .gwm_client.apac_restore import ApacSessionUpdated
 from .gwm_client.apac_state import ApacAuthState
-from .gwm_client.br_flow import BrAuthenticated, authenticate_br
+from .gwm_client.br_flow import BrAuthenticated, BrVerificationRequired, authenticate_br
 from .gwm_client.br_state import BrAccountCredentials, BrAuthState
 from .gwm_client.china_client import ChinaAuthenticationResult
 from .gwm_client.eu_auth import EuAuthenticationResult
@@ -69,7 +69,7 @@ type ClientCredentials = (
 type CloudAuthState = EuAuthState | AnzAuthState | RussiaAuthState | ChinaAuthState | ApacAuthState | BrAuthState
 type CloudAuthenticationResult = (
     EuAuthenticationResult | AnzAuthenticationResult | RussiaAuthenticationResult | ChinaAuthenticationResult
-    | ApacAuthenticated | ApacVerificationRequired | BrAuthenticated
+    | ApacAuthenticated | ApacVerificationRequired | BrAuthenticated | BrVerificationRequired
 )
 type BootstrapMaterial = EuBootstrapMaterial | RussiaBootstrapMaterial | None
 type OverseasClientFactory = Callable[[GwmClientConfig], GwmClient]
@@ -222,7 +222,7 @@ class GwmCloudAuthenticator:
                 or (state is not None and type(state) is not BrAuthState)
                 or self._br_context_loader is None
                 or allow_session_reclaim
-                or verification_code is not None
+                or (verification_code is not None and (state is None or state.verification_requested_at is None))
             ):
                 raise GwmConfigurationError(operation="login")
             # Material errors (missing or invalid) propagate as their own GwmConfigurationError types.
@@ -235,6 +235,7 @@ class GwmCloudAuthenticator:
                     ssl_context=br_context,
                     transport=br_transport,
                     allow_password_login=allow_password_login,
+                    verification_code=verification_code,
                 )
             finally:
                 await br_transport.aclose()
