@@ -18,8 +18,8 @@ _DEVICE = re.compile(r"[0-9a-f]{32}\Z")
 class BrAccountCredentials:
     """Account, password and installation ID with the shape the cloud layer expects.
 
-    Never log or repr this object. ``to_br_credentials`` derives the digest-only
-    credential used on the wire.
+    Never log or repr this object. ``to_br_credentials`` builds the private
+    credential used by the official app's password login.
     """
 
     account: str = field(repr=False)
@@ -35,7 +35,7 @@ class BrAccountCredentials:
         self.to_br_credentials()
 
     def to_br_credentials(self) -> BrCredentials:
-        """Build the wire credential (MD5 digest of the password)."""
+        """Build the credential for the official app's password login."""
         return BrCredentials.from_password(self.account, self.password, self.device_id)
 
     @property
@@ -98,6 +98,7 @@ def encode_br_state(state: BrAuthState) -> dict[str, object]:
             "access_token": tokens.access_token,
             "refresh_token": tokens.refresh_token,
             "expires_at": tokens.expires_at,
+            "gw_id": tokens.gw_id,
         },
     }
 
@@ -109,7 +110,9 @@ def decode_br_state(data: object) -> BrAuthState:
             raise ValueError("br_state_invalid")
         token_data = data["tokens"]
         if token_data is not None and (
-            not isinstance(token_data, dict) or set(token_data) != {"access_token", "refresh_token", "expires_at"}
+            not isinstance(token_data, dict)
+            or not {"access_token", "refresh_token", "expires_at"}.issubset(token_data)
+            or set(token_data) - {"access_token", "refresh_token", "expires_at", "gw_id"}
         ):
             raise ValueError("br_state_invalid")
         expires_at = None if token_data is None else token_data["expires_at"]
@@ -122,6 +125,7 @@ def decode_br_state(data: object) -> BrAuthState:
                 token_data["access_token"],
                 token_data["refresh_token"],
                 None if expires_at is None else float(expires_at),
+                token_data.get("gw_id"),
             )
         )
         return BrAuthState(account_binding=data["account_binding"], device_id=data["device_id"], tokens=tokens)

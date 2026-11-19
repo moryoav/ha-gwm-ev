@@ -60,11 +60,12 @@ _HOSTS = {
     "aus-h5-gateway.gwmcloud.com": "aus",
     "rus-h5-gateway.gwmcloud.com": "rus",
     "br-front-service.gwmcloud.com": "br",
+    "br-h5-gateway.gwmcloud.com": "br",
 }
-# The BR password login runs on the web-portal gateway with its own prefix.
+# Recognize the old portal route as well as the current H5 app routes.
 _BR_LOGIN_PREFIX = "/br-official-commerce/br-official-gateway/pc-api/api/v1.0/"
-# The portal login carries its own fixed header set (no app version or channel headers).
-_BR_LOGIN_HEADERS = frozenset({"terminal", "brand", "brandid", "appid", "country", "enterpriseid"})
+# Current Brazil app headers required by login and refresh diagnostics.
+_BR_LOGIN_HEADERS = frozenset({"terminal", "brand", "appid", "country", "enterpriseid", "channel", "cver"})
 _CATEGORIES = frozenset({
     "client_error", "configuration_error", "route_policy_error", "client_closed",
     "transport_error", "network_error", "tls_error", "deadline_exceeded",
@@ -221,8 +222,6 @@ def begin_request(request: _TransportRequest, *, connect_timeout: float, read_ti
             _BR_LOGIN_PREFIX
             if region == "br" and url.path.startswith(_BR_LOGIN_PREFIX)
             else next((value for value in ("/app-api/api/v1.0/", "/app-api/api/v2.0/") if url.path.startswith(value)), None)
-            if region != "br"
-            else None
         )
         if prefix is None:
             return None
