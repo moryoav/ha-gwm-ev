@@ -1279,7 +1279,7 @@ def test_br_diagnostics_know_the_hosts_and_redact_private_values(tmp_path: Path)
     )
     exchange = begin_request(request, connect_timeout=10.0, read_timeout=20.0, remaining=30.0)
     assert exchange is not None
-    assert exchange.fields["region"] == "br" and exchange.fields["signing"] == "none"
+    assert exchange.fields["region"] == "br" and exchange.fields["signing"] == "gwm_auth"
     assert exchange.fields["base_headers_complete"] is True  # the portal needs no app version or channel
     incomplete = replace(request, headers={k: v for k, v in request.headers.items() if k != "brandid"})
     missing = begin_request(incomplete, connect_timeout=10.0, read_timeout=20.0, remaining=30.0)

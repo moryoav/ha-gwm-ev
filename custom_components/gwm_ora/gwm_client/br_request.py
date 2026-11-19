@@ -35,6 +35,7 @@ from .errors import (
     is_overseas_session_expired,
 )
 from .models import VehicleIdentifier
+from .signing import BRAZIL_GWM_AUTH, sign_request
 
 _TOKEN_CHARS = re.compile(r"[\x21-\x7e]{1,16384}\Z")
 # Both fixed phrases come from the vehicle gateway's HTML 400 when mTLS fails.
@@ -155,10 +156,23 @@ def prepare_br_request(
             elif vehicle_id is not None:
                 raise ValueError("invalid")
         headers["user-agent"] = _USER_AGENT
+        url = endpoint.base_url + endpoint.path + query
+        # The portal strips its reverse-proxy mount before checking the signature.
+        # A synthetic login on 2026-11-19 reached 308001 only with this target.
+        signing_url = url.replace("/br-official-commerce/br-official-gateway", "", 1) if operation == "login" else url
+        signed = sign_request(
+            BRAZIL_GWM_AUTH,
+            endpoint.method,
+            signing_url,
+            body.decode("utf-8") if body is not None else None,
+            uri_component_safe="-._~!*'()",
+            whitespace_policy="preserve",
+        )
+        headers.update(signed.headers)
         return _TransportRequest(
             operation=operation,
             method=endpoint.method,
-            url=endpoint.base_url + endpoint.path + query,
+            url=url,
             headers=headers,
             ssl_context=ssl_context,
             body=body,

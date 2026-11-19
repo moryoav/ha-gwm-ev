@@ -61,7 +61,7 @@ _HOSTS = {
     "rus-h5-gateway.gwmcloud.com": "rus",
     "br-front-service.gwmcloud.com": "br",
 }
-# The BR password login runs on the web-portal gateway with its own prefix and no request signing.
+# The BR password login runs on the web-portal gateway with its own prefix.
 _BR_LOGIN_PREFIX = "/br-official-commerce/br-official-gateway/pc-api/api/v1.0/"
 # The portal login carries its own fixed header set (no app version or channel headers).
 _BR_LOGIN_HEADERS = frozenset({"terminal", "brand", "brandid", "appid", "country", "enterpriseid"})
@@ -235,8 +235,7 @@ def begin_request(request: _TransportRequest, *, connect_timeout: float, read_ti
         version_two = prefix == "/app-api/api/v2.0/"
         gateway = "br_login" if region == "br" else "certificate_v1" if certificate else "auth_v2" if version_two else "h5_v1"
         signing = (
-            "none" if region == "br"
-            else "gwm_auth" if region == "rus" or (region == "eu" and version_two) else "bt_auth"
+            "gwm_auth" if region in {"br", "rus"} or (region == "eu" and version_two) else "bt_auth"
         )
         names = {name.lower() for name in request.headers}
         attempt = _CURRENT_ATTEMPT.get()
