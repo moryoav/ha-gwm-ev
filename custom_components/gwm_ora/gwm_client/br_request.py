@@ -50,6 +50,12 @@ class GwmBrCredentialError(GwmAuthenticationError):
     _message = "GWM BR credentials were rejected"
 
 
+class GwmBrSessionRejectedError(GwmAuthenticationError):
+    """The account session was replaced by another app login."""
+
+    _message = "GWM BR session was replaced by another login"
+
+
 class GwmBrBusyError(GwmApiError):
     """The vehicle or GWM is busy with another remote operation (do not retry in a loop)."""
 
@@ -211,6 +217,8 @@ def decode_br_envelope(response: _TransportResponse, *, operation: str) -> objec
     code = mapping.get("code") if mapping is not None else None
 
     data = mapping.get("data") if mapping is not None else None
+    if code == "607501":
+        raise GwmBrSessionRejectedError(operation=operation, api_code=code)
     if operation == "set_charging_plan" and mapping is not None and (
         (isinstance(code, str) and code in BR_BUSY_CODES)
         or mapping.get("running") is True

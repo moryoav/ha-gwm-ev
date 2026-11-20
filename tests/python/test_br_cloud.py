@@ -23,6 +23,7 @@ pytest.importorskip("homeassistant")
 from homeassistant.config_entries import ConfigEntry, ConfigFlowResult
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
+from homeassistant.exceptions import ConfigEntryAuthFailed
 from support.br import FakeTransport, envelope, fake_jwt, html, write_dummy_material
 
 import custom_components.gwm_ora as integration
@@ -57,6 +58,7 @@ from custom_components.gwm_ora.const import (
     REGION_BR,
     platforms_for_region,
 )
+from custom_components.gwm_ora.coordinator import GwmDataUpdateCoordinator
 from custom_components.gwm_ora.diagnostics import TO_REDACT
 from custom_components.gwm_ora.errors import GwmCommandForbidden
 from custom_components.gwm_ora.gwm_client import (
@@ -76,7 +78,7 @@ from custom_components.gwm_ora.gwm_client.br_auth_client import BrTokens
 from custom_components.gwm_ora.gwm_client.br_flow import BrAuthenticated
 from custom_components.gwm_ora.gwm_client.br_identity import BrCredentials
 from custom_components.gwm_ora.gwm_client.br_material import create_br_ssl_context, load_br_material
-from custom_components.gwm_ora.gwm_client.br_request import prepare_br_request
+from custom_components.gwm_ora.gwm_client.br_request import GwmBrSessionRejectedError, prepare_br_request
 from custom_components.gwm_ora.gwm_client.br_state import BrAccountCredentials, BrAuthState
 from custom_components.gwm_ora.sensor import _sensor_descriptions_for_vehicle
 
@@ -1891,3 +1893,20 @@ async def test_brazil_verification_form_resends_on_request_and_keeps_the_device(
     assert [r.operation for r in transport.requests] == [
         "login", "request_verification", "login", "login", "request_verification",
     ]
+
+
+@pytest.mark.asyncio
+async def test_br_session_takeover_retires_the_session_and_requests_reauthentication(monkeypatch, tmp_path) -> None:
+    transport = FakeTransport(envelope(None, code="607501"))
+    cloud, store = await _br_cloud(monkeypatch, tmp_path, transport, expired=False)
+    coordinator = GwmDataUpdateCoordinator(
+        HomeAssistant(str(tmp_path)), None, cloud_client=cloud,
+    )
+    with pytest.raises(ConfigEntryAuthFailed, match="signed in on another device") as error:
+        await coordinator._async_update_data()
+    assert isinstance(error.value.__cause__, GwmBrSessionRejectedError)
+    assert [request.operation for request in transport.requests] == ["acquire_vehicles"]
+    assert store.cleared >= 1
+    assert cloud.reusable_bootstrap is None
+    assert cloud._pending_auth_state is None
+    await cloud.aclose()

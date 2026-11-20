@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
-from .const import REGION_RUSSIA
+from .const import REGION_BR, REGION_RUSSIA
 from .gwm_client.errors import GwmAuthenticationError, is_russia_session_rejected
 
 
 def cloud_authentication_message(region: str, error: GwmAuthenticationError) -> str:
     """Describe a rejected session using fixed text, never a server message."""
 
+    if region == REGION_BR and error.api_code == "607501":
+        return (
+            "GWM reports that this account signed in on another device (API code 607501). "
+            "Reauthenticate in Home Assistant to reconnect."
+        )
     if region == REGION_RUSSIA and is_russia_session_rejected(error):
         reason = (
             "GWM reports that this account signed in on another device"

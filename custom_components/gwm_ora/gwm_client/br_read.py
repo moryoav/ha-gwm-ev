@@ -15,7 +15,7 @@ from ._protocol import _AsyncTransport, _Deadline
 from .br_auth_client import BrAuthClient, BrSession, BrTokens
 from .br_identity import BrCredentials
 from .br_material import create_br_ssl_context, load_br_material
-from .br_request import GwmBrCredentialError, decode_br_envelope, prepare_br_request
+from .br_request import GwmBrCredentialError, GwmBrSessionRejectedError, decode_br_envelope, prepare_br_request
 from .charging import ChargingPlanCommand
 from .errors import (
     GwmAuthenticationError,
@@ -84,7 +84,7 @@ class BrReadClient:
                 tokens = await self._session.ensure()
                 try:
                     return await self._exchange(operation, vehicle_id, tokens, deadline, plan)
-                except GwmBrCredentialError:
+                except (GwmBrCredentialError, GwmBrSessionRejectedError):
                     raise
                 except GwmAuthenticationError:
                     tokens = await self._session.ensure(rejected=tokens)
