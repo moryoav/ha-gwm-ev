@@ -8,6 +8,8 @@ This project follows semantic versioning. The Marketplace installs GWM from publ
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-11-20
+
 ### Russia
 
 - **Added** opt-in client-certificate enrollment, with private certificate storage, reuse after restart, renewal, and sanitized diagnostics ([#54](https://github.com/moryoav/ha-gwm-ev/issues/54)).
