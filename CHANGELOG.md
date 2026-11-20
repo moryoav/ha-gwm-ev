@@ -8,22 +8,24 @@ This project follows semantic versioning. The Marketplace installs GWM from publ
 
 ## [Unreleased]
 
-### Fixed
-
-- Added Brazil email verification for new-device sign-in challenges. Reused the verification-code form, kept the installation identity across the continuation, preserved the code-request cooldown across restarts, and added an explicit request for a new code. Kept the full app device identity in refresh requests.
-
-- Switched Brazil sign-in to the official app's H5 password-login flow after the vehicle gateways began rejecting fresh PC-portal sessions. Preserved the account and device identity across requests, token renewal, and Home Assistant restarts. Older sessions request one explicit sign-in.
-
-- Signed Brazil login, token refresh, vehicle reads, and charging-plan requests after the cloud began requiring request signatures. Matched the portal proxy path and the Brazilian app's query and JSON canonicalization.
-
 ### Added
 
 - Added a default-off **Request a new SMS verification code** option to Mainland-China account reconfiguration for manual recovery when a saved session cannot be restored. Preserved the restored device identity and existing sign-in continuation handling.
+- Added opt-in client-certificate enrollment for Russian accounts, with private certificate storage, reuse after restart, renewal, and sanitized diagnostics.
 - Added a read-only Brazil region: password sign-in without a verification code, vehicle discovery, and status polling for sensors, binary sensors, and the location tracker. Brazil never creates command, climate, lock, or number entities; charging control is a separate opt-in.
 - The installation includes the Brazil vehicle-gateway authentication files, so Brazil setup needs no manual file copy. Setup and startup report a clear error if the bundled files are missing or unusable.
 - Brazil: renew the session token silently via the h5 gateway refresh endpoint instead of asking to reauthenticate daily. Reauthentication is requested only when the refresh token itself is refused, and the saved password is never used to sign in silently.
 - Added opt-in scheduled-charging control for Brazil (off by default, no security PIN): a **Scheduled charging** switch (8-hour window on, clear plan off) plus the `gwm_ora.set_charging_plan` and `gwm_ora.clear_charging_plan` services. The switch is assumed-state because the service has no reliable readback, and clearing the plan is not a hard stop. All other Brazil commands stay blocked.
 - Added Brazil gateway hosts to the sanitized diagnostics and redacted the password digest.
+
+### Fixed
+
+- Signed current ANZ remote-command result polls (`getRemoteCtrlResultT5`) with the native vehicle-read policy. The app gateway rejected every poll signed with the current-app policy with `607099` (`sign is inconformity`), so even commands that ran on the vehicle ended as "timed out waiting for vehicle result". Commands themselves keep the current-app signature.
+- Requested a fresh sign-in for Russian session rejections `570062` and `607501`, preventing repeated polls or background refresh of rejected tokens. Preserved valid rotated credentials during concurrent certificate renewal and kept vehicle commands single-attempt.
+- Corrected Russian SMS verification failures to return to sign-in when GWM rejects the session, with clear recovery guidance.
+- Added Brazil email verification for new-device sign-in challenges. Reused the verification-code form, kept the installation identity across the continuation, preserved the code-request cooldown across restarts, and added an explicit request for a new code. Kept the full app device identity in refresh requests.
+- Switched Brazil sign-in to the official app's H5 password-login flow after the vehicle gateways began rejecting fresh PC-portal sessions. Preserved the account and device identity across requests, token renewal, and Home Assistant restarts. Older sessions request one explicit sign-in.
+- Signed Brazil login, token refresh, vehicle reads, and charging-plan requests after the cloud began requiring request signatures. Matched the portal proxy path and the Brazilian app's query and JSON canonicalization.
 
 ## [0.18.0] - 2026-11-10
 

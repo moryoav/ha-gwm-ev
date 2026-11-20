@@ -61,6 +61,7 @@ _HOSTS = {
     "rus-h5-gateway.gwmcloud.com": "rus",
     "br-front-service.gwmcloud.com": "br",
     "br-h5-gateway.gwmcloud.com": "br",
+    "rus-app-gateway-common.gwmcloud.com": "rus",
 }
 # Recognize the old portal route as well as the current H5 app routes.
 _BR_LOGIN_PREFIX = "/br-official-commerce/br-official-gateway/pc-api/api/v1.0/"
@@ -146,10 +147,11 @@ class AuthAttempt:
 def authentication_scope(
     *, flow: str, saved_state: bool, access_present: bool, refresh_present: bool,
     identity_present: bool, password_login_allowed: bool, verification_supplied: bool,
+    region: str = "eu",
 ) -> Iterator[AuthAttempt]:
     """Trace one EU authentication/renewal without retaining private state."""
     attempt = AuthAttempt(next(_ATTEMPT_IDS), time.monotonic(), {
-        "region": "eu", "flow": flow if flow in {"interactive", "startup_resume", "session_renewal"} else "unknown",
+        "region": region if region in {"eu", "rus"} else "unknown", "flow": flow if flow in {"interactive", "startup_resume", "session_renewal"} else "unknown",
         "saved_state": saved_state is True, "access_present": access_present is True,
         "refresh_present": refresh_present is True, "identity_present": identity_present is True,
         "password_login_allowed": password_login_allowed is True, "verification_supplied": verification_supplied is True,
@@ -185,7 +187,7 @@ def identity_check(stage: str, outcome: str, *, reason: object = None) -> None:
         attempt = _CURRENT_ATTEMPT.get()
         _emit(logging.WARNING if outcome in {"rejected", "renewal_needed"} else logging.DEBUG, "identity_check", {
             "attempt": attempt.identifier if attempt is not None else 0,
-            "region": "eu",
+            "region": attempt.fields.get("region", "eu") if attempt is not None else "eu",
             "stage": stage if stage in {"bootstrap_context", "server_context", "issued_context", "certificate_request", "enrolled_identity"} else "unknown",
             "outcome": outcome if outcome in {"started", "completed", "rejected", "renewal_needed"} else "unknown",
             "reason": reason if type(reason) is str and reason in _IDENTITY_REASONS else "unspecified",
@@ -229,7 +231,7 @@ def begin_request(request: _TransportRequest, *, connect_timeout: float, read_ti
         if route is None or request.operation != route[0]:
             return None
         certificate = request.operation == "enroll_certificate"
-        if certificate != (url.hostname == "eu-app-gateway-common.gwmcloud.com"):
+        if certificate != (url.hostname in {"eu-app-gateway-common.gwmcloud.com", "rus-app-gateway-common.gwmcloud.com"}):
             return None
         version_two = prefix == "/app-api/api/v2.0/"
         gateway = "br_login" if region == "br" else "certificate_v1" if certificate else "auth_v2" if version_two else "h5_v1"

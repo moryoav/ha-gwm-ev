@@ -18,13 +18,15 @@
           "country": "注册国家或地区",
           "authentication_method": "ANZ 身份验证方式",
           "account": "电子邮件、用户名或注册手机号",
-          "password": "密码"
+          "password": "密码",
+          "russia_certificate_enrollment": "测试俄罗斯客户端证书申请"
         },
         "data_description": {
           "country": "账号注册国家或地区的两字母代码。",
           "authentication_method": "澳大利亚和新西兰账号请使用当前应用登录；仅当此账号曾经可以使用已停用的加载项时，才选择旧版登录。",
           "account": "请使用与官方 GWM 应用相同的账号标识。",
-          "password": "存储在 Home Assistant 配置条目中，用于账号绑定的重启恢复和重新认证；诊断信息中会将其隐藏。"
+          "password": "存储在 Home Assistant 配置条目中，用于账号绑定的重启恢复和重新认证；诊断信息中会将其隐藏。",
+          "russia_certificate_enrollment": "默认关闭。仅在俄罗斯网关出现证书错误时测试 Android 应用的证书流程。申请的证书和私钥仅保存在 Home Assistant 私有存储中。"
         }
       },
       "verification": {
@@ -61,11 +63,13 @@
           "country": "注册国家或地区",
           "authentication_method": "ANZ 身份验证方式",
           "account": "电子邮件、用户名或注册手机号",
-          "password": "密码"
+          "password": "密码",
+          "russia_certificate_enrollment": "测试俄罗斯客户端证书申请"
         },
         "data_description": {
           "request_new_sms": "中国大陆账号的已保存会话无法恢复时，请勾选此项并使用新的短信验证码继续登录。登录进度会被保存，以便重启后恢复。",
-          "authentication_method": "更改此方式会清除之前与账号绑定的会话，并要求重新登录。"
+          "authentication_method": "更改此方式会清除之前与账号绑定的会话，并要求重新登录。",
+          "russia_certificate_enrollment": "默认关闭。仅在俄罗斯网关出现证书错误时测试 Android 应用的证书流程。申请的证书和私钥仅保存在 Home Assistant 私有存储中。"
         }
       },
       "reauth_confirm": {
@@ -81,6 +85,7 @@
       "invalid_auth": "GWM 拒绝了账号凭据。",
       "invalid_account": "请检查账号、密码、国家或地区以及所选区域。",
       "invalid_verification_code": "验证码被拒绝或已过期。",
+      "russia_session_rejected": "GWM 已使此俄罗斯会话失效（570062 或 607501）。请在 GWM Android 手机应用中登录同一账号，完成所有待处理的提示，然后退出登录并在此重试。请为 Home Assistant 使用单独的账号。",
       "rate_limited": "GWM 限制了请求频率，请稍后重试。",
       "service_error": "GWM 返回了不支持或意外的响应。",
       "local_configuration_error": "区域安全材料缺失或无效。",

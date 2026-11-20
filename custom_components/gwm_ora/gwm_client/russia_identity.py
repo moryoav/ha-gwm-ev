@@ -1,11 +1,4 @@
-"""Secret-safe handling of Russia's static client-certificate identity.
-
-The Russian app gateway uses a bundled regional identity rather than the
-enrolled identity used by Europe.  Its legacy TLS mechanics are otherwise the
-same, so this module binds the exact Russian bootstrap name and delegates the
-key recovery, chain validation, temporary-file handling, and isolated OpenSSL
-policy to the already hardened EU bootstrap implementation.
-"""
+"""Russian bootstrap and issued identities with scoped legacy TLS policy."""
 
 from __future__ import annotations
 
@@ -21,8 +14,11 @@ from cryptography.x509.oid import NameOID
 from .eu_identity import (
     EuBootstrapMaterial,
     EuIdentityError,
+    EuIssuedIdentity,
     _load_single_certificate,
     create_eu_bootstrap_ssl_context,
+    create_eu_issued_ssl_context,
+    is_eu_issued_identity_usable,
 )
 
 _RUSSIA_BOOTSTRAP_SUBJECT: Final = x509.Name(
@@ -100,6 +96,36 @@ class RussiaBootstrapMaterial:
             _as_eu_bootstrap_material(self)
         except EuIdentityError as error:
             raise RussiaIdentityError(error.category) from None
+
+
+@dataclass(frozen=True, slots=True)
+class RussiaIssuedIdentity:
+    """A privately stored issued certificate and its installation-owned key."""
+
+    certificate: str = field(repr=False)
+    private_key: str = field(repr=False)
+
+    def __post_init__(self) -> None:
+        # Share encoding validation without sharing regional state or trust anchors.
+        EuIssuedIdentity(self.certificate, self.private_key)
+
+
+def create_russia_issued_ssl_context(
+    identity: RussiaIssuedIdentity, *, ca_bundle: bytes, now: datetime | None = None,
+) -> ssl.SSLContext:
+    """Verify the issued key, lifetime and chain against the Russian CA bundle."""
+    if type(identity) is not RussiaIssuedIdentity:
+        raise EuIdentityError("issued_identity_invalid")
+    return create_eu_issued_ssl_context(
+        EuIssuedIdentity(identity.certificate, identity.private_key), ca_bundle=ca_bundle, now=now,
+    )
+
+
+def is_russia_issued_identity_usable(identity: RussiaIssuedIdentity, *, now: datetime | None = None) -> bool:
+    """Return whether an issued identity has more than 24 hours remaining."""
+    return type(identity) is RussiaIssuedIdentity and is_eu_issued_identity_usable(
+        EuIssuedIdentity(identity.certificate, identity.private_key), now=now,
+    )
 
 
 def create_russia_bootstrap_ssl_context(

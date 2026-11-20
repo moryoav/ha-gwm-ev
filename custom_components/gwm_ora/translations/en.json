@@ -18,13 +18,15 @@
           "country": "Registration country",
           "authentication_method": "ANZ authentication method",
           "account": "Email, username, or registered phone",
-          "password": "Password"
+          "password": "Password",
+          "russia_certificate_enrollment": "Test Russian certificate enrollment"
         },
         "data_description": {
           "country": "Two-letter country where the account is registered.",
           "authentication_method": "For Australia and New Zealand, use the current app login unless this account previously worked with the retired add-on.",
           "account": "Use the same account identifier as the official GWM app.",
-          "password": "Stored in the Home Assistant config entry for account-bound restart recovery and reauthentication; it is redacted from diagnostics."
+          "password": "Stored in the Home Assistant config entry for account-bound restart recovery and reauthentication; it is redacted from diagnostics.",
+          "russia_certificate_enrollment": "Off by default. Test the Android app certificate flow for Russian gateway certificate errors. The issued certificate and key stay in private Home Assistant storage."
         }
       },
       "verification": {
@@ -61,11 +63,13 @@
           "country": "Registration country",
           "authentication_method": "ANZ authentication method",
           "account": "Email, username, or registered phone",
-          "password": "Password"
+          "password": "Password",
+          "russia_certificate_enrollment": "Test Russian certificate enrollment"
         },
         "data_description": {
           "request_new_sms": "For Mainland China, select this if the saved session cannot be restored. Continue with a new SMS code; sign-in progress is saved for restart recovery.",
-          "authentication_method": "Changing this method discards the previous account-bound session and requires a fresh login."
+          "authentication_method": "Changing this method discards the previous account-bound session and requires a fresh login.",
+          "russia_certificate_enrollment": "Off by default. Test the Android app certificate flow for Russian gateway certificate errors. The issued certificate and key stay in private Home Assistant storage."
         }
       },
       "reauth_confirm": {
@@ -81,6 +85,7 @@
       "invalid_auth": "GWM rejected the account credentials.",
       "invalid_account": "Check the account, password, country, and selected region.",
       "invalid_verification_code": "The verification code was rejected or expired.",
+      "russia_session_rejected": "GWM invalidated this Russian session (570062 or 607501). Sign in to the same account in the GWM Android mobile app, complete any pending prompts, then sign out and retry here. Use a separate account for Home Assistant.",
       "rate_limited": "GWM rate-limited the request. Wait before trying again.",
       "service_error": "GWM rejected the request with an unsupported or unexpected response.",
       "local_configuration_error": "The regional security material is missing or invalid.",
