@@ -26,7 +26,7 @@ I receive a tiny commission on purchases made through The GWM Garage's AliExpres
 
 This custom integration connects Home Assistant directly to supported regional GWM cloud services. It discovers vehicles on the account, creates native Home Assistant entities, polls vehicle status, and provides explicitly enabled remote controls.
 
-Europe, Australia and New Zealand, Russia, mainland China, and Asia-Pacific are available in the setup flow.
+Europe, Australia and New Zealand, Russia, mainland China, Asia-Pacific, and Brazil are available in the setup flow.
 
 ## Roadmap and Feedback
 
@@ -56,6 +56,21 @@ The project has been tested with these vehicles:
 - WEY VV6, mainland-China NavInfo platform.
 - Tank 300 Hi4-T, mainland-China BeanTech platform.
 - Haval H6 PHEV, model year 2026, Asia-Pacific model.
+
+I have also received these Home Assistant test reports from owners:
+
+| Vehicle | Account region | Reported test results |
+| --- | --- | --- |
+| GWM ORA 5 BEV, model year 2026 | Brazil | Sign-in with email verification, discovery, and vehicle readings, confirmed by [@juslex](https://github.com/juslex) and [@GabasCVC](https://github.com/GabasCVC) in [#59](https://github.com/moryoav/ha-gwm-ev/issues/59). |
+| WEY 07 | Russia | Sign-in, full Home Assistant host restart, and climate control, confirmed by [@OlegVekhov](https://github.com/OlegVekhov) in [#54](https://github.com/moryoav/ha-gwm-ev/issues/54). |
+| Tank 400 Hi4-T, model year 2023, BeanTech | Mainland China | Status polling and fresh-SMS recovery in [#58](https://github.com/moryoav/ha-gwm-ev/issues/58), and all four window sensors in [#50](https://github.com/moryoav/ha-gwm-ev/issues/50), tested by [@zyaohiphop](https://github.com/zyaohiphop). Selected PIN-authorized controls were also tested on development builds in [#53](https://github.com/moryoav/ha-gwm-ev/issues/53); remote stop and standalone sunroof closing still failed in that session. |
+| Tank 300 PHEV, including the 2026 Hi4-T Ultra | Australia / New Zealand | Status polling reported by [@d50019](https://github.com/d50019) in [#40](https://github.com/moryoav/ha-gwm-ev/issues/40) and [@Lfarmed](https://github.com/Lfarmed) in [#43](https://github.com/moryoav/ha-gwm-ev/issues/43). Charging-window control was also tested by @d50019. |
+| GWM Cannon Hi4-T PHEV Ultra | Australia / New Zealand | Status polling and selected remote commands with successful result reporting, tested by [@haali89](https://github.com/haali89) in [#72](https://github.com/moryoav/ha-gwm-ev/issues/72) and [#71](https://github.com/moryoav/ha-gwm-ev/pull/71). A/C off returned a vehicle rejection in that test. |
+| GWM Cannon Alpha Ultra PHEV | Australia / New Zealand | Battery percentage and electric-range readings reported by [@deathman237](https://github.com/deathman237) in [#62](https://github.com/moryoav/ha-gwm-ev/issues/62). Charging and plug telemetry remain under investigation. |
+
+These reports cover the features and builds described in the linked issues; they do not confirm every control on every model.
+
+For the **Haval H6 GT, model year 2024, Brazil**, [@AFSFigueiredo](https://github.com/AFSFigueiredo) confirmed sign-in, email verification, discovery, and status reads using a standalone script matching the integration's requests ([test report](https://github.com/moryoav/ha-gwm-ev/issues/59#issuecomment-7010948406)). This is protocol validation; Home Assistant installation and charging control were not tested in that report.
 
 Other compatible GWM vehicles may also work. If you test another model, please [open an issue](https://github.com/moryoav/ha-gwm-ev/issues/new/choose) with the model, account region, and features you verified. Never include credentials, tokens, verification codes, VINs, or exact locations.
 

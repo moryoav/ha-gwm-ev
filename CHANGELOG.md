@@ -10,29 +10,29 @@ This project follows semantic versioning. The Marketplace installs GWM from publ
 
 ### Russia
 
-- **Added** opt-in client-certificate enrollment, with private certificate storage, reuse after restart, renewal, and sanitized diagnostics.
+- **Added** opt-in client-certificate enrollment, with private certificate storage, reuse after restart, renewal, and sanitized diagnostics ([#54](https://github.com/moryoav/ha-gwm-ev/issues/54)).
 - **Fixed** session rejections `570062` and `607501` to request a fresh sign-in, preventing repeated polls or background refresh of rejected tokens while preserving valid rotated credentials during concurrent certificate renewal and keeping vehicle commands single-attempt.
 - **Fixed** SMS verification failures to return to sign-in when GWM rejects the session, with clear recovery guidance.
 
+Reported and tested on a WEY 07 by [@OlegVekhov](https://github.com/OlegVekhov), including sign-in, restart recovery, and climate control.
+
 ### China
 
-- **Added** a default-off **Request a new SMS verification code** option to account reconfiguration for manual recovery when a saved session cannot be restored, preserving the restored device identity and existing sign-in continuation handling.
+- **Added** a default-off **Request a new SMS verification code** option to account reconfiguration for manual recovery when a saved session cannot be restored, preserving the restored device identity and existing sign-in continuation handling ([#58](https://github.com/moryoav/ha-gwm-ev/issues/58), following [#48](https://github.com/moryoav/ha-gwm-ev/issues/48)).
+
+Recovery patch contributed and tested on a 2023 Tank 400 Hi4-T by [@zyaohiphop](https://github.com/zyaohiphop).
 
 ### Brazil
 
-- **Added** a region that is read-only by default, with password sign-in, vehicle discovery, and status polling for sensors, binary sensors, and the location tracker; charging control is a separate opt-in, and command, climate, lock, and number entities remain unavailable.
-- **Added** bundled vehicle-gateway authentication files, so setup needs no manual file copy, with clear setup and startup errors if those files are missing or unusable.
-- **Added** silent session-token renewal through the H5 gateway refresh endpoint, with explicit reauthentication when the session is rejected or cannot be restored and no background password sign-in.
-- **Added** opt-in scheduled-charging control (off by default, no security PIN): a **Scheduled charging** switch that sets an 8-hour window when turned on and clears the plan when turned off, plus the `gwm_ora.set_charging_plan` and `gwm_ora.clear_charging_plan` services.
-- **Added** assumed-state tracking for scheduled charging because the service has no reliable readback; clearing the plan is not a hard charging stop, and all other commands stay blocked.
-- **Added** gateway hosts to sanitized diagnostics and redacted the password digest.
-- **Fixed** new-device sign-in challenges with email verification, reusing the verification-code form, retaining the installation identity and code-request cooldown across restarts, supporting an explicit request for a new code, and keeping the full app device identity in refresh requests.
-- **Fixed** sign-in by using the official app's H5 password-login flow after vehicle gateways began rejecting fresh PC-portal sessions, preserving account and device identity across requests, token renewal, and Home Assistant restarts; older sessions request one explicit sign-in.
-- **Fixed** login, token refresh, vehicle reads, and charging-plan requests after the cloud began requiring signatures, matching the portal proxy path and the Brazilian app's query and JSON canonicalization.
+- **Added** Brazil as a supported region, with sign-in and email verification, vehicle data and location, automatic session renewal, and optional charging schedules ([#59](https://github.com/moryoav/ha-gwm-ev/issues/59)).
+
+Initial region and charging support contributed by [@juslex](https://github.com/juslex) in [#60](https://github.com/moryoav/ha-gwm-ev/pull/60) and [#61](https://github.com/moryoav/ha-gwm-ev/pull/61). Tested in Home Assistant on the ORA 5 BEV by [@juslex](https://github.com/juslex) and [@GabasCVC](https://github.com/GabasCVC), with Haval H6 GT protocol research and validation by [@AFSFigueiredo](https://github.com/AFSFigueiredo).
 
 ### Australia and New Zealand (ANZ)
 
-- **Fixed** current remote-command result polls (`getRemoteCtrlResultT5`) to use the native vehicle-read signature policy, avoiding `607099` (`sign is inconformity`) and false "timed out waiting for vehicle result" errors for commands that ran on the vehicle; commands themselves keep the current-app signature.
+- **Fixed** current remote-command result polls (`getRemoteCtrlResultT5`) to use the native vehicle-read signature policy, avoiding `607099` (`sign is inconformity`) and false "timed out waiting for vehicle result" errors for commands that ran on the vehicle; commands themselves keep the current-app signature ([#72](https://github.com/moryoav/ha-gwm-ev/issues/72)).
+
+Fix contributed and tested on a Cannon Hi4-T PHEV Ultra by [@haali89](https://github.com/haali89) in [#71](https://github.com/moryoav/ha-gwm-ev/pull/71).
 
 ## [0.18.0] - 2026-11-10
 
