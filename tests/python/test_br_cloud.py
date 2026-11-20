@@ -2134,3 +2134,16 @@ async def test_br_charging_write_can_refresh_before_sending_its_only_post(monkey
     ]
     assert store.saved[-1].tokens.refresh_token == "rotated-refresh"
     await cloud.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("accepted", [True, False])
+async def test_br_switch_restores_metadata_without_charging_capability(monkeypatch, accepted) -> None:
+    """Temporary capability loss must not erase the accepted state on the next restart."""
+    monkeypatch.setattr(_PlanCoordinator, "vehicle", lambda self, vin: {"vin": vin, "capabilities": {}})
+    entity, _ = await _added_switch(
+        monkeypatch, REGION_BR, _PlanApi(), "unavailable", extra={"charging_plan_active": accepted}
+    )
+    assert entity.available is False
+    assert entity.is_on is accepted
+    assert entity.extra_restore_state_data.as_dict() == {"charging_plan_active": accepted}

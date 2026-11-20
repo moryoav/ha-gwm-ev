@@ -271,10 +271,9 @@ class GwmChargingScheduleSwitch(GwmEntity, SwitchEntity, RestoreEntity):
     async def async_added_to_hass(self) -> None:
         """Load the live charging-plan state, or the last known state where it cannot be read."""
         await super().async_added_to_hass()
-        if not self.charging_control_available:
-            return
-
         if self.charging_plan_readable:
+            if not self.charging_control_available:
+                return
             try:
                 response = await self._api.async_get_charging_plan(self.vin)
             except (GwmCommandError, GwmClientError) as err:
