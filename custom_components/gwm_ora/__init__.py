@@ -86,6 +86,7 @@ from .gwm_client.br_installed import (
     GwmBrMaterialMissingError,
     load_installed_br_context,
 )
+from .gwm_client.br_state import BrAuthState
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -433,6 +434,15 @@ async def _async_load_cloud_bootstrap_once(
         raise ConfigEntryNotReady(
             "GWM cloud private state is temporarily unavailable"
         ) from err
+
+    if (
+        isinstance(auth_state, BrAuthState)
+        and auth_state.tokens is None
+        and auth_state.verification_requested_at is not None
+    ):
+        # An explicit flow must finish this challenge with the same device and cooldown.
+        # Startup cannot resume it, and must not retire it as a rejected session.
+        raise ConfigEntryAuthFailed("GWM Brazil email verification must be completed")
 
     async def save_apac_session(result: ApacRestored) -> None:
         """Persist a token rotation before any later restoration read can fail."""

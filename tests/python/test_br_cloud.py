@@ -37,7 +37,7 @@ from custom_components.gwm_ora.cloud_auth import (
     cloud_unique_id,
 )
 from custom_components.gwm_ora.cloud_runtime import consume_cloud_bootstrap, stage_cloud_bootstrap
-from custom_components.gwm_ora.cloud_storage import _decode_auth_state, _encode_auth_state
+from custom_components.gwm_ora.cloud_storage import GwmCloudStateStore, _decode_auth_state, _encode_auth_state
 from custom_components.gwm_ora.const import (
     BR_PLATFORMS,
     CONF_ACCOUNT,
@@ -1910,3 +1910,47 @@ async def test_br_session_takeover_retires_the_session_and_requests_reauthentica
     assert cloud.reusable_bootstrap is None
     assert cloud._pending_auth_state is None
     await cloud.aclose()
+
+
+@pytest.mark.asyncio
+async def test_br_entry_startup_preserves_a_pending_email_challenge_on_disk(monkeypatch, tmp_path) -> None:
+    import time
+
+    credentials = _credentials()
+    unique_id = cloud_unique_id(credentials)
+    pending = replace(
+        BrAuthState.for_credentials(credentials.client_credentials()), verification_requested_at=time.time(),
+    )
+    original = GwmCloudStateStore(HomeAssistant(str(tmp_path)), unique_id)
+    await original.async_save_auth_state(credentials, pending)
+    restarted_hass = HomeAssistant(str(tmp_path))
+    entry = ConfigEntry(
+        data=cloud_entry_data(credentials), discovery_keys=MappingProxyType({}), domain=DOMAIN,
+        entry_id="br-entry", minor_version=1, options={}, source="user", subentries_data=None,
+        title="GWM Brazil", unique_id=unique_id, version=1,
+    )
+
+    def no_background_authentication(**kwargs):
+        raise AssertionError("Startup must leave the pending challenge for an explicit flow")
+
+    monkeypatch.setattr(integration, "GwmCloudAuthenticator", no_background_authentication)
+    with pytest.raises(ConfigEntryAuthFailed, match="email verification"):
+        await integration._async_load_cloud_bootstrap(
+            restarted_hass, entry, GwmCloudStateStore(restarted_hass, unique_id),
+        )
+    fresh = GwmCloudStateStore(HomeAssistant(str(tmp_path)), unique_id)
+    restored = await fresh.async_load_auth_state(dict(entry.data))
+    assert restored == pending
+    authenticator, transport = _authenticator(
+        monkeypatch, tmp_path, envelope(None, code="308103"), envelope(None), _login(), envelope(VEHICLES),
+    )
+    challenge = await authenticator.async_authenticate(credentials, state=restored)
+    assert isinstance(challenge, br_flow.BrVerificationRequired)
+    assert challenge.code_requested is False
+    assert challenge.state.device_id == pending.device_id
+    assert challenge.state.verification_requested_at == pending.verification_requested_at
+    result = await authenticator.async_authenticate(credentials, state=challenge.state, verification_code="123456")
+    assert isinstance(result, BrAuthenticated)
+    assert result.state.device_id == pending.device_id
+    assert result.state.verification_requested_at is None
+    assert [request.operation for request in transport.requests] == ["login", "verify_code", "login", "acquire_vehicles"]
