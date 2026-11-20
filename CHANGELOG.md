@@ -15,6 +15,7 @@ This project follows semantic versioning. The Marketplace installs GWM from publ
 
 ### Fixed
 
+- Signed current ANZ remote-command result polls (`getRemoteCtrlResultT5`) with the native vehicle-read policy. The app gateway rejected every poll signed with the current-app policy with `607099` (`sign is inconformity`), so even commands that ran on the vehicle ended as "timed out waiting for vehicle result". Commands themselves keep the current-app signature.
 - Requested a fresh sign-in for Russian session rejections `570062` and `607501`, preventing repeated polls or background refresh of rejected tokens. Preserved valid rotated credentials during concurrent certificate renewal and kept vehicle commands single-attempt.
 - Corrected Russian SMS verification failures to return to sign-in when GWM rejects the session, with clear recovery guidance.
 

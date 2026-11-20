@@ -198,7 +198,7 @@ async def test_climate_acknowledgement_preserves_followup_status(
 
 
 @pytest.mark.asyncio
-async def test_current_anz_commands_and_result_poll_keep_current_app_policy() -> None:
+async def test_current_anz_commands_keep_current_app_policy_and_poll_signs_natively() -> None:
     fixture = _fixture()
     device_id = "0123456789abcdef0123456789abcdef"
     identifier = VehicleIdentifier("SYNTHETIC+CURRENT/ANZ")
@@ -239,11 +239,18 @@ async def test_current_anz_commands_and_result_poll_keep_current_app_policy() ->
         assert request.headers["cVer"] == "1.0.6"
         assert request.headers["ip"] == "0.0.0.0"
         assert request.headers["secVersion"] == "2.0"
-        assert len(request.headers["bt-auth-nonce"]) == 32
     for request in transport.requests[:2]:
+        assert len(request.headers["bt-auth-nonce"]) == 32
         assert request.headers["Content-Type"] == "application/json"
         assert b'"vin":"SYNTHETIC+CURRENT/ANZ"' in (request.body or b"")
-    assert "Content-Type" not in transport.requests[2].headers
+    poll = transport.requests[2]
+    # The app gateway rejects the current-app signature on this GET with
+    # 607099; it must use the native vehicle-read nonce and canonicalization.
+    assert len(poll.headers["bt-auth-nonce"]) == 16
+    assert poll.headers["vin"] == "SYNTHETIC+CURRENT/ANZ"
+    assert urlsplit(poll.url).path.endswith("/vehicle/getRemoteCtrlResultT5")
+    assert urlsplit(poll.url).query == f"seqNo={acceptance.command_id}"
+    assert "Content-Type" not in poll.headers
 
 
 @pytest.mark.asyncio
