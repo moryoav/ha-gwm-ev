@@ -266,8 +266,9 @@ class GwmCloudStateStore:
             await self._async_save_auth_state(credentials, auth_state)
 
     async def _async_save_auth_state(
-        self, credentials: GwmCloudCredentials, auth_state: CloudAuthState
-    ) -> None:
+        self, credentials: GwmCloudCredentials, auth_state: CloudAuthState,
+        *, expected_br_state: BrAuthState | None = None,
+    ) -> bool:
         """Validate and publish authentication state under the account lock."""
 
         _validate_credentials_for_store(self.unique_id, credentials)
@@ -281,6 +282,11 @@ class GwmCloudStateStore:
         try:
             async with self._lock:
                 await self._async_ensure_loaded()
+                if expected_br_state is not None and (
+                    not self._record_matches(credentials) or self._record is None
+                    or self._record.auth_state not in (expected_br_state, auth_state)
+                ):
+                    return False
                 commands = self._record.commands if self._record_matches(credentials) and self._record is not None else ()
                 charging_plans = (
                     self._record.charging_plans if self._record_matches(credentials) and self._record is not None else ()
@@ -293,9 +299,18 @@ class GwmCloudStateStore:
                 )
                 await self._async_save(record)
             _log_auth_state("save", "completed", auth_state)
+            return True
         except Exception:
             _log_auth_state("save", "failed", auth_state)
             raise
+
+    async def async_save_br_runtime_auth_state(
+        self, credentials: GwmCloudCredentials, auth_state: BrAuthState, expected: BrAuthState,
+    ) -> bool:
+        """Publish a runtime renewal only while it still owns the durable session."""
+        if credentials.region != REGION_BR or type(expected) is not BrAuthState:
+            raise ValueError("auth_state_invalid")
+        return await self._async_save_auth_state(credentials, auth_state, expected_br_state=expected)
 
     async def async_clear_auth_state(
         self,
@@ -641,7 +656,7 @@ class GwmCloudStateStore:
         self._invalid_loaded_data = False
 
 
-async def async_finish_cloud_state_save(save: Coroutine[Any, Any, None]) -> None:
+async def async_finish_cloud_state_save(save: Coroutine[Any, Any, object]) -> None:
     """Finish a private state publication before propagating caller cancellation."""
     task = asyncio.create_task(save)
     cancelled = False

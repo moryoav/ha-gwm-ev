@@ -25,7 +25,7 @@ from .cloud_auth import (
     GwmCloudCredentials,
     cloud_unique_id,
 )
-from .cloud_storage import async_finish_apac_state_save, async_finish_cloud_state_save
+from .cloud_storage import GwmCloudStateStore, async_finish_apac_state_save, async_finish_cloud_state_save
 from .const import (
     CONF_ACCOUNT,
     CONF_AUTHENTICATION_METHOD,
@@ -549,6 +549,7 @@ class GwmCloudClient:
         self._client = client
         self._clock = clock or (lambda: datetime.now(UTC))
         self._bootstrap = bootstrap
+        self._br_durable_state = bootstrap.state if bootstrap is not None and type(bootstrap.state) is BrAuthState else None
         self._china_partial_state: ChinaAuthState | None = None
         self._russia_partial_state: RussiaAuthState | None = None
         self._credentials = credentials
@@ -1618,7 +1619,19 @@ class GwmCloudClient:
 
         async def save_state() -> None:
             """Clear the pending revision only after its private save completes."""
-            await state_store.async_save_auth_state(credentials, state)
+            if (
+                self.region == REGION_BR and isinstance(state_store, GwmCloudStateStore)
+                and type(state) is BrAuthState and self._br_durable_state is not None
+            ):
+                if not await state_store.async_save_br_runtime_auth_state(credentials, state, self._br_durable_state):
+                    # Reauthentication has already published a different session. The outgoing
+                    # runtime must neither overwrite it nor stage its superseded tokens.
+                    self._bootstrap = None
+                    self._pending_auth_state = None
+                    raise GwmNetworkError(operation="refresh_token")
+                self._br_durable_state = state
+            else:
+                await state_store.async_save_auth_state(credentials, state)
             if self._pending_auth_state is state:
                 self._pending_auth_state = None
 

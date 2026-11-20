@@ -2228,3 +2228,39 @@ async def test_br_queued_charging_write_rechecks_vehicle_membership(monkeypatch,
     with pytest.raises(GwmRoutePolicyError):
         await asyncio.wait_for(write, timeout=2)
     await cloud.aclose()
+
+
+@pytest.mark.asyncio
+async def test_br_pending_old_runtime_cannot_overwrite_a_new_sign_in(monkeypatch, tmp_path) -> None:
+    credentials, bootstrap = _bootstrap(tmp_path)
+    hass = HomeAssistant(str(tmp_path))
+    store = GwmCloudStateStore(hass, cloud_unique_id(credentials))
+    await store.async_save_auth_state(credentials, bootstrap.state)
+    transport = FakeTransport(_refresh(), envelope(VEHICLES), envelope(STATUS))
+    monkeypatch.setattr(runtime.AiohttpTransport, "create_owned", lambda **kwargs: transport)
+    cloud = runtime.GwmCloudClient.from_entry_data(
+        cloud_entry_data(credentials), cloud_unique_id(credentials), bootstrap, state_store=store,
+    )
+    session = cloud._client._client.session
+    session.restore(replace(session.tokens, expires_at=1.0))
+    writer = store._store.async_save
+
+    async def fail_save(data):
+        raise OSError("temporary storage failure")
+
+    monkeypatch.setattr(store._store, "async_save", fail_save)
+    await cloud.async_get_vehicle_data()
+    assert cloud._pending_auth_state is not None
+    monkeypatch.setattr(store._store, "async_save", writer)
+    fresh_state = replace(
+        bootstrap.state, tokens=replace(bootstrap.state.tokens, refresh_token="new-sign-in-refresh"),
+    )
+    await store.async_save_auth_state(credentials, fresh_state)
+    fresh_bootstrap = replace(bootstrap, state=fresh_state)
+    unloaded_hass, entry = await _unload(tmp_path, cloud, credentials, staged=fresh_bootstrap)
+    assert consume_cloud_bootstrap(unloaded_hass, entry.unique_id) is fresh_bootstrap
+    assert cloud.reusable_bootstrap is None
+    assert cloud._pending_auth_state is None
+    assert transport.closed is True
+    restarted_store = GwmCloudStateStore(HomeAssistant(str(tmp_path)), cloud_unique_id(credentials))
+    assert await restarted_store.async_load_auth_state(cloud_entry_data(credentials)) == fresh_state
