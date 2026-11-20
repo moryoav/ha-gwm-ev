@@ -1,0 +1,318 @@
+"""BR request construction, password digest and envelope decoding (offline)."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import ssl
+from pathlib import Path
+from urllib.parse import quote, urlsplit
+
+import pytest
+from support.br import envelope, html, write_dummy_material
+
+from custom_components.gwm_ora.gwm_client import signing
+from custom_components.gwm_ora.gwm_client.br_endpoints import br_endpoint
+from custom_components.gwm_ora.gwm_client.br_identity import (
+    BrCredentials,
+    br_password_md5,
+    generate_br_device_id,
+    load_or_create_br_device_id,
+)
+from custom_components.gwm_ora.gwm_client.br_material import create_br_ssl_context, load_br_material
+from custom_components.gwm_ora.gwm_client.br_request import GwmBrCredentialError, decode_br_envelope, prepare_br_request
+from custom_components.gwm_ora.gwm_client.charging import ChargingPlanCommand
+from custom_components.gwm_ora.gwm_client.errors import (
+    GwmApiError,
+    GwmAuthenticationError,
+    GwmHttpError,
+    GwmSchemaError,
+    GwmTlsError,
+)
+from custom_components.gwm_ora.gwm_client.models import VehicleIdentifier
+
+DEVICE = "0123456789abcdef0123456789abcdef"
+
+
+@pytest.mark.parametrize("operation", ["login", "refresh_token", "acquire_vehicles", "get_last_status", "set_charging_plan"])
+def test_every_brazil_operation_signs_the_wire_body_and_canonical_query(context, monkeypatch, operation) -> None:
+    """Cover the app login path, GET sorting, and POST query-plus-body signing."""
+    monkeypatch.setattr(signing.time, "time_ns", lambda: 1795086000000000000)
+    monkeypatch.setattr(signing, "_new_nonce", lambda uppercase: "0123456789abcdef")
+    vin = "SYNTHETICVIN000001"
+    kwargs = {
+        "access_token": "synthetic-access", "refresh_token": "synthetic-refresh",
+        "gw_id": "synthetic-gw-id", "device_id": DEVICE,
+    }
+    if operation == "login":
+        kwargs = {"credentials": BrCredentials.from_password("a+b@example.invalid", "Synthetic1", DEVICE)}
+    elif operation == "refresh_token":
+        kwargs["device_id"] = DEVICE
+    elif operation == "get_last_status":
+        kwargs["vehicle_id"] = vin
+    elif operation == "set_charging_plan":
+        kwargs["plan"] = ChargingPlanCommand(VehicleIdentifier(vin), enable=False)
+    request = prepare_br_request(
+        operation=operation, ssl_context=ssl.create_default_context() if operation == "login" else context, **kwargs
+    )
+    headers = dict(request.headers)
+    path = urlsplit(request.url).path
+    if operation == "login":
+        assert path == "/app-api/api/v2.0/userAuth/loginWithPassword"
+    # Independent reference assembled from each operation's wire contract.
+    parameters = ""
+    if operation == "get_last_status":
+        parameters = "flag=truevin=" + vin
+    elif request.body is not None:
+        parameters = "json=" + request.body.decode().replace(" ", "")
+        if operation == "set_charging_plan":
+            parameters += "vin=" + vin
+    raw = (
+        request.method + path + "gwm-auth-appkey:9094558645"
+        "gwm-auth-nonce:0123456789abcdefgwm-auth-timestamp:1795086000000"
+        + parameters + "ceffd90b9a8c8deeb82bc9963140aede"
+    )
+    expected = hashlib.sha256(quote(raw, safe="-._~!*'()").encode()).hexdigest()
+    assert headers["gwm-auth-sign"] == expected
+    assert headers["gwm-auth-appkey"] == "9094558645"
+    assert headers["gwm-auth-timestamp"] == "1795086000000"
+    assert headers["gwm-auth-nonce"] == "0123456789abcdef"
+    assert not any(name.startswith("bt-auth-") for name in headers)
+    assert headers["user-agent"] == "okhttp/4.9.3"
+    assert headers["deviceId"] == headers["iccid"] == DEVICE
+    if operation != "login":
+        assert headers["gwId"] == "synthetic-gw-id"
+
+
+@pytest.fixture
+def context(tmp_path: Path):
+    write_dummy_material(tmp_path)
+    return create_br_ssl_context(load_br_material(tmp_path))
+
+
+def test_password_md5_is_lowercase_hex_of_plain_text() -> None:
+    """Check that the password hash is the lowercase hex MD5 of the plain text."""
+    assert br_password_md5("Synthetic1") == hashlib.md5(b"Synthetic1").hexdigest()
+    assert br_password_md5("Synthetic1") == br_password_md5("Synthetic1").lower()
+
+
+def test_device_id_is_md5_shaped_and_persisted(tmp_path: Path) -> None:
+    """Check that the device id is MD5 shaped and stays stable once persisted."""
+    assert len(generate_br_device_id()) == 32
+    path = tmp_path / "deviceid"
+    first = load_or_create_br_device_id(path)
+    assert load_or_create_br_device_id(path) == first
+    assert path.stat().st_mode & 0o077 == 0
+
+
+def test_login_uses_a_clean_default_tls_context_not_the_vehicle_identity(context) -> None:
+    """Check that login uses a default TLS context and never the vehicle mTLS identity."""
+    credentials = BrCredentials.from_password("someone@example.invalid", "Synthetic1", DEVICE)
+    # The vehicle mTLS context (SECLEVEL=0, client certificate) is refused for the login host.
+    with pytest.raises(ValueError, match="^br_request_invalid$"):
+        prepare_br_request(operation="login", ssl_context=context, credentials=credentials)
+    clean = ssl.create_default_context()
+    assert clean.security_level > 0 and clean.check_hostname
+    request = prepare_br_request(operation="login", ssl_context=clean, credentials=credentials)
+    assert request.ssl_context is clean
+    # And the reverse: the vehicle gateway still demands the mTLS context.
+    with pytest.raises(ValueError, match="^br_request_invalid$"):
+        prepare_br_request(operation="acquire_vehicles", ssl_context=clean, access_token="tok-a")
+
+
+def test_login_request_headers_and_body() -> None:
+    """Check the headers and body of the login request."""
+    credentials = BrCredentials.from_password("someone@example.invalid", "Synthetic1", DEVICE)
+    request = prepare_br_request(operation="login", ssl_context=ssl.create_default_context(), credentials=credentials)
+    assert request.method == "POST"
+    assert request.url == (
+        "https://br-h5-gateway.gwmcloud.com/app-api/api/v2.0/userAuth/loginWithPassword"
+    )
+    headers = dict(request.headers)
+    for name, value in {
+        "appid": "6", "brand": "6", "country": "BR", "channel": "APP", "cver": "1.4.2",
+        "enterpriseid": "CC01", "language": "pt_BR", "rs": "2", "terminal": "GW_APP_GWM",
+        "content-type": "application/json",
+    }.items():
+        assert headers[name] == value
+    assert not {"accessToken", "refreshToken"} & set(headers)
+    assert json.loads(request.body) == {
+        "account": "someone@example.invalid", "accountType": "2", "countryCode": "55",
+        "agreement": [1, 2], "password": "Synthetic1", "deviceId": DEVICE,
+        "appType": "0", "pushToken": None, "country": "BR",
+    }
+    assert "Synthetic1" not in repr(credentials)
+    assert "someone" not in repr(credentials)
+
+
+def test_app_requests_headers_and_urls(context) -> None:
+    """Check the headers and URLs of app requests."""
+    listing = prepare_br_request(operation="acquire_vehicles", ssl_context=context, access_token="tok-a", refresh_token="tok-r")
+    assert listing.method == "GET" and listing.body is None
+    assert listing.url == "https://br-app-gateway.gwmcloud.com/app-api/api/v1.0/globalapp/vehicle/acquireVehicles"
+    headers = dict(listing.headers)
+    for name, value in {
+        "rs": "2", "terminal": "GW_APP_GWM", "brand": "6", "language": "pt_BR", "systemtype": "2",
+        "regioncode": "BR", "country": "BR", "accessToken": "tok-a", "refreshToken": "tok-r",
+    }.items():
+        assert headers[name] == value
+    status = prepare_br_request(
+        operation="get_last_status", ssl_context=context, access_token="tok-a", refresh_token="tok-r", vehicle_id="SYNTHETICVIN000001"
+    )
+    assert status.url.endswith("/vehicle/getLastStatus?vin=SYNTHETICVIN000001&flag=true")
+
+
+def test_refresh_endpoint_is_the_h5_host_contract() -> None:
+    """Check that the refresh endpoint follows the H5 host contract."""
+    endpoint = br_endpoint("refresh_token")
+    assert (endpoint.method, endpoint.authenticated) == ("POST", True)
+    assert endpoint.base_url + endpoint.path == (
+        "https://br-h5-gateway.gwmcloud.com/app-api/api/v1.0/userAuth/refreshToken"
+    )
+
+
+@pytest.mark.parametrize("operation", ["send_command", "sendCmd", "send_climate_command", "refreshToken", ""])
+def test_only_allowlisted_operations_exist(operation: str) -> None:
+    """Check that only allowlisted operations can be built."""
+    with pytest.raises(ValueError, match="^br_operation_not_supported$"):
+        br_endpoint(operation)
+
+
+def test_app_request_requires_token_and_secure_context(context) -> None:
+    """Check that an app request needs a token and a secure context."""
+    with pytest.raises(ValueError, match="^br_request_invalid$"):
+        prepare_br_request(operation="acquire_vehicles", ssl_context=context)
+    import ssl
+
+    with pytest.raises(ValueError, match="^br_request_invalid$"):
+        prepare_br_request(operation="acquire_vehicles", ssl_context=ssl.create_default_context(), access_token="t")
+
+
+def test_credential_rejection_308001_is_a_clear_credential_error() -> None:
+    """Check that gateway code 308001 maps to a clear credential error."""
+    with pytest.raises(GwmBrCredentialError) as error:
+        decode_br_envelope(envelope(None, code="308001", description="bad password"), operation="login")
+    assert isinstance(error.value, GwmAuthenticationError)
+    assert error.value.api_code == "308001"
+    assert "bad password" not in str(error.value)
+
+
+def test_html_400_without_certificate_is_tls_error() -> None:
+    """Check that an HTML 400 response without a certificate is reported as a TLS error."""
+    with pytest.raises(GwmTlsError):
+        decode_br_envelope(html(400, "No required SSL certificate was sent"), operation="acquire_vehicles")
+    with pytest.raises(GwmTlsError):
+        decode_br_envelope(html(400, "The SSL certificate error"), operation="acquire_vehicles")
+
+
+def test_other_http_and_schema_failures() -> None:
+    """Check the error mapping for other HTTP statuses and schema failures."""
+    with pytest.raises(GwmHttpError) as http_error:
+        decode_br_envelope(html(400, "Bad Request"), operation="get_last_status")
+    assert http_error.value.status == 400
+    with pytest.raises(GwmAuthenticationError):
+        decode_br_envelope(html(401, "x"), operation="acquire_vehicles")
+    with pytest.raises(GwmSchemaError):
+        decode_br_envelope(html(200, "<p>oops</p>"), operation="acquire_vehicles")
+    with pytest.raises(GwmApiError) as api_error:
+        decode_br_envelope(envelope(None, code="999999"), operation="acquire_vehicles")
+    assert api_error.value.api_code == "999999"
+    with pytest.raises(GwmAuthenticationError):
+        decode_br_envelope(envelope(None, code="999999"), operation="login")
+    assert decode_br_envelope(envelope({"k": 1}), operation="login") == {"k": 1}
+
+
+def test_refresh_request_url_body_headers_and_mtls(context) -> None:
+    """Check the URL, body, headers and mTLS context of the refresh request."""
+    request = prepare_br_request(
+        operation="refresh_token", ssl_context=context, access_token="tok-a", refresh_token="tok-r", device_id=DEVICE
+    )
+    assert request.method == "POST"
+    assert request.url == "https://br-h5-gateway.gwmcloud.com/app-api/api/v1.0/userAuth/refreshToken"
+    assert request.ssl_context is context and context.security_level == 0
+    assert json.loads(request.body) == {"accessToken": "tok-a", "refreshToken": "tok-r", "deviceId": DEVICE}
+    assert len(json.loads(request.body)["deviceId"]) == 32
+    assert b" " not in request.body
+    headers = dict(request.headers)
+    assert headers["accessToken"] == "tok-a" and headers["refreshToken"] == "tok-r"
+    assert headers["terminal"] == "GW_APP_GWM" and headers["content-type"] == "application/json"
+    # The refresh host also demands the mTLS context, never the clean login one.
+    with pytest.raises(ValueError, match="^br_request_invalid$"):
+        prepare_br_request(
+            operation="refresh_token", ssl_context=ssl.create_default_context(),
+            access_token="tok-a", refresh_token="tok-r", device_id=DEVICE,
+        )
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"refresh_token": ""},
+        {"device_id": None},
+        {"device_id": "short"},
+        {"device_id": DEVICE.upper()},
+        {"vehicle_id": "SYNTHETICVIN000001"},
+        {"access_token": None},
+    ],
+)
+def test_refresh_request_rejects_incomplete_input(context, kwargs) -> None:
+    """Check that the refresh request rejects incomplete input."""
+    base = {"access_token": "tok-a", "refresh_token": "tok-r", "device_id": DEVICE}
+    with pytest.raises(ValueError, match="^br_request_invalid$"):
+        prepare_br_request(operation="refresh_token", ssl_context=context, **{**base, **kwargs})
+
+
+def test_vehicle_requests_accept_session_identity_and_login_uses_its_own_device(context) -> None:
+    """Send the session identity on vehicle requests and prevent login overrides."""
+    request = prepare_br_request(
+        operation="acquire_vehicles", ssl_context=context, access_token="t", device_id=DEVICE, gw_id="synthetic-gw-id"
+    )
+    assert request.headers["deviceId"] == request.headers["iccid"] == DEVICE
+    assert request.headers["gwId"] == "synthetic-gw-id"
+    credentials = BrCredentials.from_password("someone@example.invalid", "Synthetic1", DEVICE)
+    with pytest.raises(ValueError, match="^br_request_invalid$"):
+        prepare_br_request(
+            operation="login", ssl_context=ssl.create_default_context(), credentials=credentials, device_id=DEVICE
+        )
+
+
+def test_refresh_envelope_failure_is_an_authentication_error() -> None:
+    """Check that a failed refresh envelope becomes an authentication error."""
+    with pytest.raises(GwmAuthenticationError):
+        decode_br_envelope(envelope(None, code="999999"), operation="refresh_token")
+    for status in (401, 403):
+        with pytest.raises(GwmAuthenticationError):
+            decode_br_envelope(html(status, "x"), operation="refresh_token")
+    assert decode_br_envelope(envelope({"accessToken": "a"}), operation="refresh_token") == {"accessToken": "a"}
+
+
+def test_brazil_expired_refresh_code_on_reads_is_an_authentication_error() -> None:
+    with pytest.raises(GwmAuthenticationError) as error:
+        decode_br_envelope(envelope(None, code="570062"), operation="acquire_vehicles")
+    assert error.value.api_code == "570062"
+
+
+@pytest.mark.parametrize("operation, code, suffix", [
+    ("request_verification", None, "getVerifyCode"), ("verify_code", "123456", "checkVerifyCode"),
+])
+def test_brazil_verification_requests_use_the_signed_app_gateway(operation, code, suffix) -> None:
+    credentials = BrCredentials.from_password("test@example.invalid", "Synthetic1", DEVICE)
+    request = prepare_br_request(
+        operation=operation, ssl_context=ssl.create_default_context(), credentials=credentials, verification_code=code,
+    )
+    assert request.url == "https://br-h5-gateway.gwmcloud.com/app-api/api/v2.0/userAuth/" + suffix
+    assert request.headers["deviceId"] == DEVICE
+    assert request.headers["gwm-auth-sign"]
+    payload = json.loads(request.body)
+    assert payload["account"] == credentials.account
+    assert payload["accountType"] == "2" and payload["type"] == "17" and payload["validCodeMode"] == 1
+    assert payload.get("verifyCode") == code
+    assert "password" not in payload
+
+
+@pytest.mark.parametrize("operation", ["login", "request_verification", "verify_code", "refresh_token"])
+@pytest.mark.parametrize("code", [[], {}, None, 0, True, ""])
+def test_malformed_brazil_auth_codes_raise_schema_errors(operation, code) -> None:
+    """Malformed codes cannot escape as TypeError or retire recoverable credentials."""
+    with pytest.raises(GwmSchemaError):
+        decode_br_envelope(envelope(None, code=code), operation=operation)

@@ -17,8 +17,9 @@ from .cloud_storage import (
     GwmCommandJournalEntry,
     GwmOwnedChargingPlan,
     async_finish_apac_state_save,
+    async_finish_cloud_state_save,
 )
-from .const import REGION_APAC
+from .const import REGION_APAC, REGION_BR
 from .errors import GwmCommandError, GwmCommandForbidden
 from .gwm_client import (
     DEFAULT_OPERATION_TIME_MINUTES,
@@ -128,6 +129,7 @@ class GwmCommandApi:
         self._battery_departure_times: dict[str, int] = {}
         self._cloud = cloud
         self._state_store = state_store
+        self._br_charging_lock = asyncio.Lock()
         self._credentials = credentials
         self._enabled = enabled
         self._apac_climate_enabled = apac_climate_enabled
@@ -821,6 +823,8 @@ class GwmCommandApi:
 
     def _ensure_available(self) -> None:
         """Require remote-command consent and a writable regional backend."""
+        if self._cloud.region == REGION_BR:
+            raise GwmCommandForbidden("GWM Brazil is read-only")
         if self._cloud.region == REGION_APAC:
             if not getattr(self, "_apac_remote_enabled", False) or not self._security_pin:
                 raise GwmCommandForbidden("GWM vehicle controls require opt-in and a security PIN")
@@ -866,6 +870,8 @@ class GwmCommandApi:
         """Return the current validated charging-plan shape."""
 
         self._ensure_charging_available()
+        if self._cloud.region == REGION_BR:
+            raise GwmCommandForbidden("GWM Brazil has no charging-plan readback")
         identifier = _vehicle_identifier(vin, command_name="Charging plan")
         return (await self._cloud.async_get_charging_plan(identifier)).as_dict()
 
@@ -894,6 +900,18 @@ class GwmCommandApi:
             )
         except (TypeError, ValueError):
             raise GwmCommandError("Charging plan requires a valid window and options") from None
+        if self._cloud.region == REGION_BR:
+            async with self._br_charging_lock:
+                await self._cloud.async_set_charging_plan(command)
+                try:
+                    await async_finish_cloud_state_save(
+                        self._state_store.async_save_br_charging_state(self._credentials, identifier.value, enable)
+                    )
+                except Exception as err:
+                    raise GwmCommandError(
+                        "GWM accepted the charging plan but its state could not be saved; do not retry"
+                    ) from err
+            return {}
         await self._cloud.async_set_charging_plan(command)
         if not enable:
             await self._durably_remove_owned_plan(identifier.value)
@@ -945,7 +963,7 @@ class GwmCommandApi:
     ) -> None:
         """Clear only unchanged integration-owned plans after opt-out."""
 
-        if self._charging_enabled:
+        if self._charging_enabled or self._cloud.region == REGION_BR:
             return
         owned_plans = await self._state_store.async_get_owned_charging_plans(entry_data)
         for owned in owned_plans:

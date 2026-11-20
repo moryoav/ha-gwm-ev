@@ -59,8 +59,14 @@ _HOSTS = {
     "eu-app-gateway-common.gwmcloud.com": "eu",
     "aus-h5-gateway.gwmcloud.com": "aus",
     "rus-h5-gateway.gwmcloud.com": "rus",
+    "br-front-service.gwmcloud.com": "br",
+    "br-h5-gateway.gwmcloud.com": "br",
     "rus-app-gateway-common.gwmcloud.com": "rus",
 }
+# Recognize the old portal route as well as the current H5 app routes.
+_BR_LOGIN_PREFIX = "/br-official-commerce/br-official-gateway/pc-api/api/v1.0/"
+# Current Brazil app headers required by login and refresh diagnostics.
+_BR_LOGIN_HEADERS = frozenset({"terminal", "brand", "appid", "country", "enterpriseid", "channel", "cver"})
 _CATEGORIES = frozenset({
     "client_error", "configuration_error", "route_policy_error", "client_closed",
     "transport_error", "network_error", "tls_error", "deadline_exceeded",
@@ -214,7 +220,11 @@ def begin_request(request: _TransportRequest, *, connect_timeout: float, read_ti
         region = _HOSTS.get(url.hostname or "")
         if region is None or url.port not in {None, 443}:
             return None
-        prefix = next((value for value in ("/app-api/api/v1.0/", "/app-api/api/v2.0/") if url.path.startswith(value)), None)
+        prefix = (
+            _BR_LOGIN_PREFIX
+            if region == "br" and url.path.startswith(_BR_LOGIN_PREFIX)
+            else next((value for value in ("/app-api/api/v1.0/", "/app-api/api/v2.0/") if url.path.startswith(value)), None)
+        )
         if prefix is None:
             return None
         route = _PATHS.get(url.path[len(prefix):])
@@ -224,8 +234,10 @@ def begin_request(request: _TransportRequest, *, connect_timeout: float, read_ti
         if certificate != (url.hostname in {"eu-app-gateway-common.gwmcloud.com", "rus-app-gateway-common.gwmcloud.com"}):
             return None
         version_two = prefix == "/app-api/api/v2.0/"
-        gateway = "certificate_v1" if certificate else "auth_v2" if version_two else "h5_v1"
-        signing = "gwm_auth" if region == "rus" or (region == "eu" and version_two) else "bt_auth"
+        gateway = "br_login" if region == "br" else "certificate_v1" if certificate else "auth_v2" if version_two else "h5_v1"
+        signing = (
+            "gwm_auth" if region in {"br", "rus"} or (region == "eu" and version_two) else "bt_auth"
+        )
         names = {name.lower() for name in request.headers}
         attempt = _CURRENT_ATTEMPT.get()
         fields: dict[str, object] = {
@@ -238,7 +250,9 @@ def begin_request(request: _TransportRequest, *, connect_timeout: float, read_ti
             "tls_hostname_check": request.ssl_context.check_hostname is True,
             "body_present": request.body is not None, "access_header_present": "accesstoken" in names,
             "device_header_present": "deviceid" in names,
-            "base_headers_complete": {"terminal", "brand", "cver", "appid", "channel"}.issubset(names),
+            "base_headers_complete": (
+                _BR_LOGIN_HEADERS if region == "br" else {"terminal", "brand", "cver", "appid", "channel"}
+            ).issubset(names),
             "signature_present": f"{signing.replace('_', '-')}-sign" in names,
             "timestamp_present": f"{signing.replace('_', '-')}-timestamp" in names,
             "nonce_present": f"{signing.replace('_', '-')}-nonce" in names,

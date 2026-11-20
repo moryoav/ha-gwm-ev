@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import timedelta
 from pathlib import Path
 
 import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.const import EVENT_HOMEASSISTANT_STOP, Platform
+from homeassistant.core import Event, HomeAssistant, ServiceCall
 from homeassistant.exceptions import (
     ConfigEntryAuthFailed,
     ConfigEntryNotReady,
@@ -23,6 +26,7 @@ from .cloud_commands import GwmCommandApi
 from .cloud_runtime import (
     GwmCloudBootstrap,
     GwmCloudClient,
+    cloud_bootstrap_staged,
     consume_cloud_bootstrap,
     stage_cloud_bootstrap,
 )
@@ -53,9 +57,11 @@ from .const import (
     MIN_CHARGE_WINDOW_MINUTES,
     PLATFORMS,
     REGION_APAC,
+    REGION_BR,
     REGION_CHINA,
     SERVICE_CLEAR_CHARGING_PLAN,
     SERVICE_SET_CHARGING_PLAN,
+    platforms_for_region,
 )
 from .coordinator import GwmDataUpdateCoordinator
 from .entity import async_call_gwm_api
@@ -75,6 +81,15 @@ from .gwm_client import (
 from .gwm_client.apac_flow import ApacAuthenticated
 from .gwm_client.apac_material import load_installed_apac_material
 from .gwm_client.apac_restore import ApacRestored
+from .gwm_client.br_flow import BrAuthenticated
+from .gwm_client.br_installed import (
+    GwmBrMaterialInvalidError,
+    GwmBrMaterialMissingError,
+    load_installed_br_context,
+)
+from .gwm_client.br_state import BrAuthState
+
+_LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -85,6 +100,9 @@ class GwmRuntimeData:
     coordinator: GwmDataUpdateCoordinator
     cloud: GwmCloudClient
     state_store: GwmCloudStateStore
+    # Exact platforms forwarded at setup; unload must release these, not whatever the
+    # (possibly already changed) config entry would forward now.
+    platforms: list[Platform] = field(default_factory=lambda: list(PLATFORMS))
 
 
 GwmConfigEntry = ConfigEntry[GwmRuntimeData]
@@ -180,6 +198,14 @@ def _async_register_services(hass: HomeAssistant) -> None:
     )
 
 
+def _entry_platforms(entry: GwmConfigEntry) -> list[Platform]:
+    """Platforms for this entry's region and charging opt-in."""
+    return platforms_for_region(
+        entry.data.get(CONF_REGION),
+        charging_control=entry.options.get(CONF_ENABLE_CHARGING_CONTROL) is True,
+    )
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: GwmConfigEntry) -> bool:
     """Set up GWM from a config entry."""
     if entry.data.get(CONF_CONNECTION_TYPE) != CONNECTION_TYPE_CLOUD:
@@ -191,7 +217,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: GwmConfigEntry) -> bool:
 
 async def async_unload_entry(hass: HomeAssistant, entry: GwmConfigEntry) -> bool:
     """Unload a config entry."""
-    unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    unloaded = await hass.config_entries.async_unload_platforms(
+        entry, entry.runtime_data.platforms
+    )
     if not unloaded:
         return False
     cloud = entry.runtime_data.cloud
@@ -201,15 +229,31 @@ async def async_unload_entry(hass: HomeAssistant, entry: GwmConfigEntry) -> bool
         if cloud.region == REGION_APAC:
             await entry.runtime_data.api.async_shutdown_apac_commands()
         await entry.runtime_data.coordinator.async_cancel_command_tasks()
+        brazil = REGION_BR in (cloud.region, entry.data.get(CONF_REGION))
+        if cloud.region == REGION_BR:
+            # Drain an in-flight read first: its silent refresh may rotate and save tokens.
+            await cloud.aclose()
         if (
             (bootstrap := cloud.reusable_bootstrap) is not None
             and entry.unique_id is not None
+            # A Brazil sign-in, reauth or reconfigure stages its own handoff before the
+            # reload; never replace it, and never hand a session across a region change.
+            and not (
+                brazil
+                and (
+                    cloud_bootstrap_staged(hass, entry.unique_id)
+                    or cloud.region != entry.data.get(CONF_REGION)
+                )
+            )
         ):
             stage_cloud_bootstrap(hass, entry.unique_id, bootstrap)
-        await cloud.aclose()
+        if cloud.region != REGION_BR:
+            await cloud.aclose()
 
     if cloud.region == REGION_APAC:
         await async_finish_apac_state_save(finish_unload())
+    elif cloud.region == REGION_BR:
+        await async_finish_cloud_state_save(finish_unload())
     else:
         await finish_unload()
     return True
@@ -232,14 +276,19 @@ async def _async_setup_cloud_entry(
     bootstrap = await _async_load_cloud_bootstrap(hass, entry, state_store)
 
     try:
+        read_only = entry.data.get(CONF_REGION) == REGION_BR
         command_enabled = (
-            entry.options.get(CONF_ENABLE_APAC_REMOTE) is True
+            False
+            if read_only
+            else entry.options.get(CONF_ENABLE_APAC_REMOTE) is True
             if entry.data.get(CONF_REGION) == REGION_APAC
             else entry.options.get(CONF_ENABLE_REMOTE_COMMANDS) is True
         )
+        # Brazil honours only the charging opt-in; every other control stays off.
         charging_enabled = entry.options.get(CONF_ENABLE_CHARGING_CONTROL) is True
-        security_pin = entry.options.get(CONF_SECURITY_PIN)
-        bean_tech_lock_credential = entry.options.get(CONF_BEAN_TECH_LOCK_CREDENTIAL)
+        # Brazil is read-only: stale options can never enable a command surface or carry a PIN.
+        security_pin = None if read_only else entry.options.get(CONF_SECURITY_PIN)
+        bean_tech_lock_credential = None if read_only else entry.options.get(CONF_BEAN_TECH_LOCK_CREDENTIAL)
         apac_pin = isinstance(security_pin, str) and bool(security_pin.strip())
         apac_remote = entry.data.get(CONF_REGION) == REGION_APAC and apac_pin and entry.options.get(CONF_ENABLE_APAC_REMOTE) is True
         apac_charging = entry.data.get(CONF_REGION) == REGION_APAC and apac_pin and entry.options.get(CONF_ENABLE_APAC_CHARGING) is True
@@ -296,16 +345,23 @@ async def _async_setup_cloud_entry(
     )
     try:
         await coordinator.async_config_entry_first_refresh()
+        if entry.data.get(CONF_REGION) == REGION_BR:
+            for vin, active in (await state_store.async_get_br_charging_states()).items():
+                coordinator.set_charging_plan_active(vin, active)
         for command in await api.async_restore(dict(entry.data)):
             coordinator.async_track_command(command)
+        platforms = _entry_platforms(entry)
         entry.runtime_data = GwmRuntimeData(
             api=api,
             coordinator=coordinator,
             cloud=cloud,
             state_store=state_store,
+            platforms=list(platforms),
         )
         _async_register_services(hass)
-        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+        await hass.config_entries.async_forward_entry_setups(
+            entry, platforms
+        )
     except BaseException:
         if entry.data.get(CONF_REGION) == REGION_APAC:
             await api.async_shutdown_apac_commands()
@@ -323,6 +379,13 @@ async def _async_setup_cloud_entry(
         else:
             await cloud.aclose()
         raise
+    if cloud.region == REGION_BR:
+        async def shutdown_brazil(_event: Event) -> None:
+            """Drain renewal and flush pending tokens before storage shuts down."""
+            await coordinator.async_cancel_command_tasks()
+            await cloud.aclose()
+
+        entry.async_on_unload(hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, shutdown_brazil))
     return True
 
 
@@ -337,6 +400,8 @@ async def _async_load_cloud_bootstrap(
     except OSError as error:
         if entry.data.get(CONF_REGION) == REGION_APAC:
             raise ConfigEntryNotReady("GWM APAC private state is temporarily unavailable") from error
+        if entry.data.get(CONF_REGION) == REGION_BR:
+            raise ConfigEntryNotReady("GWM Brazil private state is temporarily unavailable") from error
         raise
 
 
@@ -352,6 +417,15 @@ async def _async_load_cloud_bootstrap_once(
         try:
             credentials = credentials_for_auth_state(dict(entry.data), bootstrap.state)
             await state_store.async_save_auth_state(credentials, bootstrap.state)
+        except (OSError, asyncio.CancelledError) as err:
+            if bootstrap.region != REGION_BR:
+                raise
+            # The handoff may hold the only copy of rotated Brazil tokens: keep it for the retry.
+            if entry.unique_id is not None and not cloud_bootstrap_staged(hass, entry.unique_id):
+                stage_cloud_bootstrap(hass, entry.unique_id, bootstrap)
+            if isinstance(err, asyncio.CancelledError):
+                raise
+            raise ConfigEntryNotReady("GWM Brazil private state is temporarily unavailable") from err
         except (TypeError, ValueError) as err:
             raise ConfigEntryAuthFailed(
                 "GWM cloud authentication handoff is invalid"
@@ -376,6 +450,15 @@ async def _async_load_cloud_bootstrap_once(
             "GWM cloud private state is temporarily unavailable"
         ) from err
 
+    if (
+        isinstance(auth_state, BrAuthState)
+        and auth_state.tokens is None
+        and auth_state.verification_requested_at is not None
+    ):
+        # An explicit flow must finish this challenge with the same device and cooldown.
+        # Startup cannot resume it, and must not retire it as a rejected session.
+        raise ConfigEntryAuthFailed("GWM Brazil email verification must be completed")
+
     async def save_apac_session(result: ApacRestored) -> None:
         """Persist a token rotation before any later restoration read can fail."""
         await async_finish_apac_state_save(state_store.async_save_auth_state(credentials, result.state))
@@ -385,15 +468,16 @@ async def _async_load_cloud_bootstrap_once(
         await async_finish_cloud_state_save(state_store.async_save_auth_state(credentials, state))
 
     try:
-        authenticator = (
-            GwmCloudAuthenticator(
+        if credentials.region == REGION_APAC:
+            authenticator = GwmCloudAuthenticator(
                 apac_material_loader=lambda: load_installed_apac_material(
                     Path(hass.config.path(".storage", "gwm_apac_material"))
                 )
             )
-            if credentials.region == REGION_APAC
-            else GwmCloudAuthenticator()
-        )
+        elif credentials.region == REGION_BR:
+            authenticator = GwmCloudAuthenticator(br_context_loader=load_installed_br_context)
+        else:
+            authenticator = GwmCloudAuthenticator()
         result = await authenticator.async_authenticate(
             credentials,
             state=auth_state,
@@ -415,6 +499,7 @@ async def _async_load_cloud_bootstrap_once(
                 RussiaAuthenticated,
                 ChinaAuthenticated,
                 ApacAuthenticated,
+                BrAuthenticated,
             ),
         ):
             await state_store.async_clear_auth_state(dict(entry.data))
@@ -430,6 +515,16 @@ async def _async_load_cloud_bootstrap_once(
         await state_store.async_clear_auth_state(dict(entry.data))
         raise ConfigEntryAuthFailed(
             cloud_authentication_message(credentials.region, err)
+        ) from err
+    except (GwmBrMaterialMissingError, GwmBrMaterialInvalidError) as err:
+        # Not an authentication failure: a damaged installation recovers once the integration is reinstalled.
+        missing = isinstance(err, GwmBrMaterialMissingError)
+        _LOGGER.error(
+            "GWM Brazil authentication files bundled with the integration are %s; reinstall the integration",
+            "missing" if missing else "invalid",
+        )
+        raise ConfigEntryNotReady(
+            f"GWM Brazil authentication files are {'missing' if missing else 'invalid'}; reinstall the integration"
         ) from err
     except GwmClientError as err:
         status = f" (HTTP {err.status})" if isinstance(err, GwmHttpError) and err.status is not None else ""

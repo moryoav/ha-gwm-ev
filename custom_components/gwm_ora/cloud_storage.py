@@ -34,6 +34,7 @@ from .const import (
     DOMAIN,
     REGION_ANZ,
     REGION_APAC,
+    REGION_BR,
     REGION_CHINA,
     REGION_EU,
     REGION_RUSSIA,
@@ -46,6 +47,7 @@ from .gwm_client import (
     RussiaAuthState,
 )
 from .gwm_client.apac_state import ApacAuthState, decode_apac_state, encode_apac_state
+from .gwm_client.br_state import BrAuthState, decode_br_state, encode_br_state
 from .gwm_client.russia_identity import RussiaIssuedIdentity
 
 _STORAGE_VERSION = 1
@@ -168,7 +170,7 @@ class _GwmCloudRecord:
     def __post_init__(self) -> None:
         """Validate regional bindings and the bounded private command and charging records."""
         if (
-            self.region not in {REGION_EU, REGION_ANZ, REGION_RUSSIA, REGION_CHINA, REGION_APAC}
+            self.region not in {REGION_EU, REGION_ANZ, REGION_RUSSIA, REGION_CHINA, REGION_APAC, REGION_BR}
             or not isinstance(self.account_binding, str)
             or _HASH.fullmatch(self.account_binding) is None
             or not isinstance(self.context_binding, str)
@@ -207,6 +209,10 @@ class GwmCloudStateStore:
             serialize_in_event_loop=False,
         )
         self._lock = asyncio.Lock()
+        self._br_charging_store = Store[dict[str, Any]](
+            hass, _STORAGE_VERSION, f"{_STORAGE_KEY_PREFIX}.{digest}.br_charging",
+            private=True, atomic_writes=True, serialize_in_event_loop=False,
+        )
         self._loaded = False
         self._invalid_loaded_data = False
         self._record: _GwmCloudRecord | None = None
@@ -260,8 +266,9 @@ class GwmCloudStateStore:
             await self._async_save_auth_state(credentials, auth_state)
 
     async def _async_save_auth_state(
-        self, credentials: GwmCloudCredentials, auth_state: CloudAuthState
-    ) -> None:
+        self, credentials: GwmCloudCredentials, auth_state: CloudAuthState,
+        *, expected_br_state: BrAuthState | None = None,
+    ) -> bool:
         """Validate and publish authentication state under the account lock."""
 
         _validate_credentials_for_store(self.unique_id, credentials)
@@ -275,6 +282,11 @@ class GwmCloudStateStore:
         try:
             async with self._lock:
                 await self._async_ensure_loaded()
+                if expected_br_state is not None and (
+                    not self._record_matches(credentials) or self._record is None
+                    or self._record.auth_state not in (expected_br_state, auth_state)
+                ):
+                    return False
                 commands = self._record.commands if self._record_matches(credentials) and self._record is not None else ()
                 charging_plans = (
                     self._record.charging_plans if self._record_matches(credentials) and self._record is not None else ()
@@ -287,9 +299,18 @@ class GwmCloudStateStore:
                 )
                 await self._async_save(record)
             _log_auth_state("save", "completed", auth_state)
+            return True
         except Exception:
             _log_auth_state("save", "failed", auth_state)
             raise
+
+    async def async_save_br_runtime_auth_state(
+        self, credentials: GwmCloudCredentials, auth_state: BrAuthState, expected: BrAuthState,
+    ) -> bool:
+        """Publish a runtime renewal only while it still owns the durable session."""
+        if credentials.region != REGION_BR or type(expected) is not BrAuthState:
+            raise ValueError("auth_state_invalid")
+        return await self._async_save_auth_state(credentials, auth_state, expected_br_state=expected)
 
     async def async_clear_auth_state(
         self,
@@ -490,6 +511,51 @@ class GwmCloudStateStore:
                 )
             )
 
+    async def async_get_br_charging_states(self) -> dict[str, bool]:
+        """Load account-bound accepted states independently of entity restoration."""
+        if not self.unique_id.startswith(f"cloud:{REGION_BR}:"):
+            raise ValueError("br_charging_state_invalid")
+        async with self._lock:
+            return await self._async_load_br_charging_states()
+
+    async def _async_load_br_charging_states(self) -> dict[str, bool]:
+        raw = await self._br_charging_store.async_load()
+        if raw is None:
+            return {}
+        if (
+            not isinstance(raw, dict)
+            or len(raw) > _MAX_CHARGING_PLANS
+            or any(
+                not _bounded_command_text(vin, _MAX_COMMAND_IDENTIFIER_LENGTH) or type(active) is not bool
+                for vin, active in raw.items()
+            )
+        ):
+            raise ValueError("br_charging_state_invalid")
+        return dict(raw)
+
+    async def async_save_br_charging_state(
+        self, credentials: GwmCloudCredentials, vehicle_id: str, active: bool,
+    ) -> None:
+        """Save an accepted Brazil write even when its switch is disabled."""
+        _validate_credentials_for_store(self.unique_id, credentials)
+        if (
+            credentials.region != REGION_BR or type(active) is not bool
+            or not _bounded_command_text(vehicle_id, _MAX_COMMAND_IDENTIFIER_LENGTH)
+        ):
+            raise ValueError("br_charging_state_invalid")
+        async with self._lock:
+            states = await self._async_load_br_charging_states()
+            states.pop(vehicle_id, None)
+            states[vehicle_id] = active
+            states = dict(list(states.items())[-_MAX_CHARGING_PLANS:])
+            await self._br_charging_store.async_save(states)
+            if self._hass.state is CoreState.stopping:
+                await self._br_charging_store._async_handle_write_data()
+            if not await self._hass.async_add_executor_job(
+                _stored_record_matches, self._br_charging_store.path, states,
+            ):
+                raise OSError("GWM Brazil charging state write could not be confirmed")
+
     async def async_remove(self) -> None:
         """Remove all persisted state for a deleted or replaced config entry."""
         if self._apac_storage:
@@ -502,6 +568,8 @@ class GwmCloudStateStore:
 
         async with self._lock:
             await self._store.async_remove()
+            if self.unique_id.startswith(f"cloud:{REGION_BR}:"):
+                await self._br_charging_store.async_remove()
             self._record = None
             self._pending_apac_record = None
             self._invalid_loaded_data = False
@@ -588,7 +656,7 @@ class GwmCloudStateStore:
         self._invalid_loaded_data = False
 
 
-async def async_finish_cloud_state_save(save: Coroutine[Any, Any, None]) -> None:
+async def async_finish_cloud_state_save(save: Coroutine[Any, Any, object]) -> None:
     """Finish a private state publication before propagating caller cancellation."""
     task = asyncio.create_task(save)
     cancelled = False
@@ -701,7 +769,7 @@ def credentials_for_auth_state(
 
     if not isinstance(
         auth_state,
-        (EuAuthState, AnzAuthState, RussiaAuthState, ChinaAuthState, ApacAuthState),
+        (EuAuthState, AnzAuthState, RussiaAuthState, ChinaAuthState, ApacAuthState, BrAuthState),
     ):
         raise ValueError("auth_state_invalid")
     base = _credentials_from_entry(entry_data)
@@ -755,6 +823,7 @@ def _validate_regional_state(
         REGION_RUSSIA: RussiaAuthState,
         REGION_CHINA: ChinaAuthState,
         REGION_APAC: ApacAuthState,
+        REGION_BR: BrAuthState,
     }.get(region)
     if expected_type is None or type(state) is not expected_type or state.account_binding != account_binding:
         raise ValueError("auth_state_invalid")
@@ -828,6 +897,8 @@ def _encode_auth_state(state: CloudAuthState) -> dict[str, Any]:
     """Encode regional authentication state for account-bound private storage."""
     if type(state) is ApacAuthState:
         return {"kind": REGION_APAC, **encode_apac_state(state)}
+    if isinstance(state, BrAuthState):
+        return {"kind": REGION_BR, **encode_br_state(state)}
     common: dict[str, Any] = {
         "account_binding": state.account_binding,
         "device_id": state.device_id,
@@ -903,6 +974,8 @@ def _decode_auth_state(region: str, data: object) -> CloudAuthState:
         raise ValueError("auth_state_invalid")
     if region == REGION_APAC:
         return decode_apac_state({key: value for key, value in data.items() if key != "kind"})
+    if region == REGION_BR:
+        return decode_br_state({key: value for key, value in data.items() if key != "kind"})
     common = {
         "account_binding": _required_text(data.get("account_binding"), 64),
         "device_id": _required_text(data.get("device_id"), 128),
