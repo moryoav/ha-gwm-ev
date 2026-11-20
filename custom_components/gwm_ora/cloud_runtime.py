@@ -550,6 +550,7 @@ class GwmCloudClient:
         self._clock = clock or (lambda: datetime.now(UTC))
         self._bootstrap = bootstrap
         self._br_durable_state = bootstrap.state if bootstrap is not None and type(bootstrap.state) is BrAuthState else None
+        self._br_session_superseded = False
         self._china_partial_state: ChinaAuthState | None = None
         self._russia_partial_state: RussiaAuthState | None = None
         self._credentials = credentials
@@ -1628,6 +1629,7 @@ class GwmCloudClient:
                     # runtime must neither overwrite it nor stage its superseded tokens.
                     self._bootstrap = None
                     self._pending_auth_state = None
+                    self._br_session_superseded = True
                     raise GwmNetworkError(operation="refresh_token")
                 self._br_durable_state = state
             else:
@@ -1702,6 +1704,10 @@ class GwmCloudClient:
     async def async_authentication_rejected(self) -> None:
         """Retire a rejected durable revision without logging its contents."""
 
+        if self.region == REGION_BR and self._br_session_superseded:
+            # Coordinator retries may request reauthentication, but this runtime no
+            # longer owns the replacement sign-in or verification challenge on disk.
+            return
         self._bootstrap = None
         self._china_partial_state = None
         self._russia_partial_state = None
