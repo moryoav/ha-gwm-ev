@@ -947,14 +947,24 @@ async def test_br_unload_waits_for_an_in_flight_refresh_before_handing_off_the_s
     credentials = _credentials()
 
     poll = asyncio.create_task(cloud.async_get_vehicle_data())
-    await transport.refreshing.wait()
-    unload = asyncio.create_task(_unload(tmp_path, cloud, credentials))
-    for _ in range(5):
-        await asyncio.sleep(0)
-    assert not unload.done()  # the unload waits for the poll that is renewing the session
-    transport.release.set()
-    await poll
-    hass, entry = await unload
+    unload = None
+    try:
+        await asyncio.wait_for(transport.refreshing.wait(), timeout=2)
+        unload = asyncio.create_task(_unload(tmp_path, cloud, credentials))
+        for _ in range(5):
+            await asyncio.sleep(0)
+        assert not unload.done()  # unload waits for the poll that is renewing the session
+        transport.release.set()
+        await asyncio.wait_for(asyncio.shield(poll), timeout=2)
+        hass, entry = await asyncio.wait_for(asyncio.shield(unload), timeout=2)
+    finally:
+        transport.release.set()
+        tasks = [task for task in (poll, unload) if task is not None]
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=2)
+        await cloud.aclose()
 
     staged = consume_cloud_bootstrap(hass, entry.unique_id)
     assert staged is not None and staged.state.tokens.refresh_token == "rotated-refresh"
