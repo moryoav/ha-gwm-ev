@@ -1342,6 +1342,8 @@ class GwmCloudClient:
     async def _async_with_br_session[T](self, action: Callable[[], Awaitable[T]]) -> T:
         """Run one serialized read and persist any tokens ``BrSession`` rotated through a silent refresh."""
         async with self._session_renewal_lock:
+            if self._bootstrap is None:
+                raise GwmAuthenticationError(operation="login")
             await self._async_flush_pending_auth_state()
             try:
                 result = await action()

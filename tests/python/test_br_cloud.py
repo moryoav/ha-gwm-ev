@@ -2076,3 +2076,27 @@ async def test_br_cancelled_unload_drains_closes_and_stages_the_session(monkeypa
         await asyncio.gather(task, return_exceptions=True)
     assert transport.closed is True
     assert staged == [cloud.reusable_bootstrap]
+
+
+@pytest.mark.asyncio
+async def test_br_retired_session_cannot_dispatch_later_reads_or_charging_writes(monkeypatch, tmp_path) -> None:
+    from custom_components.gwm_ora.gwm_client.charging import ChargingPlanCommand
+
+    transport = FakeTransport(
+        envelope(VEHICLES), envelope(STATUS), html(401, "rejected"), _refresh(), html(401, "rejected"),
+        envelope(VEHICLES), envelope(STATUS), envelope({}),
+    )
+    cloud, _ = await _br_cloud(monkeypatch, tmp_path, transport, expired=False)
+    cloud._charging_control_enabled = True
+    await cloud.async_get_vehicle_data()
+    with pytest.raises(GwmAuthenticationError):
+        await cloud.async_get_vehicle_data()
+    assert cloud.reusable_bootstrap is None
+    requests = list(transport.requests)
+    with pytest.raises(GwmAuthenticationError):
+        await cloud.async_get_vehicle_data()
+    with pytest.raises(GwmAuthenticationError):
+        await cloud.async_set_charging_plan(ChargingPlanCommand(VehicleIdentifier(VIN), enable=False))
+    assert transport.requests == requests
+    assert [r.operation for r in requests][-3:] == ["acquire_vehicles", "refresh_token", "acquire_vehicles"]
+    await cloud.aclose()
