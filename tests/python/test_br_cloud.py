@@ -2210,3 +2210,21 @@ async def test_br_accepted_charging_write_reports_storage_failure_without_replay
         await entry.runtime_data.api.async_set_charging_plan(VIN, enable=False)
     assert [request.operation for request in transport.requests].count("set_charging_plan") == 1
     await entry.runtime_data.cloud.aclose()
+
+
+@pytest.mark.asyncio
+async def test_br_queued_charging_write_rechecks_vehicle_membership(monkeypatch, tmp_path) -> None:
+    from custom_components.gwm_ora.gwm_client import ChargingPlanCommand, GwmRoutePolicyError
+
+    cloud, _ = await _br_cloud(
+        monkeypatch, tmp_path, FakeTransport(envelope(VEHICLES), envelope(STATUS)), expired=False,
+    )
+    await cloud.async_get_vehicle_data()
+    cloud._charging_control_enabled = True
+    async with cloud._session_renewal_lock:
+        write = asyncio.create_task(cloud.async_set_charging_plan(ChargingPlanCommand(VehicleIdentifier(VIN), enable=False)))
+        await asyncio.sleep(0)
+        cloud._vehicles = {}
+    with pytest.raises(GwmRoutePolicyError):
+        await asyncio.wait_for(write, timeout=2)
+    await cloud.aclose()

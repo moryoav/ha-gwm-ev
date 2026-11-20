@@ -941,7 +941,12 @@ class GwmCloudClient:
         else:
             self._ensure_apac_read_only("set_charging_plan")
 
-        await self._async_with_session_renewal(lambda: self._client.set_charging_plan(command))
+        async def write_plan() -> None:
+            if self.region == REGION_BR and command.identifier.value not in self._vehicles:
+                raise GwmRoutePolicyError(operation="set_charging_plan")
+            await self._client.set_charging_plan(command)
+
+        await self._async_with_session_renewal(write_plan)
 
     async def async_send_climate_command(
         self,
