@@ -87,6 +87,8 @@ class BrReadClient:
                 except (GwmBrCredentialError, GwmBrSessionRejectedError):
                     raise
                 except GwmAuthenticationError:
+                    if operation == "set_charging_plan":
+                        raise
                     tokens = await self._session.ensure(rejected=tokens)
                     return await self._exchange(operation, vehicle_id, tokens, deadline, plan)
         except TimeoutError:

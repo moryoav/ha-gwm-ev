@@ -2100,3 +2100,37 @@ async def test_br_retired_session_cannot_dispatch_later_reads_or_charging_writes
     assert transport.requests == requests
     assert [r.operation for r in requests][-3:] == ["acquire_vehicles", "refresh_token", "acquire_vehicles"]
     await cloud.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("response", [html(401, "rejected"), html(403, "rejected"), envelope(None, code="570062")])
+async def test_br_charging_write_is_not_replayed_after_authentication_rejection(monkeypatch, tmp_path, response) -> None:
+    from custom_components.gwm_ora.gwm_client.charging import ChargingPlanCommand
+
+    transport = FakeTransport(envelope(VEHICLES), envelope(STATUS), response, _refresh(), envelope({}))
+    cloud, _ = await _br_cloud(monkeypatch, tmp_path, transport, expired=False)
+    cloud._charging_control_enabled = True
+    await cloud.async_get_vehicle_data()
+    with pytest.raises(GwmAuthenticationError):
+        await cloud.async_set_charging_plan(ChargingPlanCommand(VehicleIdentifier(VIN), enable=False))
+    assert [r.operation for r in transport.requests] == ["acquire_vehicles", "get_last_status", "set_charging_plan"]
+    assert cloud.reusable_bootstrap is None
+    await cloud.aclose()
+
+
+@pytest.mark.asyncio
+async def test_br_charging_write_can_refresh_before_sending_its_only_post(monkeypatch, tmp_path) -> None:
+    from custom_components.gwm_ora.gwm_client.charging import ChargingPlanCommand
+
+    transport = FakeTransport(envelope(VEHICLES), envelope(STATUS), _refresh(), envelope({}))
+    cloud, store = await _br_cloud(monkeypatch, tmp_path, transport, expired=False)
+    cloud._charging_control_enabled = True
+    await cloud.async_get_vehicle_data()
+    session = cloud._client._client.session
+    session.restore(replace(session.tokens, expires_at=1.0))
+    await cloud.async_set_charging_plan(ChargingPlanCommand(VehicleIdentifier(VIN), enable=False))
+    assert [r.operation for r in transport.requests] == [
+        "acquire_vehicles", "get_last_status", "refresh_token", "set_charging_plan",
+    ]
+    assert store.saved[-1].tokens.refresh_token == "rotated-refresh"
+    await cloud.aclose()
