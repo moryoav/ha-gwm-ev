@@ -308,3 +308,11 @@ def test_brazil_verification_requests_use_the_signed_app_gateway(operation, code
     assert payload["accountType"] == "2" and payload["type"] == "17" and payload["validCodeMode"] == 1
     assert payload.get("verifyCode") == code
     assert "password" not in payload
+
+
+@pytest.mark.parametrize("operation", ["login", "request_verification", "verify_code", "refresh_token"])
+@pytest.mark.parametrize("code", [[], {}, None, 0, True, ""])
+def test_malformed_brazil_auth_codes_raise_schema_errors(operation, code) -> None:
+    """Malformed codes cannot escape as TypeError or retire recoverable credentials."""
+    with pytest.raises(GwmSchemaError):
+        decode_br_envelope(envelope(None, code=code), operation=operation)
