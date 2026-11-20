@@ -252,6 +252,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: GwmConfigEntry) -> bool
 
     if cloud.region == REGION_APAC:
         await async_finish_apac_state_save(finish_unload())
+    elif cloud.region == REGION_BR:
+        await async_finish_cloud_state_save(finish_unload())
     else:
         await finish_unload()
     return True

@@ -2039,3 +2039,40 @@ async def test_br_cancelled_startup_keeps_the_consumed_session_handoff(monkeypat
             task.cancel()
         await asyncio.gather(task, return_exceptions=True)
     assert consume_cloud_bootstrap(hass, entry.unique_id) is bootstrap
+
+
+@pytest.mark.asyncio
+async def test_br_cancelled_unload_drains_closes_and_stages_the_session(monkeypatch, tmp_path) -> None:
+    transport = FakeTransport()
+    cloud, _ = await _br_cloud(monkeypatch, tmp_path, transport, expired=False)
+    closing = asyncio.Event()
+    closed = cloud.aclose
+    staged = []
+    original_stage = integration.stage_cloud_bootstrap
+
+    async def close():
+        closing.set()
+        await closed()
+
+    def stage(hass, unique_id, bootstrap):
+        staged.append(bootstrap)
+        original_stage(hass, unique_id, bootstrap)
+
+    monkeypatch.setattr(cloud, "aclose", close)
+    monkeypatch.setattr(integration, "stage_cloud_bootstrap", stage)
+    await cloud._session_renewal_lock.acquire()
+    task = asyncio.create_task(_unload(tmp_path, cloud, _credentials()))
+    try:
+        await asyncio.wait_for(closing.wait(), 2)
+        task.cancel()
+        await asyncio.sleep(0)
+        assert not task.done()
+        cloud._session_renewal_lock.release()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, 2)
+    finally:
+        if cloud._session_renewal_lock.locked():
+            cloud._session_renewal_lock.release()
+        await asyncio.gather(task, return_exceptions=True)
+    assert transport.closed is True
+    assert staged == [cloud.reusable_bootstrap]
