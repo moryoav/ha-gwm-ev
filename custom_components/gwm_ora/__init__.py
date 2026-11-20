@@ -10,8 +10,8 @@ from pathlib import Path
 
 import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import Platform
-from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.const import EVENT_HOMEASSISTANT_STOP, Platform
+from homeassistant.core import Event, HomeAssistant, ServiceCall
 from homeassistant.exceptions import (
     ConfigEntryAuthFailed,
     ConfigEntryNotReady,
@@ -373,6 +373,13 @@ async def _async_setup_cloud_entry(
         else:
             await cloud.aclose()
         raise
+    if cloud.region == REGION_BR:
+        async def shutdown_brazil(_event: Event) -> None:
+            """Drain renewal and flush pending tokens before storage shuts down."""
+            await coordinator.async_cancel_command_tasks()
+            await cloud.aclose()
+
+        entry.async_on_unload(hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, shutdown_brazil))
     return True
 
 

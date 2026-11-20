@@ -20,7 +20,7 @@ import voluptuous as vol
 pytest.importorskip("pytest_asyncio")
 pytest.importorskip("homeassistant")
 
-from homeassistant.config_entries import ConfigEntry, ConfigFlowResult
+from homeassistant.config_entries import ConfigEntry, ConfigEntryState, ConfigFlowResult
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.exceptions import ConfigEntryAuthFailed
@@ -1954,3 +1954,54 @@ async def test_br_entry_startup_preserves_a_pending_email_challenge_on_disk(monk
     assert result.state.device_id == pending.device_id
     assert result.state.verification_requested_at is None
     assert [request.operation for request in transport.requests] == ["login", "verify_code", "login", "acquire_vehicles"]
+
+
+@pytest.mark.asyncio
+async def test_br_real_hass_shutdown_flushes_rotated_tokens_to_disk(monkeypatch, tmp_path) -> None:
+    credentials, bootstrap = _bootstrap(tmp_path)
+    hass = HomeAssistant(str(tmp_path))
+    unique_id = cloud_unique_id(credentials)
+    entry = ConfigEntry(
+        data=cloud_entry_data(credentials), discovery_keys=MappingProxyType({}), domain=DOMAIN,
+        entry_id="br-entry", minor_version=1, options={}, source="user", subentries_data=None,
+        title="GWM Brazil", unique_id=unique_id, version=1,
+    )
+    transport = FakeTransport(envelope(VEHICLES), envelope(STATUS), _refresh(), envelope(VEHICLES), envelope(STATUS))
+    monkeypatch.setattr(runtime.AiohttpTransport, "create_owned", lambda **kwargs: transport)
+    monkeypatch.setattr(integration, "_async_register_services", lambda hass: None)
+
+    class Entries:
+        async def async_forward_entry_setups(self, entry, platforms):
+            return None
+
+    hass.config_entries = Entries()  # type: ignore[assignment]
+    entry._async_set_state(hass, ConfigEntryState.SETUP_IN_PROGRESS, None)
+    stage_cloud_bootstrap(hass, unique_id, bootstrap)
+    assert await integration.async_setup_entry(hass, entry)
+    cloud = entry.runtime_data.cloud
+    store = entry.runtime_data.state_store
+    session = cloud._client._client.session
+    session.restore(replace(session.tokens, expires_at=1.0))
+    writer = store._store.async_save
+    attempts = 0
+
+    async def fail_first_write(data):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise OSError("temporary storage failure")
+        await writer(data)
+
+    monkeypatch.setattr(store._store, "async_save", fail_first_write)
+    await entry.runtime_data.coordinator.async_refresh()
+    assert entry.runtime_data.coordinator.last_update_success is True
+    assert cloud._pending_auth_state is not None
+    assert transport.closed is False
+    await hass.async_stop(force=True)
+    assert attempts == 2
+    assert cloud._pending_auth_state is None
+    assert transport.closed is True
+    fresh = GwmCloudStateStore(HomeAssistant(str(tmp_path)), unique_id)
+    restored = await fresh.async_load_auth_state(dict(entry.data))
+    assert restored.tokens.refresh_token == "rotated-refresh"
+    assert restored.tokens == session.tokens
