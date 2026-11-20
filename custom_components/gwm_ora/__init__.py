@@ -345,6 +345,9 @@ async def _async_setup_cloud_entry(
     )
     try:
         await coordinator.async_config_entry_first_refresh()
+        if entry.data.get(CONF_REGION) == REGION_BR:
+            for vin, active in (await state_store.async_get_br_charging_states()).items():
+                coordinator.set_charging_plan_active(vin, active)
         for command in await api.async_restore(dict(entry.data)):
             coordinator.async_track_command(command)
         platforms = _entry_platforms(entry)

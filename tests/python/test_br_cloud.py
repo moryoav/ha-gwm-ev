@@ -2147,3 +2147,56 @@ async def test_br_switch_restores_metadata_without_charging_capability(monkeypat
     assert entity.available is False
     assert entity.is_on is accepted
     assert entity.extra_restore_state_data.as_dict() == {"charging_plan_active": accepted}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("accepted", [True, False])
+async def test_br_charging_service_state_survives_restart_without_a_switch(monkeypatch, tmp_path, accepted) -> None:
+    """Service writes restore from disk before a disabled entity can supply stale state."""
+    from custom_components.gwm_ora import switch as switch_platform
+
+    hass, entry, transport, _ = await _charging_setup(tmp_path, monkeypatch, charging=True)
+    api = entry.runtime_data.api
+    window = {"start_time": 1_800_000_000_000, "end_time": 1_800_028_800_000}
+    await api.async_set_charging_plan(VIN, enable=True, **window)
+    await api.async_set_charging_plan(VIN, enable=accepted, **(window if accepted else {}))
+    assert len(transport.requests) == 4
+    await entry.runtime_data.cloud.aclose()
+
+    # A new HA instance has no entity restore cache and loads the persisted service result.
+    restarted_hass, restarted, _, _ = await _charging_setup(tmp_path, monkeypatch, charging=True)
+    coordinator = restarted.runtime_data.coordinator
+    assert coordinator.charging_plan_active(VIN) is accepted
+    from unittest.mock import AsyncMock
+
+    from homeassistant.helpers.restore_state import RestoredExtraData
+    from homeassistant.helpers.update_coordinator import CoordinatorEntity
+
+    monkeypatch.setattr(CoordinatorEntity, "async_added_to_hass", AsyncMock())
+    monkeypatch.setattr(
+        switch_platform.GwmChargingScheduleSwitch, "async_get_last_extra_data",
+        AsyncMock(return_value=RestoredExtraData({"charging_plan_active": not accepted})),
+    )
+    entity = switch_platform.GwmChargingScheduleSwitch(restarted.runtime_data.api, coordinator, VIN)
+    await entity.async_added_to_hass()
+    assert entity.is_on is accepted
+    await restarted.runtime_data.cloud.aclose()
+    await restarted.runtime_data.state_store.async_remove()
+    fresh = GwmCloudStateStore(HomeAssistant(str(tmp_path)), entry.unique_id)
+    assert await fresh.async_get_br_charging_states() == {}
+
+
+@pytest.mark.asyncio
+async def test_br_accepted_charging_write_reports_storage_failure_without_replay(monkeypatch, tmp_path) -> None:
+    from custom_components.gwm_ora.errors import GwmCommandError
+
+    hass, entry, transport, _ = await _charging_setup(tmp_path, monkeypatch, charging=True)
+
+    async def fail_write(data):
+        raise OSError("storage unavailable")
+
+    monkeypatch.setattr(entry.runtime_data.state_store._br_charging_store, "async_save", fail_write)
+    with pytest.raises(GwmCommandError, match="accepted.*do not retry"):
+        await entry.runtime_data.api.async_set_charging_plan(VIN, enable=False)
+    assert [request.operation for request in transport.requests].count("set_charging_plan") == 1
+    await entry.runtime_data.cloud.aclose()

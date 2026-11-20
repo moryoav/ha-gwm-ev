@@ -209,6 +209,10 @@ class GwmCloudStateStore:
             serialize_in_event_loop=False,
         )
         self._lock = asyncio.Lock()
+        self._br_charging_store = Store[dict[str, Any]](
+            hass, _STORAGE_VERSION, f"{_STORAGE_KEY_PREFIX}.{digest}.br_charging",
+            private=True, atomic_writes=True, serialize_in_event_loop=False,
+        )
         self._loaded = False
         self._invalid_loaded_data = False
         self._record: _GwmCloudRecord | None = None
@@ -492,6 +496,51 @@ class GwmCloudStateStore:
                 )
             )
 
+    async def async_get_br_charging_states(self) -> dict[str, bool]:
+        """Load account-bound accepted states independently of entity restoration."""
+        if not self.unique_id.startswith(f"cloud:{REGION_BR}:"):
+            raise ValueError("br_charging_state_invalid")
+        async with self._lock:
+            return await self._async_load_br_charging_states()
+
+    async def _async_load_br_charging_states(self) -> dict[str, bool]:
+        raw = await self._br_charging_store.async_load()
+        if raw is None:
+            return {}
+        if (
+            not isinstance(raw, dict)
+            or len(raw) > _MAX_CHARGING_PLANS
+            or any(
+                not _bounded_command_text(vin, _MAX_COMMAND_IDENTIFIER_LENGTH) or type(active) is not bool
+                for vin, active in raw.items()
+            )
+        ):
+            raise ValueError("br_charging_state_invalid")
+        return dict(raw)
+
+    async def async_save_br_charging_state(
+        self, credentials: GwmCloudCredentials, vehicle_id: str, active: bool,
+    ) -> None:
+        """Save an accepted Brazil write even when its switch is disabled."""
+        _validate_credentials_for_store(self.unique_id, credentials)
+        if (
+            credentials.region != REGION_BR or type(active) is not bool
+            or not _bounded_command_text(vehicle_id, _MAX_COMMAND_IDENTIFIER_LENGTH)
+        ):
+            raise ValueError("br_charging_state_invalid")
+        async with self._lock:
+            states = await self._async_load_br_charging_states()
+            states.pop(vehicle_id, None)
+            states[vehicle_id] = active
+            states = dict(list(states.items())[-_MAX_CHARGING_PLANS:])
+            await self._br_charging_store.async_save(states)
+            if self._hass.state is CoreState.stopping:
+                await self._br_charging_store._async_handle_write_data()
+            if not await self._hass.async_add_executor_job(
+                _stored_record_matches, self._br_charging_store.path, states,
+            ):
+                raise OSError("GWM Brazil charging state write could not be confirmed")
+
     async def async_remove(self) -> None:
         """Remove all persisted state for a deleted or replaced config entry."""
         if self._apac_storage:
@@ -504,6 +553,8 @@ class GwmCloudStateStore:
 
         async with self._lock:
             await self._store.async_remove()
+            if self.unique_id.startswith(f"cloud:{REGION_BR}:"):
+                await self._br_charging_store.async_remove()
             self._record = None
             self._pending_apac_record = None
             self._invalid_loaded_data = False

@@ -17,6 +17,7 @@ from .cloud_storage import (
     GwmCommandJournalEntry,
     GwmOwnedChargingPlan,
     async_finish_apac_state_save,
+    async_finish_cloud_state_save,
 )
 from .const import REGION_APAC, REGION_BR
 from .errors import GwmCommandError, GwmCommandForbidden
@@ -128,6 +129,7 @@ class GwmCommandApi:
         self._battery_departure_times: dict[str, int] = {}
         self._cloud = cloud
         self._state_store = state_store
+        self._br_charging_lock = asyncio.Lock()
         self._credentials = credentials
         self._enabled = enabled
         self._apac_climate_enabled = apac_climate_enabled
@@ -898,10 +900,19 @@ class GwmCommandApi:
             )
         except (TypeError, ValueError):
             raise GwmCommandError("Charging plan requires a valid window and options") from None
-        await self._cloud.async_set_charging_plan(command)
         if self._cloud.region == REGION_BR:
-            # No readback and no ownership journal in this region (assumed state).
+            async with self._br_charging_lock:
+                await self._cloud.async_set_charging_plan(command)
+                try:
+                    await async_finish_cloud_state_save(
+                        self._state_store.async_save_br_charging_state(self._credentials, identifier.value, enable)
+                    )
+                except Exception as err:
+                    raise GwmCommandError(
+                        "GWM accepted the charging plan but its state could not be saved; do not retry"
+                    ) from err
             return {}
+        await self._cloud.async_set_charging_plan(command)
         if not enable:
             await self._durably_remove_owned_plan(identifier.value)
             return {}
