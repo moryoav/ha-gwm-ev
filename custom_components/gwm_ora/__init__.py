@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import suppress
 from dataclasses import dataclass, field
@@ -411,12 +412,14 @@ async def _async_load_cloud_bootstrap_once(
         try:
             credentials = credentials_for_auth_state(dict(entry.data), bootstrap.state)
             await state_store.async_save_auth_state(credentials, bootstrap.state)
-        except OSError as err:
+        except (OSError, asyncio.CancelledError) as err:
             if bootstrap.region != REGION_BR:
                 raise
             # The handoff may hold the only copy of rotated Brazil tokens: keep it for the retry.
             if entry.unique_id is not None and not cloud_bootstrap_staged(hass, entry.unique_id):
                 stage_cloud_bootstrap(hass, entry.unique_id, bootstrap)
+            if isinstance(err, asyncio.CancelledError):
+                raise
             raise ConfigEntryNotReady("GWM Brazil private state is temporarily unavailable") from err
         except (TypeError, ValueError) as err:
             raise ConfigEntryAuthFailed(

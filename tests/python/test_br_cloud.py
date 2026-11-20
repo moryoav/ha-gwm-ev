@@ -2005,3 +2005,37 @@ async def test_br_real_hass_shutdown_flushes_rotated_tokens_to_disk(monkeypatch,
     restored = await fresh.async_load_auth_state(dict(entry.data))
     assert restored.tokens.refresh_token == "rotated-refresh"
     assert restored.tokens == session.tokens
+
+
+@pytest.mark.asyncio
+async def test_br_cancelled_startup_keeps_the_consumed_session_handoff(monkeypatch, tmp_path) -> None:
+    credentials, bootstrap = _bootstrap(tmp_path)
+    hass = HomeAssistant(str(tmp_path))
+    entry = ConfigEntry(
+        data=cloud_entry_data(credentials), discovery_keys=MappingProxyType({}), domain=DOMAIN,
+        entry_id="br-entry", minor_version=1, options={}, source="user", subentries_data=None,
+        title="GWM Brazil", unique_id=cloud_unique_id(credentials), version=1,
+    )
+    store = GwmCloudStateStore(hass, entry.unique_id)
+    stage_cloud_bootstrap(hass, entry.unique_id, bootstrap)
+    saving = asyncio.Event()
+    original = store.async_save_auth_state
+
+    async def save(*args):
+        saving.set()
+        await original(*args)
+
+    monkeypatch.setattr(store, "async_save_auth_state", save)
+    await store._lock.acquire()
+    task = asyncio.create_task(integration._async_load_cloud_bootstrap_once(hass, entry, store))
+    try:
+        await asyncio.wait_for(saving.wait(), 2)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    finally:
+        store._lock.release()
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+    assert consume_cloud_bootstrap(hass, entry.unique_id) is bootstrap
