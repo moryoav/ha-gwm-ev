@@ -78,7 +78,11 @@ from custom_components.gwm_ora.gwm_client.br_auth_client import BrTokens
 from custom_components.gwm_ora.gwm_client.br_flow import BrAuthenticated
 from custom_components.gwm_ora.gwm_client.br_identity import BrCredentials
 from custom_components.gwm_ora.gwm_client.br_material import create_br_ssl_context, load_br_material
-from custom_components.gwm_ora.gwm_client.br_request import GwmBrSessionRejectedError, prepare_br_request
+from custom_components.gwm_ora.gwm_client.br_request import (
+    GwmBrGatewayCompatibilityError,
+    GwmBrSessionRejectedError,
+    prepare_br_request,
+)
 from custom_components.gwm_ora.gwm_client.br_state import BrAccountCredentials, BrAuthState
 from custom_components.gwm_ora.sensor import _sensor_descriptions_for_vehicle
 
@@ -254,6 +258,19 @@ async def test_br_rejected_credentials_show_invalid_auth_and_store_nothing(
     assert result["errors"] == {"base": "invalid_auth"}
     assert store.saved == []
     assert PASSWORD not in caplog.text and ACCOUNT not in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code", ["607007", "607012", "607099"])
+async def test_br_login_signing_failure_does_not_report_invalid_credentials(monkeypatch, tmp_path, store, code) -> None:
+    """Keep app compatibility failures separate from incorrect passwords in the setup flow."""
+    authenticator, transport = _authenticator(monkeypatch, tmp_path, envelope(None, code=code, status=403))
+    flow = _flow(monkeypatch, authenticator)
+    await flow.async_step_user({CONF_REGION: "br"})
+    result = await flow.async_step_account({CONF_COUNTRY: "BR", CONF_ACCOUNT: ACCOUNT, CONF_PASSWORD: PASSWORD})
+    assert result["errors"] == {"base": "br_gateway_compatibility"}
+    assert [r.operation for r in transport.requests] == ["login"]
+    assert store.saved == [] and store.cleared == 0
 
 
 @pytest.mark.asyncio
@@ -992,6 +1009,122 @@ async def test_br_refresh_reply_without_a_code_keeps_the_session(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("code", ["607007", "607012", "607099"])
+@pytest.mark.parametrize("operation", ["refresh_token", "acquire_vehicles", "get_last_status"])
+async def test_br_signing_outage_preserves_disk_session_and_recovers_after_restart(monkeypatch, tmp_path, code, operation) -> None:
+    """Surface a polling failure, retain durable credentials and resume without password login."""
+    from homeassistant.helpers.update_coordinator import UpdateFailed
+
+    expired = operation == "refresh_token"
+    credentials, bootstrap = _bootstrap(tmp_path, expired=expired)
+    unique_id = cloud_unique_id(credentials)
+    entry_data = cloud_entry_data(credentials)
+    hass = HomeAssistant(str(tmp_path))
+    store = GwmCloudStateStore(hass, unique_id)
+    await store.async_save_auth_state(credentials, bootstrap.state)
+    prefix = [envelope(VEHICLES)] if operation == "get_last_status" else []
+    transport = FakeTransport(*prefix, envelope(None, code=code))
+    monkeypatch.setattr(runtime.AiohttpTransport, "create_owned", lambda **kwargs: transport)
+    cloud = runtime.GwmCloudClient.from_entry_data(entry_data, unique_id, bootstrap, state_store=store)
+    coordinator = GwmDataUpdateCoordinator(hass, None, cloud_client=cloud)
+    try:
+        with pytest.raises(UpdateFailed, match=f"app signing identity.*update the integration.*{code}"):
+            await coordinator._async_update_data()
+        expected = ["acquire_vehicles", "get_last_status"] if prefix else [operation]
+        assert [r.operation for r in transport.requests] == expected
+        assert cloud.reusable_bootstrap is bootstrap
+    finally:
+        await cloud.aclose()
+
+    restarted_store = GwmCloudStateStore(HomeAssistant(str(tmp_path)), unique_id)
+    restored = await restarted_store.async_load_auth_state(entry_data)
+    assert restored == bootstrap.state
+    resumed = runtime.GwmCloudBootstrap.from_authentication(credentials, BrAuthenticated(restored, bootstrap.br_ssl_context))
+    responses = [_refresh()] if expired else []
+    recovered_transport = FakeTransport(*responses, envelope(VEHICLES), envelope(STATUS))
+    monkeypatch.setattr(runtime.AiohttpTransport, "create_owned", lambda **kwargs: recovered_transport)
+    recovered = runtime.GwmCloudClient.from_entry_data(entry_data, unique_id, resumed, state_store=restarted_store)
+    try:
+        assert (await recovered.async_get_vehicle_data())["vehicles"][0]["values"]["soc"] == 80.0
+        expected = (["refresh_token"] if expired else []) + ["acquire_vehicles", "get_last_status"]
+        assert [r.operation for r in recovered_transport.requests] == expected
+    finally:
+        await recovered.aclose()
+    saved = await GwmCloudStateStore(HomeAssistant(str(tmp_path)), unique_id).async_load_auth_state(entry_data)
+    assert saved.tokens.refresh_token == ("rotated-refresh" if expired else "synthetic-refresh")
+    assert saved.device_id == bootstrap.state.device_id
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code", ["607007", "607012", "607099"])
+@pytest.mark.parametrize("operation", ["acquire_vehicles", "get_last_status"])
+async def test_br_entry_setup_keeps_rotated_tokens_after_signing_failure(monkeypatch, tmp_path, code, operation) -> None:
+    """Retry real entry setup from disk after refresh succeeds but its first read fails."""
+    from homeassistant.exceptions import ConfigEntryNotReady
+
+    credentials = _credentials()
+    unique_id = cloud_unique_id(credentials)
+    entry_data = cloud_entry_data(credentials)
+    context = _context(tmp_path)
+    monkeypatch.setattr(integration, "load_installed_br_context", lambda: context)
+    monkeypatch.setattr(integration, "_async_register_services", lambda hass: None)
+    store = GwmCloudStateStore(HomeAssistant(str(tmp_path)), unique_id)
+    await store.async_save_auth_state(credentials, _expired_state(credentials))
+    prefix = [envelope(VEHICLES)] if operation == "get_last_status" else []
+    failed_transport = FakeTransport(_refresh(), *prefix, envelope(None, code=code))
+    recovered_transport = FakeTransport(envelope(VEHICLES), envelope(STATUS))
+    auth_transports = [FakeTransport(), FakeTransport()]
+    transports = iter([auth_transports[0], failed_transport, auth_transports[1], recovered_transport])
+    monkeypatch.setattr(runtime.AiohttpTransport, "create_owned", lambda **kwargs: next(transports))
+
+    def entry_for(hass: HomeAssistant) -> ConfigEntry:
+        """Create an unstaged entry whose setup must load its own durable session."""
+        entry = ConfigEntry(
+            data=entry_data, discovery_keys=MappingProxyType({}), domain=DOMAIN,
+            entry_id="br-entry", minor_version=1, options={}, source="user", subentries_data=None,
+            title="GWM Brazil", unique_id=unique_id, version=1,
+        )
+        entry._async_set_state(hass, ConfigEntryState.SETUP_IN_PROGRESS, None)
+        return entry
+
+    first_hass = HomeAssistant(str(tmp_path))
+    try:
+        with pytest.raises(ConfigEntryNotReady, match=f"app signing identity.*update the integration.*{code}"):
+            await integration.async_setup_entry(first_hass, entry_for(first_hass))
+        expected = ["refresh_token", "acquire_vehicles"] + (["get_last_status"] if prefix else [])
+        assert [r.operation for r in failed_transport.requests] == expected
+        assert failed_transport.closed is True
+    finally:
+        await first_hass.async_stop(force=True)
+
+    restarted_hass = HomeAssistant(str(tmp_path))
+    restarted_store = GwmCloudStateStore(restarted_hass, unique_id)
+    saved = await restarted_store.async_load_auth_state(entry_data)
+    assert saved.tokens.refresh_token == "rotated-refresh"
+    assert saved.tokens.access_token == fake_jwt(NOW_FAR)
+    assert saved.tokens.gw_id == "synthetic-gw-id" and saved.device_id == DEVICE
+    forwarded: list[object] = []
+
+    class Entries:
+        async def async_forward_entry_setups(self, entry, platforms):
+            """Record the successful entry's platform handoff."""
+            forwarded.extend(platforms)
+
+    restarted_hass.config_entries = Entries()  # type: ignore[assignment]
+    entry = entry_for(restarted_hass)
+    try:
+        assert await integration.async_setup_entry(restarted_hass, entry)
+        assert entry.runtime_data.coordinator.data["vehicles"][0]["values"]["soc"] == 80.0
+        assert forwarded == BR_PLATFORMS
+        assert [r.operation for r in recovered_transport.requests] == ["acquire_vehicles", "get_last_status"]
+        assert all(t.requests == [] and t.closed for t in auth_transports)
+        assert await GwmCloudStateStore(HomeAssistant(str(tmp_path)), unique_id).async_load_auth_state(entry_data) == saved
+    finally:
+        await restarted_hass.async_stop(force=True)
+    assert recovered_transport.closed is True
+
+
+@pytest.mark.asyncio
 async def test_br_setup_keeps_the_handoff_when_its_save_fails(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -1079,11 +1212,12 @@ def test_br_state_with_an_out_of_range_expiry_is_invalid_not_a_crash() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("code", ["551011", "607501", "999999"])
 async def test_br_refused_refresh_asks_for_reauthentication_without_a_password_login(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, code: str
 ) -> None:
     """Check that a refused refresh asks for reauthentication without a password login."""
-    transport = FakeTransport(envelope(None, code="999999"), _login())
+    transport = FakeTransport(envelope(None, code=code), _login())
     cloud, store = await _br_cloud(monkeypatch, tmp_path, transport, expired=True)
 
     with pytest.raises(GwmAuthenticationError):
@@ -2126,6 +2260,26 @@ async def test_br_charging_write_is_not_replayed_after_authentication_rejection(
     assert [r.operation for r in transport.requests] == ["acquire_vehicles", "get_last_status", "set_charging_plan"]
     assert cloud.reusable_bootstrap is None
     await cloud.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code", ["607007", "607012", "607099"])
+async def test_br_charging_signing_failure_preserves_session_without_replaying_write(monkeypatch, tmp_path, code) -> None:
+    """Report the rejected charging write once without session renewal or credential loss."""
+    from custom_components.gwm_ora.gwm_client.charging import ChargingPlanCommand
+
+    transport = FakeTransport(envelope(VEHICLES), envelope(STATUS), envelope(None, code=code, status=403))
+    cloud, store = await _br_cloud(monkeypatch, tmp_path, transport, expired=False)
+    cloud._charging_control_enabled = True
+    try:
+        await cloud.async_get_vehicle_data()
+        bootstrap = cloud.reusable_bootstrap
+        with pytest.raises(GwmBrGatewayCompatibilityError):
+            await cloud.async_set_charging_plan(ChargingPlanCommand(VehicleIdentifier(VIN), enable=False))
+        assert [r.operation for r in transport.requests] == ["acquire_vehicles", "get_last_status", "set_charging_plan"]
+        assert store.cleared == 0 and cloud.reusable_bootstrap is bootstrap
+    finally:
+        await cloud.aclose()
 
 
 @pytest.mark.asyncio

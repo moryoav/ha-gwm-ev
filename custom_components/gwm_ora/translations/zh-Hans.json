@@ -92,6 +92,7 @@
       "br_material_missing": "集成自带的巴西认证文件缺失。请重新安装该集成后重试。",
       "br_material_invalid": "集成自带的巴西认证文件无法读取或彼此不匹配。请重新安装该集成。",
       "br_tls_rejected": "巴西车辆网关拒绝了客户端证书。",
+      "br_gateway_compatibility": "巴西网关拒绝了应用签名标识。请更新集成后重试。已保存的会话会保留。",
       "unsupported_region": "此云区域暂不可用于设置。",
       "initialization_failed": "下游 GWM 服务仍无法初始化。",
       "session_reclaim_not_confirmed": "继续前请确认您了解 ANZ 单会话的影响。"

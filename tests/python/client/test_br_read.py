@@ -12,7 +12,7 @@ from custom_components.gwm_ora.gwm_client.br_auth_client import BrAuthClient, Br
 from custom_components.gwm_ora.gwm_client.br_identity import BrCredentials
 from custom_components.gwm_ora.gwm_client.br_material import create_br_ssl_context, load_br_material
 from custom_components.gwm_ora.gwm_client.br_read import BrReadClient
-from custom_components.gwm_ora.gwm_client.br_request import GwmBrCredentialError
+from custom_components.gwm_ora.gwm_client.br_request import GwmBrCredentialError, GwmBrGatewayCompatibilityError
 from custom_components.gwm_ora.gwm_client.br_state import (
     BrAccountCredentials,
     BrAuthState,
@@ -304,9 +304,10 @@ async def test_auth_client_refresh_bad_payload_is_a_schema_error(tmp_path: Path,
 
 
 @pytest.mark.asyncio
-async def test_auth_client_refresh_refused_is_an_auth_error(tmp_path: Path) -> None:
+@pytest.mark.parametrize("code", ["308001", "551011", "607501", "999999"])
+async def test_auth_client_refresh_refused_is_an_auth_error(tmp_path: Path, code: str) -> None:
     """Check that a refused refresh raises an authentication error."""
-    auth, _ = _auth(tmp_path, envelope(None, code="999999"))
+    auth, _ = _auth(tmp_path, envelope(None, code=code))
     with pytest.raises(GwmAuthenticationError):
         await auth.refresh(OLD)
 
@@ -338,6 +339,22 @@ async def test_session_refreshes_a_rejected_snapshot_even_if_unexpired(tmp_path:
     refreshed = await session.ensure(rejected=valid)
     assert refreshed is not valid and refreshed.refresh_token == "rotated-refresh"
     assert [r.operation for r in transport.requests] == ["refresh_token"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code", ["607007", "607012", "607099"])
+@pytest.mark.parametrize("allow_login", [False, True])
+async def test_signing_failure_keeps_tokens_without_password_fallback(tmp_path: Path, code: str, allow_login: bool) -> None:
+    """Retry renewal on a later call without treating an app signing outage as a bad account."""
+    session, transport = _session(tmp_path, envelope(None, code=code), _refresh_response(), allow_login=allow_login)
+    session.restore(OLD)
+    with pytest.raises(GwmBrGatewayCompatibilityError):
+        await session.ensure()
+    assert session.tokens is OLD
+    assert [r.operation for r in transport.requests] == ["refresh_token"]
+    recovered = await session.ensure()
+    assert recovered.refresh_token == "rotated-refresh"
+    assert [r.operation for r in transport.requests] == ["refresh_token", "refresh_token"]
 
 
 @pytest.mark.asyncio
