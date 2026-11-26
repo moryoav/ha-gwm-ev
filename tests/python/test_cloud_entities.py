@@ -10,8 +10,12 @@ import pytest
 
 pytest.importorskip("homeassistant")
 
+from homeassistant.components import climate
 from homeassistant.components.climate import HVACMode
+from homeassistant.config_entries import ConfigEntries
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import device_registry, entity_registry
+from homeassistant.util.unit_system import METRIC_SYSTEM, US_CUSTOMARY_SYSTEM
 
 from custom_components.gwm_ora.button import (
     GwmCabinCleanButton,
@@ -277,6 +281,56 @@ async def test_climate_exposes_auto_and_rejects_legacy_hvac_modes(region: str) -
     coordinator.async_set_updated_data({"region": region, "vehicles": [vehicle]})
     assert entity.hvac_mode == HVACMode.OFF
     assert entity.hvac_action == "off"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("units", "current", "target", "requested"),
+    [(METRIC_SYSTEM, 20, 22, 25), (US_CUSTOMARY_SYSTEM, 68, 72, 77)],
+)
+async def test_climate_temperature_state_and_service(tmp_path, monkeypatch, units, current, target, requested) -> None:
+    """Publish temperatures in Home Assistant's units and send Celsius to GWM."""
+    hass = HomeAssistant(str(tmp_path))
+    hass.config.units = units
+    hass.config_entries = ConfigEntries(hass, {})
+    await hass.config_entries.async_initialize()
+    if setup_registry := getattr(device_registry, "async_setup", None):
+        setup_registry(hass)
+    await device_registry.async_load(hass)
+    await entity_registry.async_load(hass)
+    command = {"id": "climate-setpoint", "state": "in_progress"}
+    api = SimpleNamespace(async_set_climate=AsyncMock(return_value=command))
+    coordinator = GwmDataUpdateCoordinator(hass, api, cloud_client=SimpleNamespace())
+    coordinator.async_track_command = Mock()
+    vin = "SYNTHETIC-A"
+    vehicle = _vehicle(vin, 80, climate_commands=True)
+    vehicle["climate"] = {"mode": "auto", "current_temperature_c": 20, "target_temperature_c": 22}
+    coordinator.async_set_updated_data({"region": "eu", "vehicles": [vehicle]})
+    # This standalone platform test has no integration config entry for a device.
+    monkeypatch.setattr(GwmClimate, "device_info", None)
+    entity = GwmClimate(api, coordinator, vin)
+    entity.entity_id = "climate.gwm"
+
+    try:
+        assert await climate.async_setup(hass, {})
+        await hass.data[climate.DATA_COMPONENT].async_add_entities([entity])
+        state = hass.states.get(entity.entity_id)
+        assert state is not None
+        assert state.attributes["current_temperature"] == current
+        assert state.attributes["temperature"] == target
+
+        await hass.services.async_call(
+            "climate", "set_temperature", {"entity_id": entity.entity_id, "temperature": requested}, blocking=True
+        )
+        api.async_set_climate.assert_awaited_once_with(vin, temperature=25)
+        coordinator.async_track_command.assert_called_once_with(command)
+        coordinator.async_set_updated_data({"region": "eu", "vehicles": [vehicle]})
+        state = hass.states.get(entity.entity_id)
+        assert state is not None
+        assert state.attributes["current_temperature"] == current
+        assert state.attributes["temperature"] == requested
+    finally:
+        await hass.async_stop(force=True)
 
 
 @pytest.mark.asyncio
