@@ -8,9 +8,13 @@ This project follows semantic versioning. The Marketplace installs GWM from publ
 
 ## [Unreleased]
 
+## [0.20.1] - 2026-11-26
+
 ### Brazil
 
-- **Fixed** Brazil gateway signing for My GWM 1.4.3 and preserved saved sessions when the gateway rejects the app signing identity ([#76](https://github.com/moryoav/ha-gwm-ev/issues/76)).
+- **Fixed** Brazil gateway signing for My GWM 1.4.3 and preserved saved sessions when the gateway rejects the app signing identity ([#76](https://github.com/moryoav/ha-gwm-ev/issues/76), [#78](https://github.com/moryoav/ha-gwm-ev/issues/78)).
+
+Vehicle status and token refresh confirmed with a real Brazil account on a Haval H6 GT 2024 by [@AFSFigueiredo](https://github.com/moryoav/ha-gwm-ev/issues/76#issuecomment-7196702287), using a standalone client.
 
 ## [0.20.0] - 2026-11-26
 
