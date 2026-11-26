@@ -8,6 +8,10 @@ This project follows semantic versioning. The Marketplace installs GWM from publ
 
 ## [Unreleased]
 
+### All regions
+
+- **Fixed** climate temperature deprecation warnings in Home Assistant 2026.11 and newer while retaining support for older Core versions ([#74](https://github.com/moryoav/ha-gwm-ev/issues/74)).
+
 ## [0.19.0] - 2026-11-20
 
 ### Russia

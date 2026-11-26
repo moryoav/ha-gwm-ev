@@ -283,6 +283,16 @@ async def test_climate_exposes_auto_and_rejects_legacy_hvac_modes(region: str) -
     assert entity.hvac_action == "off"
 
 
+@pytest.mark.skipif(
+    not hasattr(climate.ClimateEntity, "native_temperature_unit"),
+    reason="Home Assistant does not have the native climate temperature API",
+)
+def test_climate_native_api_has_no_legacy_overrides() -> None:
+    """Keep deprecated temperature members out of the climate entity on newer Core."""
+    legacy_overrides = {"current_temperature", "target_temperature", "_attr_temperature_unit"} & vars(GwmClimate).keys()
+    assert not legacy_overrides
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("units", "current", "target", "requested"),
