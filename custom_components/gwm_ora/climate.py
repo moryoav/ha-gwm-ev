@@ -36,7 +36,7 @@ class GwmClimate(GwmEntity, ClimateEntity):
     _attr_translation_key = "ac_climate"
     _attr_hvac_modes = [HVACMode.OFF, HVACMode.AUTO]
     _attr_supported_features = ClimateEntityFeature.TARGET_TEMPERATURE
-    _attr_temperature_unit = UnitOfTemperature.CELSIUS
+    _attr_native_temperature_unit = UnitOfTemperature.CELSIUS
     _attr_target_temperature_step = 1
 
     def __init__(self, api, coordinator, vin: str) -> None:
@@ -71,14 +71,20 @@ class GwmClimate(GwmEntity, ClimateEntity):
         return self.climate.get("action")
 
     @property
-    def current_temperature(self) -> float | None:
+    def native_current_temperature(self) -> float | None:
         """Return current cabin temperature."""
         return self.climate.get("current_temperature_c")
 
     @property
-    def target_temperature(self) -> float | None:
+    def native_target_temperature(self) -> float | None:
         """Return target temperature."""
         return self._requested_target_temperature or self.climate.get("target_temperature_c")
+
+    # Home Assistant before 2026.11 reads the legacy names.
+    if not hasattr(ClimateEntity, "native_temperature_unit"):
+        _attr_temperature_unit = _attr_native_temperature_unit
+        current_temperature = native_current_temperature
+        target_temperature = native_target_temperature
 
     @property
     def min_temp(self) -> float:
