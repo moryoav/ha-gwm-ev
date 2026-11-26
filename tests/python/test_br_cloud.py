@@ -1056,6 +1056,75 @@ async def test_br_signing_outage_preserves_disk_session_and_recovers_after_resta
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("code", ["607007", "607012", "607099"])
+@pytest.mark.parametrize("operation", ["acquire_vehicles", "get_last_status"])
+async def test_br_entry_setup_keeps_rotated_tokens_after_signing_failure(monkeypatch, tmp_path, code, operation) -> None:
+    """Retry real entry setup from disk after refresh succeeds but its first read fails."""
+    from homeassistant.exceptions import ConfigEntryNotReady
+
+    credentials = _credentials()
+    unique_id = cloud_unique_id(credentials)
+    entry_data = cloud_entry_data(credentials)
+    context = _context(tmp_path)
+    monkeypatch.setattr(integration, "load_installed_br_context", lambda: context)
+    monkeypatch.setattr(integration, "_async_register_services", lambda hass: None)
+    store = GwmCloudStateStore(HomeAssistant(str(tmp_path)), unique_id)
+    await store.async_save_auth_state(credentials, _expired_state(credentials))
+    prefix = [envelope(VEHICLES)] if operation == "get_last_status" else []
+    failed_transport = FakeTransport(_refresh(), *prefix, envelope(None, code=code))
+    recovered_transport = FakeTransport(envelope(VEHICLES), envelope(STATUS))
+    auth_transports = [FakeTransport(), FakeTransport()]
+    transports = iter([auth_transports[0], failed_transport, auth_transports[1], recovered_transport])
+    monkeypatch.setattr(runtime.AiohttpTransport, "create_owned", lambda **kwargs: next(transports))
+
+    def entry_for(hass: HomeAssistant) -> ConfigEntry:
+        """Create an unstaged entry whose setup must load its own durable session."""
+        entry = ConfigEntry(
+            data=entry_data, discovery_keys=MappingProxyType({}), domain=DOMAIN,
+            entry_id="br-entry", minor_version=1, options={}, source="user", subentries_data=None,
+            title="GWM Brazil", unique_id=unique_id, version=1,
+        )
+        entry._async_set_state(hass, ConfigEntryState.SETUP_IN_PROGRESS, None)
+        return entry
+
+    first_hass = HomeAssistant(str(tmp_path))
+    try:
+        with pytest.raises(ConfigEntryNotReady, match=f"app signing identity.*update the integration.*{code}"):
+            await integration.async_setup_entry(first_hass, entry_for(first_hass))
+        expected = ["refresh_token", "acquire_vehicles"] + (["get_last_status"] if prefix else [])
+        assert [r.operation for r in failed_transport.requests] == expected
+        assert failed_transport.closed is True
+    finally:
+        await first_hass.async_stop(force=True)
+
+    restarted_hass = HomeAssistant(str(tmp_path))
+    restarted_store = GwmCloudStateStore(restarted_hass, unique_id)
+    saved = await restarted_store.async_load_auth_state(entry_data)
+    assert saved.tokens.refresh_token == "rotated-refresh"
+    assert saved.tokens.access_token == fake_jwt(NOW_FAR)
+    assert saved.tokens.gw_id == "synthetic-gw-id" and saved.device_id == DEVICE
+    forwarded: list[object] = []
+
+    class Entries:
+        async def async_forward_entry_setups(self, entry, platforms):
+            """Record the successful entry's platform handoff."""
+            forwarded.extend(platforms)
+
+    restarted_hass.config_entries = Entries()  # type: ignore[assignment]
+    entry = entry_for(restarted_hass)
+    try:
+        assert await integration.async_setup_entry(restarted_hass, entry)
+        assert entry.runtime_data.coordinator.data["vehicles"][0]["values"]["soc"] == 80.0
+        assert forwarded == BR_PLATFORMS
+        assert [r.operation for r in recovered_transport.requests] == ["acquire_vehicles", "get_last_status"]
+        assert all(t.requests == [] and t.closed for t in auth_transports)
+        assert await GwmCloudStateStore(HomeAssistant(str(tmp_path)), unique_id).async_load_auth_state(entry_data) == saved
+    finally:
+        await restarted_hass.async_stop(force=True)
+    assert recovered_transport.closed is True
+
+
+@pytest.mark.asyncio
 async def test_br_setup_keeps_the_handoff_when_its_save_fails(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
