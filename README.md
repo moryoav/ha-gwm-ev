@@ -317,6 +317,7 @@ Open the entry, select **Configure**, and turn on **Enable charging control** (o
 Notes:
 
 - Brazil access tokens last about 24 hours and are renewed silently with the refresh token (about 60 days, rotated on each renewal), without using your password. Home Assistant asks you to reconnect only if the refresh token itself is refused.
+- If the Brazil gateway rejects the app signing identity (`607007`, `607012`, or `607099`), I recommend updating the integration. This is reported as a gateway compatibility problem and the saved session is kept; entering the password again does not repair the signing failure.
 - The password is stored in the Home Assistant config entry, as for the other regions, and is redacted from diagnostics together with tokens, the device identity, the VIN, and the location.
 
 ## Mainland China

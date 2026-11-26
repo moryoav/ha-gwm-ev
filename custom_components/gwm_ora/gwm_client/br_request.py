@@ -17,6 +17,7 @@ from ._protocol import _TransportRequest, _TransportResponse
 from .br_endpoints import (
     BR_BUSY_CODES,
     BR_CREDENTIAL_REJECTED_CODE,
+    BR_GATEWAY_SIGNING_CODES,
     BR_SUCCESS_CODE,
     br_app_headers,
     br_auth_headers,
@@ -54,6 +55,13 @@ class GwmBrSessionRejectedError(GwmAuthenticationError):
     """The account session was replaced by another app login."""
 
     _message = "GWM BR session was replaced by another login"
+
+
+class GwmBrGatewayCompatibilityError(GwmApiError):
+    """The BR gateway rejected the app identity or signature, not the saved session."""
+
+    _category = "gateway_compatibility"
+    _message = "GWM BR gateway rejected the app signing identity; update the integration"
 
 
 class GwmBrBusyError(GwmApiError):
@@ -217,6 +225,10 @@ def decode_br_envelope(response: _TransportResponse, *, operation: str) -> objec
     code = mapping.get("code") if mapping is not None else None
 
     data = mapping.get("data") if mapping is not None else None
+    if isinstance(code, str) and code in BR_GATEWAY_SIGNING_CODES:
+        # Keep this ahead of HTTP 401/403 and login/refresh authentication mapping.
+        # A signing-profile outage must not discard tokens or trigger password fallback.
+        raise GwmBrGatewayCompatibilityError(operation=operation, api_code=code)
     if code == "607501":
         raise GwmBrSessionRejectedError(operation=operation, api_code=code)
     if operation == "set_charging_plan" and mapping is not None and (

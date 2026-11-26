@@ -20,6 +20,7 @@ from .cloud_runtime import GwmCloudClient
 from .const import DOMAIN
 from .errors import GwmCommandError, cloud_authentication_message
 from .gwm_client import GwmAuthenticationError, GwmClientError
+from .gwm_client.br_request import GwmBrGatewayCompatibilityError
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -73,7 +74,10 @@ class GwmDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             ) from err
         except GwmClientError as err:
             self._log_cloud_refresh_failure(err)
-            message = f"GWM cloud {err.category} during {err.operation}"
+            message = (
+                str(err) if isinstance(err, GwmBrGatewayCompatibilityError)
+                else f"GWM cloud {err.category} during {err.operation}"
+            )
             if (api_code := getattr(err, "api_code", None)) is not None:
                 message += f" (API code {api_code})"
             raise UpdateFailed(message) from err

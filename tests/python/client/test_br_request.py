@@ -20,7 +20,12 @@ from custom_components.gwm_ora.gwm_client.br_identity import (
     load_or_create_br_device_id,
 )
 from custom_components.gwm_ora.gwm_client.br_material import create_br_ssl_context, load_br_material
-from custom_components.gwm_ora.gwm_client.br_request import GwmBrCredentialError, decode_br_envelope, prepare_br_request
+from custom_components.gwm_ora.gwm_client.br_request import (
+    GwmBrCredentialError,
+    GwmBrGatewayCompatibilityError,
+    decode_br_envelope,
+    prepare_br_request,
+)
 from custom_components.gwm_ora.gwm_client.charging import ChargingPlanCommand
 from custom_components.gwm_ora.gwm_client.errors import (
     GwmApiError,
@@ -34,7 +39,9 @@ from custom_components.gwm_ora.gwm_client.models import VehicleIdentifier
 DEVICE = "0123456789abcdef0123456789abcdef"
 
 
-@pytest.mark.parametrize("operation", ["login", "refresh_token", "acquire_vehicles", "get_last_status", "set_charging_plan"])
+@pytest.mark.parametrize("operation", [
+    "login", "request_verification", "verify_code", "refresh_token", "acquire_vehicles", "get_last_status", "set_charging_plan",
+])
 def test_every_brazil_operation_signs_the_wire_body_and_canonical_query(context, monkeypatch, operation) -> None:
     """Cover the app login path, GET sorting, and POST query-plus-body signing."""
     monkeypatch.setattr(signing.time, "time_ns", lambda: 1795086000000000000)
@@ -44,8 +51,11 @@ def test_every_brazil_operation_signs_the_wire_body_and_canonical_query(context,
         "access_token": "synthetic-access", "refresh_token": "synthetic-refresh",
         "gw_id": "synthetic-gw-id", "device_id": DEVICE,
     }
-    if operation == "login":
+    auth_operation = operation in {"login", "request_verification", "verify_code"}
+    if auth_operation:
         kwargs = {"credentials": BrCredentials.from_password("a+b@example.invalid", "Synthetic1", DEVICE)}
+        if operation == "verify_code":
+            kwargs["verification_code"] = "123456"
     elif operation == "refresh_token":
         kwargs["device_id"] = DEVICE
     elif operation == "get_last_status":
@@ -53,7 +63,7 @@ def test_every_brazil_operation_signs_the_wire_body_and_canonical_query(context,
     elif operation == "set_charging_plan":
         kwargs["plan"] = ChargingPlanCommand(VehicleIdentifier(vin), enable=False)
     request = prepare_br_request(
-        operation=operation, ssl_context=ssl.create_default_context() if operation == "login" else context, **kwargs
+        operation=operation, ssl_context=ssl.create_default_context() if auth_operation else context, **kwargs
     )
     headers = dict(request.headers)
     path = urlsplit(request.url).path
@@ -68,19 +78,19 @@ def test_every_brazil_operation_signs_the_wire_body_and_canonical_query(context,
         if operation == "set_charging_plan":
             parameters += "vin=" + vin
     raw = (
-        request.method + path + "gwm-auth-appkey:9094558645"
+        request.method + path + "gwm-auth-appkey:5009324416"
         "gwm-auth-nonce:0123456789abcdefgwm-auth-timestamp:1795086000000"
-        + parameters + "ceffd90b9a8c8deeb82bc9963140aede"
+        + parameters + "db9987198c269c2080a2ef4086f3a7df"
     )
     expected = hashlib.sha256(quote(raw, safe="-._~!*'()").encode()).hexdigest()
     assert headers["gwm-auth-sign"] == expected
-    assert headers["gwm-auth-appkey"] == "9094558645"
+    assert headers["gwm-auth-appkey"] == "5009324416"
     assert headers["gwm-auth-timestamp"] == "1795086000000"
     assert headers["gwm-auth-nonce"] == "0123456789abcdef"
     assert not any(name.startswith("bt-auth-") for name in headers)
     assert headers["user-agent"] == "okhttp/4.9.3"
     assert headers["deviceId"] == headers["iccid"] == DEVICE
-    if operation != "login":
+    if not auth_operation:
         assert headers["gwId"] == "synthetic-gw-id"
 
 
@@ -130,7 +140,7 @@ def test_login_request_headers_and_body() -> None:
     )
     headers = dict(request.headers)
     for name, value in {
-        "appid": "6", "brand": "6", "country": "BR", "channel": "APP", "cver": "1.4.2",
+        "appid": "6", "brand": "6", "country": "BR", "channel": "APP", "cver": "1.4.3",
         "enterpriseid": "CC01", "language": "pt_BR", "rs": "2", "terminal": "GW_APP_GWM",
         "content-type": "application/json",
     }.items():
@@ -195,6 +205,22 @@ def test_credential_rejection_308001_is_a_clear_credential_error() -> None:
     assert isinstance(error.value, GwmAuthenticationError)
     assert error.value.api_code == "308001"
     assert "bad password" not in str(error.value)
+
+
+@pytest.mark.parametrize("code", ["607007", "607012", "607099"])
+@pytest.mark.parametrize("status", [200, 401, 403])
+@pytest.mark.parametrize("operation", [
+    "login", "request_verification", "verify_code", "refresh_token", "acquire_vehicles", "get_last_status", "set_charging_plan",
+])
+def test_signing_rejections_are_compatibility_errors_not_account_errors(code, status, operation) -> None:
+    """Preserve session ownership for signing errors, even on HTTP authentication statuses."""
+    with pytest.raises(GwmBrGatewayCompatibilityError) as error:
+        decode_br_envelope(envelope(None, code=code, status=status, description="private-response"), operation=operation)
+    assert not isinstance(error.value, GwmAuthenticationError)
+    assert error.value.category == "gateway_compatibility"
+    assert error.value.api_code == code and error.value.operation == operation
+    assert "update the integration" in str(error.value)
+    assert "private-response" not in str(error.value) + repr(error.value)
 
 
 def test_html_400_without_certificate_is_tls_error() -> None:

@@ -18,6 +18,37 @@
       "reviewed_at": "2026-11-08",
       "review_decision": "Bundle the shared app files by maintainer direction. GWM redistribution permission remains unresolved."
     },
+    "official-my-gwm-brazil-android-1.4.3": {
+      "package": "com.gwm.brazil",
+      "version": "1.4.3",
+      "version_code": 124,
+      "acquisition": "APKPure latest XAPK downloaded on 2026-11-26. The current official GWM Brazil page links to this package on Google Play; aapt2 confirms the package, version and build.",
+      "source_url": "https://apkpure.net/my-gwm/com.gwm.brazil",
+      "official_app_url": "https://www.gwmmotors.com.br/pt/app",
+      "xapk_sha256": "21e69bfbd9572ea197da853f0ae517e633b1414e3e2079e1b5f33966068233da",
+      "base_apk_sha256": "49daf5d7ac93a6a6c6b81dd4101f6ee610accb998b71489c6ed7cbfd54ecdc07",
+      "arm64_split_apk_sha256": "56073c20d0435abe9480ec42c63ff43811ccd08ea0fe11eecf96026451540638",
+      "xhdpi_split_apk_sha256": "f8a0a1c58591ab700c76c64c9016de26c82be74673cc7ece6f46f17058a77ad8",
+      "apk_signer_sha256": "08c70ab68fce152ffed72d730af1597540496fe589b252c30420aaec4ba31583",
+      "legacy_apk_signer_sha256": "af8c0f394a35323c5fe3e05cadf9b7cdbde4910d2775952ecb82625ea6aab453",
+      "signature_verification": "Android apksigner 35.0.1 verifies the base and both splits with the same GWM and legacy signer fingerprints as 1.4.2. Base verifies v2, v3, v3.1 and source stamp.",
+      "libapp_sha256": "a4d1caf2d702d248187e6d7e5dc2c3f37b1f67bce4f6ef4b05fee827485eefc9",
+      "reviewed_at": "2026-11-26",
+      "review_decision": "Replace the existing shared Brazil signing values by maintainer direction. GWM redistribution permission remains unresolved.",
+      "signing_evidence": {
+        "location": "custom_components/gwm_ora/gwm_client/signing.py BRAZIL_GWM_AUTH",
+        "apk_entry": "lib/arm64-v8a/libapp.so in config.arm64_v8a.apk",
+        "production_config": "BRHost.baseHost at 0xb73308; production host at 0xb733e8, app key at 0xb733f8, app secret at 0xb73404",
+        "signer": "HeadersType.getHeaders at 0xb71970, RequestSign.getFormatParameter at 0xb72834, formatGETParameter at 0xb7292c, formatPostBody at 0xb72c04",
+        "policy": "Unchanged from 1.4.2: gwm-auth; milliseconds; decoded case-sensitive sorted query keys including empty values; merge POST JSON under json; remove ASCII spaces from parameter values; Uri.encodeComponent; SHA-256 lowercase hex. Function sizes and normalized pseudo operations match the previous release.",
+        "native_material": "The production pair also occurs as literal bytes in libdatajar.so. getAppKey/appKeyLen/appKeyType already existed in 1.4.2; libbean.so and libbeancrypto.so are byte-identical between releases. No native signing bridge is needed.",
+        "gateway_probe": "2026-11-26 synthetic acquireVehicles and getLastStatus return 607007 with the previous pair and 550004 with the current pair. Synthetic refreshToken returns 607007 with the previous pair and 551011 with the current pair. All responses are HTTP 200; deliberately invalid tokens reach token validation with the current signing pair.",
+        "controls": "The current app key with a deliberately wrong secret returns 607099. Changing only cVer to 1.4.3 leaves the previous pair rejected with 607007; the current pair already passes signature validation with cVer 1.4.2. Unsigned discovery returns 607012.",
+        "tls_comparison": "Certificate, native key asset and CA bundle are unchanged between APK 1.4.2 and 1.4.3. The current APK certificate is DER-identical to resources/br/gwm_general.cer; the bundled PEM private key matches its public key, and the CA bundle is byte-identical. Certificate DER SHA-256: 40e3581e4dabda0a631a936e543d6b9d0e3fb4a45210984aa28cdbe8fcfd9e74. Probes use the existing bundled mTLS context with server and hostname verification enabled.",
+        "login_comparison": "LoginWithPasswordController._loginAccount at 0x987728 retains size 0x7a0 and the same account, accountType, countryCode, agreement, password, deviceId, appType, pushToken and country constants as 1.4.2.",
+        "limitations": "No Brazil account or vehicle was used and no vehicle write was sent. Fresh synthetic password-login attempts from the investigation network return an explicit WAF HTTP 418 HTML block with either signing pair. Gateway signature acceptance is verified; successful real-account sign-in, email verification, polling and refresh-token rotation still require tester confirmation."
+      }
+    },
     "official-my-gwm-brazil-android-1.4.2": {
       "package": "com.gwm.brazil",
       "version": "1.4.2",

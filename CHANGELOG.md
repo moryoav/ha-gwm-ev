@@ -8,6 +8,10 @@ This project follows semantic versioning. The Marketplace installs GWM from publ
 
 ## [Unreleased]
 
+### Brazil
+
+- **Fixed** Brazil gateway signing for My GWM 1.4.3 and preserved saved sessions when the gateway rejects the app signing identity ([#76](https://github.com/moryoav/ha-gwm-ev/issues/76)).
+
 ## [0.20.0] - 2026-11-26
 
 ### All regions

@@ -19,10 +19,12 @@ BR_APP_BASE_URL: Final = f"https://{BR_APP_HOST}/app-api/api/v1.0/"
 BR_H5_BASE_URL: Final = f"https://{BR_H5_HOST}/app-api/api/v1.0/"
 BR_SUCCESS_CODE: Final = "000000"
 BR_CREDENTIAL_REJECTED_CODE: Final = "308001"
+# App identity/signature failures do not establish that the account session is invalid.
+BR_GATEWAY_SIGNING_CODES: Final = frozenset({"607007", "607012", "607099"})
 # The vehicle is busy with another remote operation: report it, never retry in a loop.
 BR_BUSY_CODES: Final = frozenset({"9999", "REMOTE250502"})
 
-# Shared app headers from My GWM Brasil 1.4.2.
+# Shared app headers from My GWM Brasil 1.4.3.
 _APP_HEADERS: Final = MappingProxyType(
     {
         "rs": "2",
@@ -35,7 +37,7 @@ _APP_HEADERS: Final = MappingProxyType(
         "appid": "6",
         "enterpriseid": "CC01",
         "channel": "APP",
-        "cver": "1.4.2",
+        "cver": "1.4.3",
     }
 )
 

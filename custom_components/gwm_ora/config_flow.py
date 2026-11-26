@@ -103,6 +103,7 @@ from .gwm_client.br_installed import (
     GwmBrMaterialMissingError,
     load_installed_br_context,
 )
+from .gwm_client.br_request import GwmBrGatewayCompatibilityError
 from .gwm_client.china_crypto import valid_bean_tech_lock_credential
 from .gwm_client.errors import is_russia_session_rejected
 
@@ -746,7 +747,7 @@ class GwmConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             return None, "local_configuration_error"
         except GwmApiError as error:
             _log_cloud_auth_failure(error, credentials)
-            return None, "service_error"
+            return None, "br_gateway_compatibility" if isinstance(error, GwmBrGatewayCompatibilityError) else "service_error"
         except GwmClientError as error:
             _log_cloud_auth_failure(error, credentials)
             return None, "service_error"
