@@ -130,9 +130,14 @@ def test_login_uses_a_clean_default_tls_context_not_the_vehicle_identity(context
         prepare_br_request(operation="acquire_vehicles", ssl_context=clean, access_token="tok-a")
 
 
-def test_login_request_headers_and_body() -> None:
+@pytest.mark.parametrize(("device_id", "model", "brand_name"), [
+    ("0" * 32, "Pixel 8", "google"),
+    ("0" * 31 + "1", "SM-S918B", "samsung"),
+    ("0" * 31 + "2", "moto g84 5G", "motorola"),
+])
+def test_login_request_headers_and_body(device_id: str, model: str, brand_name: str) -> None:
     """Check the headers and body of the login request."""
-    credentials = BrCredentials.from_password("someone@example.invalid", "Synthetic1", DEVICE)
+    credentials = BrCredentials.from_password("someone@example.invalid", "Synthetic1", device_id)
     request = prepare_br_request(operation="login", ssl_context=ssl.create_default_context(), credentials=credentials)
     assert request.method == "POST"
     assert request.url == (
@@ -148,8 +153,9 @@ def test_login_request_headers_and_body() -> None:
     assert not {"accessToken", "refreshToken"} & set(headers)
     assert json.loads(request.body) == {
         "account": "someone@example.invalid", "accountType": "2", "countryCode": "55",
-        "agreement": [1, 2], "password": "Synthetic1", "deviceId": DEVICE,
+        "agreement": [1, 2], "password": "Synthetic1", "deviceId": device_id,
         "appType": "0", "pushToken": None, "country": "BR",
+        "systemVersion": "14", "model": model, "modelName": model, "brandName": brand_name,
     }
     assert "Synthetic1" not in repr(credentials)
     assert "someone" not in repr(credentials)

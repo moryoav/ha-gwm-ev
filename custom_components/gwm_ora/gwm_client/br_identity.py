@@ -12,6 +12,12 @@ from pathlib import Path
 _DEVICE_ID = re.compile(r"[0-9a-f]{32}\Z")
 _MAX_ACCOUNT = 256
 _MAX_PASSWORD = 256
+# Guessed Android values for the issue #79 experiment. Login field placement is unverified.
+_EXPERIMENTAL_ANDROID_PROFILES = (
+    ("14", "Pixel 8", "google"),
+    ("14", "SM-S918B", "samsung"),
+    ("14", "moto g84 5G", "motorola"),
+)
 
 
 def br_password_md5(password: str) -> str:
@@ -86,10 +92,14 @@ class BrCredentials:
         return cls(account, br_password_md5(password), device_id, password)
 
     def login_body(self, verification_code: str | None = None) -> dict[str, object]:
-        """Payload used by My GWM Brasil 1.4.2 on the H5 app gateway."""
+        """H5 password-login payload with experimental device fields for issue #79."""
         if self.password is None:
             raise ValueError("br_credentials_invalid")
         validate_br_verification_code(verification_code)
+        # The existing random installation ID selects the same profile after restoration.
+        system_version, model, brand_name = _EXPERIMENTAL_ANDROID_PROFILES[
+            int(self.device_id, 16) % len(_EXPERIMENTAL_ANDROID_PROFILES)
+        ]
         body: dict[str, object] = {
             "account": self.account,
             "accountType": "2" if "@" in self.account else "1",
@@ -100,6 +110,10 @@ class BrCredentials:
             "appType": "0",
             "pushToken": None,
             "country": "BR",
+            "systemVersion": system_version,
+            "model": model,
+            "modelName": model,
+            "brandName": brand_name,
         }
         if verification_code is not None:
             body.update(verifyCode=verification_code, validCodeMode="1")

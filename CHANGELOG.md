@@ -8,6 +8,10 @@ This project follows semantic versioning. The Marketplace installs GWM from publ
 
 ## [Unreleased]
 
+### Brazil
+
+- **Experimental** Added guessed Android device fields to password-login JSON for [issue #79](https://github.com/moryoav/ha-gwm-ev/issues/79) testing, with a repeatable sample profile selected by the installation ID. The login field placement, values, and effect on HTTP `418` require live confirmation.
+
 ## [0.20.1] - 2026-11-26
 
 ### Brazil
