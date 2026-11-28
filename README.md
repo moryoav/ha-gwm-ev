@@ -305,6 +305,10 @@ The Brazilian vehicle gateway requires a client certificate from the official ap
 
 If the bundled files are missing or unusable (a damaged installation), setup shows a clear error and the log says to reinstall the integration.
 
+### Experimental sign-in build for issue #79
+
+This test branch adds guessed Android strings for `systemVersion`, `model`, `modelName`, and `brandName` to Brazil password-login JSON. The existing random installation ID selects a sample profile, keeping those values stable through email verification and restoration of that ID. The field names come from static APK references reported in [issue #79](https://github.com/moryoav/ha-gwm-ev/issues/79#issuecomment-7241133620); their presence in a successful app login and their effect on HTTP `418` still need confirmation. Wait for the IP block to clear before testing one explicit sign-in. If it returns `418`, stop and report the result before trying again.
+
 ### Scheduled charging (optional)
 
 Open the entry, select **Configure**, and turn on **Enable charging control** (off by default). This adds a single **Scheduled charging** switch per vehicle and enables the `gwm_ora.set_charging_plan` (VIN, start time, end time; at least 5 minutes) and `gwm_ora.clear_charging_plan` (VIN) services. No security PIN is used in Brazil.

@@ -274,6 +274,25 @@ async def test_br_login_signing_failure_does_not_report_invalid_credentials(monk
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("saved_session", [False, True])
+async def test_br_login_block_makes_one_attempt_and_preserves_saved_state(
+    monkeypatch, tmp_path, store, saved_session,
+) -> None:
+    """Stop a blocked experimental login without replacing existing private state."""
+    previous = _expired_state(_credentials()) if saved_session else None
+    store.loaded = previous
+    authenticator, transport = _authenticator(monkeypatch, tmp_path, html(418, "Request blocked"))
+    flow = _flow(monkeypatch, authenticator)
+    await flow.async_step_user({CONF_REGION: "br"})
+
+    result = await flow.async_step_account({CONF_COUNTRY: "BR", CONF_ACCOUNT: ACCOUNT, CONF_PASSWORD: PASSWORD})
+
+    assert result["errors"] == {"base": "cannot_connect"}
+    assert [request.operation for request in transport.requests] == ["login"]
+    assert store.loaded is previous and store.saved == [] and store.cleared == 0
+
+
+@pytest.mark.asyncio
 async def test_br_missing_bundled_files_give_a_clear_error(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, store: _Store, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -1972,6 +1991,14 @@ async def test_brazil_email_verification_completes_in_the_existing_form(monkeypa
     ]
     for request in transport.requests:
         assert request.headers["deviceId"] == request.headers["iccid"] == challenge.device_id
+    device_fields = ("systemVersion", "model", "modelName", "brandName")
+    login_profiles = [
+        {field: json.loads(request.body)[field] for field in device_fields}
+        for request in transport.requests if request.operation == "login"
+    ]
+    assert len(login_profiles) == 3
+    assert login_profiles == [login_profiles[0]] * 3
+    assert all(isinstance(value, str) and value for value in login_profiles[0].values())
     checked, login = [json.loads(r.body) for r in transport.requests[3:5]]
     assert checked["verifyCode"] == login["verifyCode"] == "123456"
     assert checked["type"] == "17" and checked["validCodeMode"] == 1
